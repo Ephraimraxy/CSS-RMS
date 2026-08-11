@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Trash2, Shield, ArrowDown, Settings2, Info, FileText, ChevronRight, Save, Loader2, Monitor, Hash, ShieldCheck, Sparkles, Printer, Award, Phone, Send, CheckCircle2, Wifi, WifiOff, AlertCircle, RotateCcw, Mail, Eye, X, AlertTriangle, Zap, BadgeCheck, ArrowRight, Clock, PenTool, MessageSquare } from 'lucide-react';
+import { Plus, Trash2, Shield, ArrowDown, Settings2, Info, FileText, ChevronRight, Save, Loader2, Monitor, Hash, ShieldCheck, Sparkles, Printer, Award, Phone, Send, CheckCircle2, Wifi, WifiOff, AlertCircle, RotateCcw, Mail, Eye, X, AlertTriangle, Zap, BadgeCheck, ArrowRight, Clock, PenTool, MessageSquare, Image, Upload } from 'lucide-react';
 
 const WorkflowStage = ({ stage, onUpdate, onDelete, isFirst }) => {
   return (
@@ -254,6 +254,41 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [emailTestAddr, setEmailTestAddr]     = useState('');
   const [emailTesting, setEmailTesting]       = useState(false);
   const [emailTestResult, setEmailTestResult] = useState(null);
+
+  // ── Media / Image Library ──────────────────────────────────────────────────
+  const [mediaImages, setMediaImages] = useState([]);
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const [deletingMediaId, setDeletingMediaId] = useState(null);
+  const mediaFileRef = useRef(null);
+  const MEDIA_SERVE = (key) => `${import.meta.env.VITE_API_URL || ''}/api/admin/media/serve?key=${encodeURIComponent(key)}`;
+
+  const loadMedia = async () => {
+    setMediaLoading(true);
+    try { setMediaImages(await adminAPI.listMedia() || []); } catch { setMediaImages([]); }
+    finally { setMediaLoading(false); }
+  };
+
+  const handleMediaUpload = async (file) => {
+    if (!file) return;
+    setMediaUploading(true);
+    try {
+      const item = await adminAPI.uploadMedia(file);
+      setMediaImages(prev => [item, ...prev]);
+      toast.success('Image uploaded!');
+    } catch { toast.error('Upload failed.'); }
+    finally { setMediaUploading(false); if (mediaFileRef.current) mediaFileRef.current.value = ''; }
+  };
+
+  const handleMediaDelete = async (id) => {
+    setDeletingMediaId(id);
+    try {
+      await adminAPI.deleteMedia(id);
+      setMediaImages(prev => prev.filter(i => i.id !== id));
+      toast.success('Image removed.');
+    } catch { toast.error('Delete failed.'); }
+    finally { setDeletingMediaId(null); }
+  };
 
   // Deleted Records Bin + Hard Reset state
   const [deletedRecords, setDeletedRecords] = useState([]);
@@ -652,6 +687,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
     })();
   }, []);
 
+  useEffect(() => {
+    if (activeTab === 'images') loadMedia();
+  }, [activeTab]);
+
   const [isProcessing, setIsProcessing] = useState(false);
 
   const addStage = async () => {
@@ -745,6 +784,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
               { id: 'features', label: 'Features' },
               { id: 'stages',   label: 'Workflow, Types & Ref Code' },
               { id: 'print',    label: 'Print, Stamp & Contact' },
+              { id: 'images',   label: 'Images' },
               { id: 'bin',      label: 'Deleted Records & Danger Zone' },
             ].map(({ id, label }) => (
               <button
@@ -1900,6 +1940,78 @@ const WorkflowBuilder = ({ onViewChange }) => {
             </div>
           </div>
 
+            </div>
+          </div>
+        ) : activeTab === 'images' ? (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+            <div className="glass bg-white/70 rounded-3xl border border-border/50 p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-violet-50 border border-violet-200 flex items-center justify-center shrink-0">
+                    <Image size={18} className="text-violet-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground">Image Library</h3>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Upload images here, then pick them from any image field — no URL copying needed.</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={loadMedia} disabled={mediaLoading} className="p-2 rounded-xl border border-border/40 text-muted-foreground hover:bg-muted/60 transition-all">
+                    <RotateCcw size={13} className={mediaLoading ? 'animate-spin' : ''} />
+                  </button>
+                  <button
+                    onClick={() => mediaFileRef.current?.click()}
+                    disabled={mediaUploading}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-[10px] uppercase tracking-widest transition-all disabled:opacity-50 shadow-md shadow-violet-200"
+                  >
+                    {mediaUploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                    {mediaUploading ? 'Uploading…' : 'Upload Image'}
+                  </button>
+                  <input ref={mediaFileRef} type="file" accept="image/*" className="hidden" onChange={e => { if (e.target.files?.[0]) handleMediaUpload(e.target.files[0]); }} />
+                </div>
+              </div>
+
+              {mediaLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <Loader2 size={20} className="animate-spin text-muted-foreground/40" />
+                </div>
+              ) : mediaImages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3">
+                  <div className="w-14 h-14 rounded-2xl bg-muted/30 border border-border/30 flex items-center justify-center">
+                    <Image size={24} className="text-muted-foreground/30" />
+                  </div>
+                  <p className="text-sm font-bold text-muted-foreground">No images uploaded yet</p>
+                  <p className="text-[11px] text-muted-foreground/60 text-center max-w-xs">
+                    Click "Upload Image" to add images to the library. They'll appear as a visual picker wherever an image field exists.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                  {mediaImages.map(img => (
+                    <div key={img.id} className="group relative rounded-2xl overflow-hidden border border-border/40 bg-muted/20 aspect-square">
+                      <img src={MEDIA_SERVE(img.key)} alt={img.name} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex flex-col justify-between p-2 opacity-0 group-hover:opacity-100">
+                        <button
+                          onClick={() => handleMediaDelete(img.id)}
+                          disabled={deletingMediaId === img.id}
+                          className="self-end w-6 h-6 rounded-lg bg-red-500 text-white flex items-center justify-center shadow hover:bg-red-600 transition-all"
+                        >
+                          {deletingMediaId === img.id ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
+                        </button>
+                        <div className="space-y-0.5">
+                          <p className="text-[9px] font-bold text-white truncate">{img.name}</p>
+                          <button
+                            onClick={() => { navigator.clipboard.writeText(MEDIA_SERVE(img.key)); toast.success('URL copied!'); }}
+                            className="text-[8px] font-black text-white/80 hover:text-white uppercase tracking-widest underline"
+                          >
+                            Copy URL
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ) : activeTab === 'bin' ? (
