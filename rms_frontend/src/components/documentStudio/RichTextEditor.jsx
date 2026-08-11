@@ -22,8 +22,9 @@ import ConfirmModal from '../ConfirmModal';
 import { useAIFeatures } from '../../context/AIFeaturesContext';
 import { ExportMenu, ExportConfirmModal, SaveIndicator, ToolbarGroup, resolveDeptCode } from './shared';
 import {
-  FileText, Table, File, Send, X, Scissors, Copy, Clipboard, Eraser, Search,
+  FileText, Table, File, Send, X, Scissors, Copy, Clipboard, Eraser, Search, Image as ImageIcon,
 } from 'lucide-react';
+import ImagePickerDropdown from '../ImagePickerDropdown';
 
 // Word opens HTML wrapped with these MS Office namespaces natively when given a .doc extension —
 // this preserves full rich-text formatting without needing a heavyweight OOXML-generation library.
@@ -61,6 +62,8 @@ const TOOLBAR_BTN_ACTIVE = "bg-primary/15 text-primary";
 const RichTextEditor = ({ loadedDraft, onAutosave, onSend, currentUser, departments }) => {
   const [title, setTitle] = useState(loadedDraft?.title || 'Untitled Document');
   const [saving, setSaving] = useState(false);
+  const [imgPickerOpen, setImgPickerOpen] = useState(false);
+  const [imgPickerVal, setImgPickerVal] = useState('');
   const autoSaveTimerRef = useRef(null);
   const titleTimerRef = useRef(null);
   const { aiEnabled } = useAIFeatures();
@@ -424,6 +427,43 @@ const RichTextEditor = ({ loadedDraft, onAutosave, onSend, currentUser, departme
             <div className="flex items-center gap-0.5 shrink-0">
               <button title="Insert Link" onClick={insertLink} className={`p-1.5 rounded w-8 h-8 flex items-center justify-center text-xs hover:bg-muted ${activeStates.link ? TOOLBAR_BTN_ACTIVE : ''}`}>🔗</button>
               <button title="Insert Table" onClick={insertTable} className={TOOLBAR_BTN}><Table size={14} /></button>
+              <div className="relative">
+                <button
+                  title="Insert Image"
+                  onClick={() => setImgPickerOpen(o => !o)}
+                  className={`p-1.5 rounded w-8 h-8 flex items-center justify-center hover:bg-muted ${imgPickerOpen ? TOOLBAR_BTN_ACTIVE : ''}`}
+                >
+                  <ImageIcon size={14} />
+                </button>
+                {imgPickerOpen && (
+                  <div className="absolute top-full left-0 mt-1 w-64 z-50 bg-white border border-border/50 rounded-2xl shadow-xl p-3 space-y-2">
+                    <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Pick from Image Library</p>
+                    <ImagePickerDropdown
+                      value={imgPickerVal}
+                      onChange={url => setImgPickerVal(url)}
+                      placeholder="Choose an image…"
+                    />
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        disabled={!imgPickerVal}
+                        onClick={() => {
+                          if (imgPickerVal) {
+                            editor?.chain().focus().setImage({ src: imgPickerVal }).run();
+                            setImgPickerVal('');
+                            setImgPickerOpen(false);
+                          }
+                        }}
+                        className="flex-1 py-2 rounded-xl bg-primary text-primary-foreground text-[10px] font-black uppercase tracking-widest disabled:opacity-40 transition-all"
+                      >
+                        Insert
+                      </button>
+                      <button onClick={() => { setImgPickerOpen(false); setImgPickerVal(''); }} className="px-3 py-2 rounded-xl border border-border/40 text-muted-foreground text-[10px] font-bold hover:bg-muted/60 transition-all">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </ToolbarGroup>
 

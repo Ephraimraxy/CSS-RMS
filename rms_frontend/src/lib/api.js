@@ -375,6 +375,13 @@ export const adminAPI = {
   getMigrationsLogbook: () => api.get('/admin/migrations'),
   getAiCaps: () => api.get('/admin/ai-caps'),
   saveAiCaps: (caps) => api.post('/admin/ai-caps', caps),
+  listMedia: () => api.get('/admin/media'),
+  uploadMedia: (file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post('/admin/media', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  deleteMedia: (id) => api.delete(`/admin/media/${id}`),
 };
 
 export const kivAPI = {
