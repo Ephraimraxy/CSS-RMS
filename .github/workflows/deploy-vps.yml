@@ -1,0 +1,90 @@
+name: Deploy to VPS (InterServer)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Parallel deployment to InterServer VPS.
+#  Railway auto-deploys on push (via the CI workflow) and keeps running.
+#  This workflow deploys the SAME code to the VPS — run it manually at first,
+#  then uncomment the workflow_run trigger below when ready to auto-deploy
+#  to both platforms simultaneously on every push to main.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_migration:
+        description: 'Skip Prisma migrations (use when schema unchanged)'
+        type: boolean
+        default: false
+
+  # ── Auto-deploy after CI passes on main (uncomment when ready) ──────────────
+  # workflow_run:
+  #   workflows: [CI]
+  #   types: [completed]
+  #   branches: [main]
+
+# Required secrets in GitHub → Settings → Secrets → Actions:
+#   VPS_HOST       — your InterServer VPS IP address
+#   VPS_USER       — SSH username (deploy or root)
+#   VPS_SSH_KEY    — private SSH key (matching the public key on the server)
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    # Uncomment the line below when using workflow_run trigger:
+    # if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          timeout: 420s
+          script: |
+            set -e
+            APP_DIR="/var/www/cssrms"
+
+            echo "════════════════════════════════════════"
+            echo "  CSS-RMS VPS Deploy"
+            echo "  $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "════════════════════════════════════════"
+
+            cd "$APP_DIR"
+
+            echo ""
+            echo "── [1/5] Pulling latest code ────────────"
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo ""
+            echo "── [2/5] Installing backend dependencies ─"
+            npm install --include=dev
+
+            echo ""
+            echo "── [3/5] Prisma: generate + migrate ──────"
+            npx prisma generate --schema=rms_backend/prisma/schema.prisma
+            if [ "${{ github.event.inputs.skip_migration }}" != "true" ]; then
+              npx prisma migrate deploy --schema=rms_backend/prisma/schema.prisma
+            else
+              echo "   Migrations skipped (skip_migration=true)"
+            fi
+
+            echo ""
+            echo "── [4/5] Building React frontend ─────────"
+            cd rms_frontend
+            npm install --legacy-peer-deps
+            npm run build
+            cd ..
+
+            echo ""
+            echo "── [5/5] Restarting Node.js via PM2 ──────"
+            pm2 restart cssrms 2>/dev/null || pm2 start ecosystem.config.js
+            pm2 save
+
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "  ✓  Deploy complete"
+            echo "════════════════════════════════════════"

@@ -32,7 +32,7 @@ const SidebarItem = ({ icon: Icon, label, active = false, onClick, mobile = fals
       title={isCollapsed ? label : ''}
       className={mobile
         ? `relative overflow-hidden flex-1 flex flex-col items-center justify-center py-2 px-1 rounded-2xl cursor-pointer transition-all active:scale-95 outline-none focus-electric-halo hover-orange-pulse ${active ? 'text-[#f97316] animate-electric-pulse' : 'text-white'}`
-        : `relative flex items-center group px-3 py-2.5 rounded-2xl cursor-pointer transition-all duration-300 hover-shine-effect outline-none focus-electric-halo hover-orange-pulse ${isCollapsed ? 'justify-center mx-1' : 'space-x-4 mx-1'} ${active ? 'bg-white/15 text-[#f97316] shadow-lg shadow-black/20 scale-[0.98] animate-electric-pulse animate-active-hum' : 'text-white'}`
+        : `relative flex items-center group px-3 py-2.5 rounded-2xl cursor-pointer transition-all duration-300 hover-shine-effect outline-none focus-electric-halo hover-orange-pulse ${isCollapsed ? 'justify-center mx-1' : 'space-x-4 mx-1'} ${active ? (isCollapsed ? 'bg-[#f97316]/20 text-[#f97316] shadow-lg shadow-[#f97316]/25 ring-1 ring-[#f97316]/25 scale-[0.98] animate-electric-pulse animate-active-hum' : 'bg-white/15 text-[#f97316] shadow-lg shadow-black/20 scale-[0.98] animate-electric-pulse animate-active-hum') : 'text-white'}`
       }
     >
       {/* Click ripple flash */}
@@ -1105,6 +1105,14 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
         <aside
           className={`border-r border-white/5 ${sidebarBg} sticky top-0 hidden lg:flex flex-col transition-all duration-500 cubic-bezier(0.4, 0, 0.2, 1) ${isCollapsed ? 'w-20' : 'w-64'}`}
         >
+          {/* Collapsed-only logo mark */}
+          {isCollapsed && (
+            <div className="flex items-center justify-center pt-5 pb-4 border-b border-white/5 shrink-0">
+              <div className="w-11 h-11 rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-lg shadow-black/30">
+                <img src="/CSS_Group.png" alt="CSS Group" className="w-full h-full object-cover object-center" />
+              </div>
+            </div>
+          )}
           <div className="p-4 pt-6 flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden">
             <div className="space-y-2">
               {!isCollapsed && (
@@ -1148,8 +1156,10 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
               )}
             </div>
 
+            {isCollapsed && <div className="mt-5 mb-1 flex items-center justify-center"><div className="w-5 h-px bg-white/10" /></div>}
+
             {showHRPortal && (
-              <div className="mt-10 space-y-1">
+              <div className={isCollapsed ? 'mt-1 space-y-1' : 'mt-10 space-y-1'}>
                 {/* HR Portal toggle button */}
                 <button
                   onClick={() => setHrPortalOpen(v => !v)}
@@ -1178,7 +1188,8 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
             )}
 
             {user?.role !== 'department' && user?.role !== 'hr' && (
-              <div className="mt-10 space-y-2">
+              <div className={isCollapsed ? 'mt-1 space-y-2' : 'mt-10 space-y-2'}>
+                {isCollapsed && <div className="mt-2 mb-1 flex items-center justify-center"><div className="w-5 h-px bg-white/10" /></div>}
                 {!isCollapsed && (
                   <p className="px-4 text-[9px] font-black text-white/30 uppercase tracking-[0.25em] mb-4 ml-1 animate-in fade-in slide-in-from-left-2 duration-700">
                     Oversight Center
@@ -1192,7 +1203,15 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
             )}
           </div>
 
-          <div className="p-3 border-t border-border/20 mb-2">
+          <div className="p-3 border-t border-border/20 mb-2 space-y-1">
+            <button
+              onClick={toggleSidebar}
+              title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              className={`w-full flex items-center rounded-2xl px-3 py-2.5 text-white/30 hover:text-white/60 hover:bg-white/5 transition-all duration-300 group ${isCollapsed ? 'justify-center mx-1' : 'gap-4 mx-1'}`}
+            >
+              {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+              {!isCollapsed && <span className="font-bold text-[13px] tracking-tight">Collapse</span>}
+            </button>
             <SidebarItem icon={LogOut} label="Log Out" onClick={logout} isCollapsed={isCollapsed} />
           </div>
         </aside>
