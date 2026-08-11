@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { BookOpen, History, Clock, RefreshCw, AlertCircle } from 'lucide-react';
+import { BookOpen, History, Clock, RefreshCw, AlertCircle, Server } from 'lucide-react';
 import { adminAPI } from '../lib/api';
 
 const TabButton = ({ active, onClick, icon: Icon, label }) => (
@@ -39,6 +39,49 @@ const GuideTab = () => {
   useEffect(() => { load(); }, []);
 
   if (loading) return <div className="p-20 text-center animate-pulse text-muted-foreground font-mono text-xs">Loading guide...</div>;
+  if (error) return (
+    <div className="p-10 flex items-center gap-3 text-destructive bg-destructive/5 border border-destructive/20 rounded-2xl">
+      <AlertCircle size={18} />
+      <span className="text-sm font-medium">{error}</span>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono uppercase tracking-widest">
+        <span className="flex items-center gap-1.5"><Clock size={12} /> Last updated: {doc?.updatedAt ? new Date(doc.updatedAt).toLocaleString() : 'Unknown'}</span>
+        <button onClick={load} className="flex items-center gap-1.5 hover:text-primary transition-colors">
+          <RefreshCw size={12} /> Refresh
+        </button>
+      </div>
+      <div className="doc-guide glass bg-white/95 border border-border/50 rounded-3xl p-6 lg:p-10 shadow-sm prose prose-sm lg:prose-base max-w-none prose-headings:font-bold prose-headings:text-foreground prose-a:text-primary prose-table:text-xs prose-th:bg-muted/50">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{doc?.content || ''}</ReactMarkdown>
+      </div>
+    </div>
+  );
+};
+
+const VpsGuideTab = () => {
+  const [doc, setDoc] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await adminAPI.getVpsGuide();
+      setDoc(data);
+    } catch (err) {
+      setError('Failed to load VPS guide. Check that VPS_MANAGEMENT_GUIDE.md exists at the repo root.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  if (loading) return <div className="p-20 text-center animate-pulse text-muted-foreground font-mono text-xs">Loading VPS guide...</div>;
   if (error) return (
     <div className="p-10 flex items-center gap-3 text-destructive bg-destructive/5 border border-destructive/20 rounded-2xl">
       <AlertCircle size={18} />
@@ -149,16 +192,19 @@ const Documentation = () => {
           <span>System <span className="text-primary">Documentation</span></span>
         </h1>
         <p className="text-muted-foreground text-xs lg:text-sm font-medium">
-          The architecture guide and a read-only log of every database change ever applied.
+          Architecture guide, VPS server management handbook, and a read-only log of every database change applied.
         </p>
       </div>
 
-      <div className="flex items-center space-x-3 p-1.5 glass bg-white/80 border border-border/50 rounded-2xl w-fit shadow-sm">
-        <TabButton active={tab === 'guide'} onClick={() => setTab('guide')} icon={BookOpen} label="Guide" />
+      <div className="flex items-center space-x-3 p-1.5 glass bg-white/80 border border-border/50 rounded-2xl w-fit shadow-sm flex-wrap gap-y-2">
+        <TabButton active={tab === 'guide'} onClick={() => setTab('guide')} icon={BookOpen} label="Architecture Guide" />
+        <TabButton active={tab === 'vps'} onClick={() => setTab('vps')} icon={Server} label="VPS Management" />
         <TabButton active={tab === 'migrations'} onClick={() => setTab('migrations')} icon={History} label="Migration Logbook" />
       </div>
 
-      {tab === 'guide' ? <GuideTab /> : <MigrationsTab />}
+      {tab === 'guide' && <GuideTab />}
+      {tab === 'vps' && <VpsGuideTab />}
+      {tab === 'migrations' && <MigrationsTab />}
     </div>
   );
 };

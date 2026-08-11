@@ -372,16 +372,10 @@ export const adminAPI = {
   hardReset: (options) => api.post('/admin/hard-reset', options),
   getSmsBalance: () => api.get('/admin/sms-balance'),
   getArchitectureDoc: () => api.get('/admin/architecture-doc'),
+  getVpsGuide: () => api.get('/admin/vps-guide'),
   getMigrationsLogbook: () => api.get('/admin/migrations'),
   getAiCaps: () => api.get('/admin/ai-caps'),
   saveAiCaps: (caps) => api.post('/admin/ai-caps', caps),
-  listMedia: () => api.get('/admin/media'),
-  uploadMedia: (file) => {
-    const fd = new FormData();
-    fd.append('file', file);
-    return api.post('/admin/media', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-  },
-  deleteMedia: (id) => api.delete(`/admin/media/${id}`),
 };
 
 export const kivAPI = {
