@@ -44,4 +44,13 @@ See `.env.example` for the full list with descriptions. Key ones: `DATABASE_URL`
 
 ## Deployment
 
-Hosted on Railway as a single service. `npm start` runs `prisma migrate deploy` then `node serve.js`. The frontend is built into `rms_frontend/dist` and served as static files by the same Express server.
+Two parallel production deployments:
+
+| Deployment | URL | Platform |
+|------------|-----|----------|
+| Main | https://cssgrouprms.com | Railway |
+| VPS | https://rms.cssgrouprms.com | InterServer KVM ($3/mo) |
+
+**Railway:** `npm start` runs `prisma migrate deploy` then `node serve.js`. The frontend is built into `rms_frontend/dist` and served as static files by the same Express server.
+
+**VPS (InterServer):** Ubuntu 24.04, Node.js + PM2, PostgreSQL 15, Nginx reverse proxy with Cloudflare orange-cloud SSL. See [VPS_MANAGEMENT_GUIDE.md](./VPS_MANAGEMENT_GUIDE.md) for full management instructions — connecting via SSH, managing environment variables, deploying new code, database operations, troubleshooting, and all daily management commands.
