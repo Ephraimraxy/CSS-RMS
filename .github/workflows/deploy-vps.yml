@@ -1,11 +1,11 @@
 name: Deploy to VPS (InterServer)
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Parallel deployment to InterServer VPS.
-#  Railway auto-deploys on push (via the CI workflow) and keeps running.
-#  This workflow deploys the SAME code to the VPS — run it manually at first,
-#  then uncomment the workflow_run trigger below when ready to auto-deploy
-#  to both platforms simultaneously on every push to main.
+#  Two-stage deploy:
+#  1. Build the React frontend on the GitHub Actions runner (7 GB RAM) —
+#     the VPS only has 512 MB and the OOM killer terminates the Vite build.
+#  2. Upload the built dist/ folder to the VPS via SCP.
+#  3. SSH into VPS: pull backend code, install deps, migrate, restart PM2.
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -25,7 +25,7 @@ on:
 # Required secrets in GitHub → Settings → Secrets → Actions:
 #   VPS_HOST       — 162.35.183.2
 #   VPS_USER       — root
-#   VPS_SSH_KEY    — private SSH key (generate on server, see VPS_MANAGEMENT_GUIDE.md)
+#   VPS_SSH_KEY    — private SSH key (see VPS_MANAGEMENT_GUIDE.md)
 
 jobs:
   deploy:
@@ -34,39 +34,54 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
 
     steps:
-      - name: Deploy via SSH
+      - uses: actions/checkout@v4
+
+      # ── Stage 1: Build frontend on CI runner (7 GB RAM) ───────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: rms_frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: rms_frontend
+        run: npm ci --legacy-peer-deps
+
+      - name: Build React frontend
+        working-directory: rms_frontend
+        run: npm run build
+        env:
+          VITE_TURNSTILE_SITE_KEY: ''
+
+      # ── Stage 2: Update backend on VPS ────────────────────────────────────────
+      - name: Pull code + install backend + migrate
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          timeout: 420s
+          timeout: 180s
           script: |
             set -e
             APP_DIR="/var/www/cssrms"
+            git config --global --add safe.directory "$APP_DIR"
+            cd "$APP_DIR"
+            set -a; source "$APP_DIR/.env"; set +a
 
             echo "════════════════════════════════════════"
             echo "  CSS-RMS VPS Deploy"
             echo "  $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
             echo "════════════════════════════════════════"
 
-            cd "$APP_DIR"
-
-            # Load env vars so Prisma can find DATABASE_URL
-            set -a; source "$APP_DIR/.env"; set +a
-
-            echo ""
-            echo "── [1/5] Pulling latest code ────────────"
+            echo "── [1/3] Pulling latest code ────────────"
             git fetch origin main
             git reset --hard origin/main
 
-            echo ""
-            echo "── [2/5] Installing backend dependencies ─"
+            echo "── [2/3] Installing backend dependencies ─"
             npm install --include=dev
 
-            echo ""
-            echo "── [3/5] Prisma: generate + migrate ──────"
+            echo "── [3/3] Prisma: generate + migrate ──────"
             npx prisma generate --schema=rms_backend/prisma/schema.prisma
             if [ "${{ github.event.inputs.skip_migration }}" != "true" ]; then
               npx prisma migrate deploy --schema=rms_backend/prisma/schema.prisma
@@ -74,19 +89,28 @@ jobs:
               echo "   Migrations skipped (skip_migration=true)"
             fi
 
-            echo ""
-            echo "── [4/5] Building React frontend ─────────"
-            cd rms_frontend
-            npm install --legacy-peer-deps
-            npm run build
-            cd ..
+      # ── Stage 3: Upload built frontend from runner to VPS ────────────────────
+      - name: Upload frontend dist to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "rms_frontend/dist"
+          target: "/var/www/cssrms"
 
-            echo ""
-            echo "── [5/5] Restarting Node.js via PM2 ──────"
-            pm2 restart cssrms 2>/dev/null || pm2 start ecosystem.config.js
+      # ── Stage 4: Restart app ──────────────────────────────────────────────────
+      - name: Restart PM2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -a; source /var/www/cssrms/.env; set +a
+            pm2 restart cssrms --update-env 2>/dev/null || pm2 start /var/www/cssrms/ecosystem.config.js
             pm2 save
-
             echo ""
             echo "════════════════════════════════════════"
-            echo "  ✓  Deploy complete"
+            echo "  ✓  Deploy complete — $(date -u)"
             echo "════════════════════════════════════════"

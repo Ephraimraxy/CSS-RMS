@@ -47,28 +47,6 @@ const {
 const { sendEmail } = require('./lib/mailer');
 const webpush = require('web-push');
 
-// Apply any pending, version-controlled migrations before the server starts.
-// Must run at runtime (not build time) because the DB is only reachable from
-// Railway's runtime network, not from the isolated build container.
-// This used to run `prisma db push --accept-data-loss`, which silently force-matches
-// the live database to schema.prisma with no history and no warning on every single
-// boot — it was duplicating (and undoing) the same fix already made to the `start`
-// script in package.json. `migrate deploy` only ever applies new, explicit,
-// version-controlled migration files and fails loudly instead of guessing.
-{
-  const { execSync } = require('child_process');
-  try {
-    logger.info('[startup] Applying pending Prisma migrations…');
-    execSync(
-      'npx prisma migrate deploy --schema=rms_backend/prisma/schema.prisma',
-      { stdio: 'inherit' }
-    );
-    logger.info('[startup] Prisma migrations up to date.');
-  } catch (e) {
-    logger.error('[startup] prisma migrate deploy failed: ' + e.message);
-    throw e; // a failed migration must stop the server from starting, not be swallowed
-  }
-}
 
 const app = express();
 const prisma = new PrismaClient();
