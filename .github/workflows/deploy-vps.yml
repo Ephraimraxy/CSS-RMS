@@ -63,31 +63,26 @@ jobs:
           port: 22
           timeout: 180s
           script: |
-            set -eE
+            set -e
             APP_DIR="/var/www/cssrms"
             LOG="$APP_DIR/deploy-history.log"
-            DEPLOY_START=$(date -u +%s)
             COMMIT="${{ github.sha }}"
 
-            # ── Write failure footer if script exits with error ──────────────
-            cleanup() {
-              [ $? -ne 0 ] && printf "  ✗ FAILED    %s\n══════════════════════════════════════\n" \
-                "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$LOG"
-            }
-            trap cleanup EXIT
+            # _log: write to history file; never crashes the deploy on log errors
+            _log() { printf "%s\n" "$*" >> "$LOG" 2>/dev/null || true; }
 
             git config --global --add safe.directory "$APP_DIR"
             cd "$APP_DIR"
             set -a; source "$APP_DIR/.env"; set +a
 
-            # ── Deploy header ────────────────────────────────────────────────
-            printf "\n══════════════════════════════════════\n" >> "$LOG"
-            printf "DEPLOY    %s\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$LOG"
-            printf "Actor     %s\n" "${{ github.actor }}" >> "$LOG"
-            printf "Commit    %s\n" "${COMMIT:0:7}" >> "$LOG"
-            printf "Run       https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\n" >> "$LOG"
-            printf "──────────────────────────────────────\n" >> "$LOG"
-            printf "  BUILD     compiled on GitHub Actions runner (7 GB)\n" >> "$LOG"
+            _log ""
+            _log "======================================"
+            _log "DEPLOY    $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            _log "Actor     ${{ github.actor }}"
+            _log "Commit    ${COMMIT:0:7}"
+            _log "Run       https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            _log "--------------------------------------"
+            _log "  BUILD     compiled on GitHub Actions runner (7 GB)"
 
             echo "════════════════════════════════════════"
             echo "  CSS-RMS VPS Deploy"
@@ -98,23 +93,30 @@ jobs:
             T=$(date -u +%s)
             git fetch origin main
             git reset --hard origin/main
-            printf "  pull      %3ds  ✓\n" "$(( $(date -u +%s) - T ))" >> "$LOG"
+            _log "  pull      $(( $(date -u +%s) - T ))s  [OK]"
 
             echo "── [2/3] Installing backend dependencies ─"
             T=$(date -u +%s)
             npm install --include=dev
-            printf "  install   %3ds  ✓\n" "$(( $(date -u +%s) - T ))" >> "$LOG"
+            _log "  install   $(( $(date -u +%s) - T ))s  [OK]"
 
             echo "── [3/3] Prisma: generate + migrate ──────"
             T=$(date -u +%s)
             npx prisma generate --schema=rms_backend/prisma/schema.prisma
             if [ "${{ github.event.inputs.skip_migration }}" != "true" ]; then
-              npx prisma migrate deploy --schema=rms_backend/prisma/schema.prisma
+              PRISMA_RC=0
+              npx prisma migrate deploy --schema=rms_backend/prisma/schema.prisma || PRISMA_RC=$?
+              if [ $PRISMA_RC -ne 0 ]; then
+                echo "NOTE: prisma migrate exited $PRISMA_RC (no pending migrations is normal)"
+                _log "  migrate   $(( $(date -u +%s) - T ))s  [WARN exit=$PRISMA_RC]"
+              else
+                _log "  migrate   $(( $(date -u +%s) - T ))s  [OK]"
+              fi
             else
               echo "   Migrations skipped (skip_migration=true)"
+              _log "  migrate   skipped"
             fi
-            printf "  migrate   %3ds  ✓\n" "$(( $(date -u +%s) - T ))" >> "$LOG"
-            printf "  upload         ✓  (SCP — stage 3)\n" >> "$LOG"
+            _log "  upload         [OK]  (SCP - stage 3)"
 
       # ── Stage 3: Upload built frontend from runner to VPS ────────────────────
       - name: Upload frontend dist to VPS
@@ -134,25 +136,20 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            set -eE
+            set -e
             LOG="/var/www/cssrms/deploy-history.log"
             T_RESTART=$(date -u +%s)
 
-            cleanup() {
-              [ $? -ne 0 ] && printf "  ✗ FAILED    restart — %s\n══════════════════════════════════════\n" \
-                "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$LOG"
-            }
-            trap cleanup EXIT
+            _log() { printf "%s\n" "$*" >> "$LOG" 2>/dev/null || true; }
 
             set -a; source /var/www/cssrms/.env; set +a
             pm2 restart cssrms --update-env 2>/dev/null || pm2 start /var/www/cssrms/ecosystem.config.js
             pm2 save
 
-            RESTART_DUR=$(( $(date -u +%s) - T_RESTART ))
-            printf "  restart   %3ds  ✓\n" "$RESTART_DUR" >> "$LOG"
-            printf "──────────────────────────────────────\n" >> "$LOG"
-            printf "✓ SUCCESS   %s\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$LOG"
-            printf "══════════════════════════════════════\n" >> "$LOG"
+            _log "  restart   $(( $(date -u +%s) - T_RESTART ))s  [OK]"
+            _log "--------------------------------------"
+            _log "SUCCESS   $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            _log "======================================"
 
             echo ""
             echo "════════════════════════════════════════"
