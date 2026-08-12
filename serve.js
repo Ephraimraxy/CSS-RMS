@@ -4780,6 +4780,35 @@ app.get('/api/admin/vps-guide', authenticateToken, requireRoles(['global_admin']
   }
 });
 
+app.get('/api/admin/deploy-history', authenticateToken, requireRoles(['global_admin']), (req, res) => {
+  const logPath = path.join(__dirname, 'deploy-history.log');
+  try {
+    if (!fs.existsSync(logPath)) {
+      return res.json({ content: 'No deploys recorded yet.\nPush a change to trigger the first deploy.' });
+    }
+    const raw = fs.readFileSync(logPath, 'utf8');
+    const content = raw.length > 20000 ? raw.slice(-20000) : raw;
+    res.json({ content });
+  } catch (err) {
+    logger.error('[DEPLOY HISTORY GET]', err.message);
+    res.status(500).json({ error: 'Failed to read deploy history.' });
+  }
+});
+
+app.get('/api/admin/pm2-logs', authenticateToken, requireRoles(['global_admin']), (req, res) => {
+  const lines = Math.min(Math.max(parseInt(req.query.lines) || 150, 1), 500);
+  const type = req.query.type === 'err' ? 'cssrms-error.log' : 'cssrms-out.log';
+  const logPath = `/var/log/pm2/${type}`;
+  try {
+    if (!fs.existsSync(logPath)) return res.json({ lines: [], total: 0 });
+    const all = fs.readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim());
+    res.json({ lines: all.slice(-lines), total: all.length });
+  } catch (err) {
+    logger.error('[PM2 LOGS GET]', err.message);
+    res.status(500).json({ error: 'Failed to read PM2 logs.' });
+  }
+});
+
 // Reads Prisma's own migration history table directly — this list is always accurate
 // with zero manual upkeep, since it's exactly what the database itself recorded.
 app.get('/api/admin/migrations', authenticateToken, requireRoles(['global_admin']), async (req, res) => {

@@ -373,6 +373,8 @@ export const adminAPI = {
   getSmsBalance: () => api.get('/admin/sms-balance'),
   getArchitectureDoc: () => api.get('/admin/architecture-doc'),
   getVpsGuide: () => api.get('/admin/vps-guide'),
+  getDeployHistory: () => api.get('/admin/deploy-history'),
+  getPm2Logs: (type = 'out', lines = 150) => api.get(`/admin/pm2-logs?type=${type}&lines=${lines}`),
   getMigrationsLogbook: () => api.get('/admin/migrations'),
   getAiCaps: () => api.get('/admin/ai-caps'),
   saveAiCaps: (caps) => api.post('/admin/ai-caps', caps),
