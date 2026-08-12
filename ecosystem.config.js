@@ -3,6 +3,7 @@ module.exports = {
     {
       name: 'cssrms',
       script: 'serve.js',
+      cwd: '/var/www/cssrms',
       instances: 1,
       autorestart: true,
       watch: false,
