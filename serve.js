@@ -47,28 +47,6 @@ const {
 const { sendEmail } = require('./lib/mailer');
 const webpush = require('web-push');
 
-// Apply any pending, version-controlled migrations before the server starts.
-// Must run at runtime (not build time) because the DB is only reachable from
-// Railway's runtime network, not from the isolated build container.
-// This used to run `prisma db push --accept-data-loss`, which silently force-matches
-// the live database to schema.prisma with no history and no warning on every single
-// boot — it was duplicating (and undoing) the same fix already made to the `start`
-// script in package.json. `migrate deploy` only ever applies new, explicit,
-// version-controlled migration files and fails loudly instead of guessing.
-{
-  const { execSync } = require('child_process');
-  try {
-    logger.info('[startup] Applying pending Prisma migrations…');
-    execSync(
-      'npx prisma migrate deploy --schema=rms_backend/prisma/schema.prisma',
-      { stdio: 'inherit' }
-    );
-    logger.info('[startup] Prisma migrations up to date.');
-  } catch (e) {
-    logger.error('[startup] prisma migrate deploy failed: ' + e.message);
-    throw e; // a failed migration must stop the server from starting, not be swallowed
-  }
-}
 
 const app = express();
 const prisma = new PrismaClient();
@@ -3301,75 +3279,6 @@ app.post('/api/departments/:id/stamp', authenticateToken, requireRoles(['global_
   } catch (error) { sendError(res, 500, error.message); }
 });
 
-// ── Admin Media Library ───────────────────────────────────────────────────────
-const imageUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    if (['image/png','image/jpeg','image/gif','image/webp','image/svg+xml'].includes(file.mimetype)) return cb(null, true);
-    cb(Object.assign(new Error('Only image files are allowed'), { status: 415 }));
-  }
-});
-
-const MEDIA_LIB_KEY = 'media_library';
-
-async function getMediaLibrary() {
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "SystemSetting" ("key" TEXT PRIMARY KEY, "value" TEXT NOT NULL DEFAULT '')`;
-  const row = await prisma.$queryRaw`SELECT "value" FROM "SystemSetting" WHERE "key" = ${MEDIA_LIB_KEY} LIMIT 1`;
-  try { return JSON.parse(row[0]?.value || '[]'); } catch { return []; }
-}
-
-async function saveMediaLibrary(items) {
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "SystemSetting" ("key" TEXT PRIMARY KEY, "value" TEXT NOT NULL DEFAULT '')`;
-  const val = JSON.stringify(items);
-  await prisma.$executeRaw`INSERT INTO "SystemSetting" ("key","value") VALUES (${MEDIA_LIB_KEY}, ${val}) ON CONFLICT ("key") DO UPDATE SET "value" = ${val}`;
-}
-
-// List all library images
-app.get('/api/admin/media', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
-  try { res.json(await getMediaLibrary()); } catch(err) { sendError(res, 500, err.message); }
-});
-
-// Upload image to library
-app.post('/api/admin/media', authenticateToken, requireRoles(['global_admin']), imageUpload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const key = generateStorageKey('media-library', req.file.originalname);
-    await putObject({ key, body: req.file.buffer, contentType: req.file.mimetype });
-    const item = { id: Date.now().toString(), key, name: req.file.originalname, mime: req.file.mimetype, uploadedAt: new Date().toISOString() };
-    const lib = await getMediaLibrary();
-    lib.unshift(item);
-    await saveMediaLibrary(lib);
-    res.json(item);
-  } catch(err) { sendError(res, 500, err.message); }
-});
-
-// Serve a library image
-app.get('/api/admin/media/serve', authenticateToken, async (req, res) => {
-  try {
-    const key = req.query.key;
-    if (!key || typeof key !== 'string' || !key.startsWith('media-library/')) return res.status(400).json({ error: 'Invalid key' });
-    const ext = key.split('.').pop()?.toLowerCase() || '';
-    const mimeMap = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp', svg:'image/svg+xml' };
-    const stream = await getObjectStream(key);
-    res.setHeader('Content-Type', mimeMap[ext] || 'image/png');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    stream.pipe(res);
-  } catch(err) { sendError(res, 500, err.message); }
-});
-
-// Delete a library image
-app.delete('/api/admin/media/:id', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
-  try {
-    const lib = await getMediaLibrary();
-    const item = lib.find(i => i.id === req.params.id);
-    if (!item) return res.status(404).json({ error: 'Image not found' });
-    await deleteObject(item.key).catch(() => {});
-    await saveMediaLibrary(lib.filter(i => i.id !== req.params.id));
-    res.json({ ok: true });
-  } catch(err) { sendError(res, 500, err.message); }
-});
-
 // ── Sub-Account Management (Dept Head OR Super Admin) ────────────────────────
 const requireSubAccountManager = (req, res, next) => {
   const role = normalizeRole(req.user?.role);
@@ -4856,6 +4765,47 @@ app.get('/api/admin/architecture-doc', authenticateToken, requireRoles(['global_
   } catch (err) {
     logger.error('[ARCHITECTURE DOC GET]', err.message);
     res.status(500).json({ error: 'Failed to load architecture guide.' });
+  }
+});
+
+app.get('/api/admin/vps-guide', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const docPath = path.join(__dirname, 'VPS_MANAGEMENT_GUIDE.md');
+    const content = fs.readFileSync(docPath, 'utf8');
+    const stats = fs.statSync(docPath);
+    res.json({ content, updatedAt: stats.mtime });
+  } catch (err) {
+    logger.error('[VPS GUIDE GET]', err.message);
+    res.status(500).json({ error: 'Failed to load VPS management guide.' });
+  }
+});
+
+app.get('/api/admin/deploy-history', authenticateToken, requireRoles(['global_admin']), (req, res) => {
+  const logPath = path.join(__dirname, 'deploy-history.log');
+  try {
+    if (!fs.existsSync(logPath)) {
+      return res.json({ content: 'No deploys recorded yet.\nPush a change to trigger the first deploy.' });
+    }
+    const raw = fs.readFileSync(logPath, 'utf8');
+    const content = raw.length > 20000 ? raw.slice(-20000) : raw;
+    res.json({ content });
+  } catch (err) {
+    logger.error('[DEPLOY HISTORY GET]', err.message);
+    res.status(500).json({ error: 'Failed to read deploy history.' });
+  }
+});
+
+app.get('/api/admin/pm2-logs', authenticateToken, requireRoles(['global_admin']), (req, res) => {
+  const lines = Math.min(Math.max(parseInt(req.query.lines) || 150, 1), 500);
+  const type = req.query.type === 'err' ? 'cssrms-error.log' : 'cssrms-out.log';
+  const logPath = `/var/log/pm2/${type}`;
+  try {
+    if (!fs.existsSync(logPath)) return res.json({ lines: [], total: 0 });
+    const all = fs.readFileSync(logPath, 'utf8').split('\n').filter(l => l.trim());
+    res.json({ lines: all.slice(-lines), total: all.length });
+  } catch (err) {
+    logger.error('[PM2 LOGS GET]', err.message);
+    res.status(500).json({ error: 'Failed to read PM2 logs.' });
   }
 });
 
