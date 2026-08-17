@@ -12,8 +12,6 @@ const LoginPagePremium = () => {
   const [mfaCode, setMfaCode] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState(null);
-  const [isStandalone, setIsStandalone] = useState(false);
   const [showForgotCode, setShowForgotCode] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [deptActivated, setDeptActivated] = useState(null); // null=unknown, true=activated, false=first-time
@@ -21,20 +19,13 @@ const LoginPagePremium = () => {
 
   useEffect(() => {
     getDepartments().then(setDepartments);
-    const handleBeforeInstallPrompt = (e) => { e.preventDefault(); setDeferredPrompt(e); };
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    if (window.matchMedia('(display-mode: standalone)').matches) setIsStandalone(true);
-
     // Load premium fonts only when this screen is active
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = 'https://fonts.googleapis.com/css2?family=Gagalin&family=Alice&family=Chewy&display=swap';
     document.head.appendChild(link);
 
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      document.head.removeChild(link);
-    };
+    return () => { document.head.removeChild(link); };
   }, []);
 
   const handleDeptChange = async (name) => {
@@ -53,12 +44,6 @@ const LoginPagePremium = () => {
     } catch (_) { /* network error — leave as null */ }
   };
 
-  const handleInstallApp = async () => {
-    if (!deferredPrompt) { toast("To install: Open browser menu → 'Add to Home Screen'", { icon: '📲' }); return; }
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') setDeferredPrompt(null);
-  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -338,20 +323,6 @@ const LoginPagePremium = () => {
         </div>
       )}
 
-      {/* ── PWA Install ── */}
-      {/* Only show when browser has offered native install — avoids confusing "open menu" toast */}
-      {!isStandalone && deferredPrompt && (
-        <button onClick={handleInstallApp}
-          className="lg:hidden fixed bottom-6 right-6 z-[100] bg-white/85 backdrop-blur-md border border-primary/20 hover:bg-white text-primary py-2.5 px-5 rounded-full shadow-2xl flex items-center gap-2.5 transition-all active:scale-95 group animate-in slide-in-from-bottom-10">
-          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center group-hover:scale-110 transition-transform">
-            <Smartphone size={16} />
-          </div>
-          <div className="text-left pr-1">
-            <p className="text-[10px] font-black uppercase tracking-widest leading-none opacity-60">Install App</p>
-            <p className="text-xs font-bold leading-tight mt-0.5">RMS Portal</p>
-          </div>
-        </button>
-      )}
     </div>
   );
 };

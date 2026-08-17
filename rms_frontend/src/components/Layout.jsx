@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Menu, Inbox, Clock, WifiOff, RefreshCcw,
   Building2, ShieldAlert, Users, CalendarDays, DollarSign, UserPlus,
   HeartHandshake, Loader2, CheckCircle2, XCircle, X, FilePen, Trash2, GitBranch,
-  Package, AlertTriangle, ScanEye, BookOpen
+  Package, AlertTriangle, ScanEye, BookOpen, Smartphone, Download
 } from 'lucide-react';
 import { getNotifications, getSyncQueueStatus, flushSyncQueue, markNotificationRead, markAllNotificationsRead, clearNotifications, getRequisitions, isMemoRecord, getDepartments } from '../lib/store';
 import { reqAPI, settingsAPI, authAPI } from '../lib/api';
@@ -1004,6 +1004,21 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
 
   const [hrPortalOpen, setHrPortalOpen] = useState(false);
   const [mobileHrOpen, setMobileHrOpen] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [showAppModal, setShowAppModal] = useState(false);
+
+  useEffect(() => {
+    const handler = (e) => { e.preventDefault(); setDeferredPrompt(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallPWA = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') setDeferredPrompt(null);
+  };
   const [hrPortalEnabled, setHrPortalEnabled] = useState(null);
   const [hrPortalAdminEnabled, setHrPortalAdminEnabled] = useState(null);
   const [studioEnabled, setStudioEnabled] = useState(null);
@@ -1204,6 +1219,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
           </div>
 
           <div className="p-3 border-t border-border/20 mb-2 space-y-1">
+            <SidebarItem icon={Smartphone} label="Applications" onClick={() => setShowAppModal(true)} isCollapsed={isCollapsed} />
             <button
               onClick={toggleSidebar}
               title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -1270,6 +1286,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
                 <SidebarItem icon={ScanEye} label="Oversight" active={currentView === 'icc_oversight'} onClick={() => onViewChange('icc_oversight')} mobile />
               )}
               <SidebarItem icon={deptStatus.isReady ? Building2 : ShieldAlert} label="Profile" active={currentView === 'dept_profile'} onClick={() => onViewChange('dept_profile')} mobile />
+              <SidebarItem icon={Smartphone} label="Apps" onClick={() => setShowAppModal(true)} mobile />
             </>
           ) : showHRPortal && user?.role !== 'global_admin' ? (
             // Pure HR role — main nav IS the HR sections
@@ -1280,6 +1297,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
               <SidebarItem icon={Clock} label="Attendance" active={currentView === 'hr_attendance'} onClick={() => onViewChange('hr_attendance')} mobile />
               <SidebarItem icon={DollarSign} label="Payroll" active={currentView === 'hr_payroll'} onClick={() => onViewChange('hr_payroll')} mobile />
               <SidebarItem icon={UserPlus} label="Recruit" active={currentView === 'hr_recruitment'} onClick={() => onViewChange('hr_recruitment')} mobile />
+              <SidebarItem icon={Smartphone} label="Apps" onClick={() => setShowAppModal(true)} mobile />
             </>
           ) : (
             // Global admin — full admin nav; HR button toggles the sub-nav row above
@@ -1314,10 +1332,76 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
               <SidebarItem icon={Briefcase} label="Depts" active={currentView === 'department_manager'} onClick={() => onViewChange('department_manager')} mobile />
               <SidebarItem icon={Activity} label="Audit" active={currentView === 'audit_logs'} onClick={() => onViewChange('audit_logs')} mobile />
               <SidebarItem icon={BookOpen} label="Docs" active={currentView === 'documentation'} onClick={() => onViewChange('documentation')} mobile />
+              <SidebarItem icon={Smartphone} label="Apps" onClick={() => setShowAppModal(true)} mobile />
             </>
           )}
         </nav>
       </div>
+
+      {showAppModal && (
+        <div
+          className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowAppModal(false)}
+        >
+          <div
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 mb-4 sm:mb-0"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-5">
+              <div>
+                <h2 className="text-xl font-black text-[#0f172a] tracking-tight">Get the App</h2>
+                <p className="text-sm text-[#64748b] mt-0.5">Install CSS Group RMS on your device</p>
+              </div>
+              <button
+                onClick={() => setShowAppModal(false)}
+                className="p-2 rounded-2xl hover:bg-black/5 transition-colors text-[#64748b] -mt-1 -mr-1"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <button
+                onClick={handleInstallPWA}
+                disabled={!deferredPrompt}
+                className="w-full flex items-center gap-4 p-4 rounded-2xl bg-[#0f172a] text-white hover:bg-[#1e293b] disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-[0.98]"
+              >
+                <div className="p-2.5 rounded-xl bg-white/10 shrink-0">
+                  <Smartphone size={20} />
+                </div>
+                <div className="text-left">
+                  <p className="font-bold text-sm">Get PWA App</p>
+                  <p className="text-xs text-white/60">
+                    {deferredPrompt ? 'Install directly from your browser' : 'Already installed or use browser menu'}
+                  </p>
+                </div>
+              </button>
+              <a
+                href="https://cssgrouprms.com/downloads/cssrms.apk"
+                download
+                className="w-full flex items-center gap-4 p-4 rounded-2xl bg-[#206e33] text-white hover:bg-[#1a5a2a] transition-all active:scale-[0.98] no-underline"
+              >
+                <div className="p-2.5 rounded-xl bg-white/10 shrink-0">
+                  <Download size={20} />
+                </div>
+                <div className="text-left">
+                  <p className="font-bold text-sm">Get APK for Android</p>
+                  <p className="text-xs text-white/60">Direct download for Android devices</p>
+                </div>
+              </a>
+              <div className="w-full flex items-center gap-4 p-4 rounded-2xl bg-[#f1f5f9] text-[#94a3b8] cursor-not-allowed">
+                <div className="p-2.5 rounded-xl bg-[#e2e8f0] shrink-0">
+                  <Smartphone size={20} />
+                </div>
+                <div className="text-left">
+                  <p className="font-bold text-sm text-[#94a3b8]">iOS App</p>
+                  <p className="text-xs text-[#94a3b8]">Coming Soon</p>
+                </div>
+                <span className="ml-auto text-[10px] font-black bg-[#e2e8f0] text-[#94a3b8] px-2.5 py-1 rounded-full uppercase tracking-wide shrink-0">Soon</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ChatWidget
         initialDeepLink={chatDeepLink}
