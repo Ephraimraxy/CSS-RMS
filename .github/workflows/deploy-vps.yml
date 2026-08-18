@@ -91,6 +91,7 @@ jobs:
 
             echo "── [1/3] Pulling latest code ────────────"
             T=$(date -u +%s)
+            git remote set-url origin https://github.com/Ephraimraxy/CSS-RMS.git
             git fetch origin main
             git reset --hard origin/main
             _log "  pull      $(( $(date -u +%s) - T ))s  [OK]"
