@@ -9884,6 +9884,16 @@ const distPath = path.join(__dirname, 'rms_frontend', 'dist');
 const assetsPath = path.join(distPath, 'assets');
 const indexPath = path.join(distPath, 'index.html');
 
+// ── Static downloads (APK etc.) — served through /api/downloads/:file ──────
+// Nginx proxies /api/ to this Express server, so no Nginx config change needed.
+const downloadsPath = path.join(__dirname, 'downloads');
+app.get('/api/downloads/:file', (req, res) => {
+  const file = path.basename(req.params.file); // strip any path traversal
+  const full = path.join(downloadsPath, file);
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Not found' });
+  res.download(full, file);
+});
+
 function verifyFrontendBuild() {
   if (!fs.existsSync(indexPath)) {
     logger.error({ indexPath }, '[FRONTEND] Missing build output. Run npm run build before starting the server.');

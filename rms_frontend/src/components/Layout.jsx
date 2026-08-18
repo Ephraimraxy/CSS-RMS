@@ -1376,7 +1376,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
                 </div>
               </button>
               <a
-                href="https://cssgrouprms.com/downloads/cssrms.apk"
+                href="/api/downloads/cssrms.apk"
                 download
                 className="w-full flex items-center gap-4 p-4 rounded-2xl bg-[#206e33] text-white hover:bg-[#1a5a2a] transition-all active:scale-[0.98] no-underline"
               >
