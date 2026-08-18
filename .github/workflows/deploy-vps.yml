@@ -119,7 +119,7 @@ jobs:
             fi
             _log "  upload         [OK]  (SCP - stage 3)"
 
-      # ── Stage 3: Upload built frontend from runner to VPS ────────────────────
+      # ── Stage 3: Upload built frontend + downloads from runner to VPS ─────────
       - name: Upload frontend dist to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -129,7 +129,27 @@ jobs:
           source: "rms_frontend/dist"
           target: "/var/www/cssrms"
 
-      # ── Stage 4: Restart app ──────────────────────────────────────────────────
+      - name: Upload downloads folder (APK etc.) to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "downloads"
+          target: "/var/www/cssrms"
+
+      # ── Stage 4: Apply Nginx config if changed ───────────────────────────────
+      - name: Apply Nginx config
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cp /var/www/cssrms/nginx/cssrms.conf /etc/nginx/sites-available/cssrms
+            nginx -t && systemctl reload nginx
+
+      # ── Stage 5: Restart app ──────────────────────────────────────────────────
       - name: Restart PM2
         uses: appleboy/ssh-action@v1.2.0
         with:
