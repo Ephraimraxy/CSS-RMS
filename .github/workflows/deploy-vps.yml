@@ -94,6 +94,7 @@ jobs:
             git remote set-url origin https://github.com/Ephraimraxy/CSS-RMS.git
             git fetch origin main
             git reset --hard origin/main
+            mkdir -p "$APP_DIR/downloads"
             _log "  pull      $(( $(date -u +%s) - T ))s  [OK]"
 
             echo "── [2/3] Installing backend dependencies ─"
@@ -129,14 +130,15 @@ jobs:
           source: "rms_frontend/dist"
           target: "/var/www/cssrms"
 
-      - name: Upload downloads folder (APK etc.) to VPS
+      - name: Upload APK to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: "downloads"
-          target: "/var/www/cssrms"
+          source: "downloads/cssrms.apk"
+          target: "/var/www/cssrms/downloads/"
+          strip_components: 1
 
       # ── Stage 4: Apply Nginx config if changed ───────────────────────────────
       - name: Apply Nginx config
