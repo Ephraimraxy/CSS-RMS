@@ -140,18 +140,7 @@ jobs:
           target: "/var/www/cssrms/downloads/"
           strip_components: 1
 
-      # ── Stage 4: Apply Nginx config if changed ───────────────────────────────
-      - name: Apply Nginx config
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            cp /var/www/cssrms/nginx/cssrms.conf /etc/nginx/sites-available/cssrms
-            nginx -t && systemctl reload nginx
-
-      # ── Stage 5: Restart app ──────────────────────────────────────────────────
+      # ── Stage 4: Restart app ──────────────────────────────────────────────────
       - name: Restart PM2
         uses: appleboy/ssh-action@v1.2.0
         with:
