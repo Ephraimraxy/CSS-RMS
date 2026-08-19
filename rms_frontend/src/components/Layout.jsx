@@ -1340,11 +1340,11 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
 
       {showAppModal && (
         <div
-          className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
           onClick={() => setShowAppModal(false)}
         >
           <div
-            className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 mb-4 sm:mb-0"
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-start justify-between mb-5">
