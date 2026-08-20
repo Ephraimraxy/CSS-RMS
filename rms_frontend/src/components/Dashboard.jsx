@@ -173,7 +173,7 @@ const Dashboard = ({ onViewChange }) => {
   const [smsBalance, setSmsBalance] = useState(null);
   const [switchingProvider, setSwitchingProvider] = useState(false);
   const loadSmsBalance = () => {
-    adminAPI.getSmsBalance().then(setSmsBalance).catch(() => setSmsBalance({ termii: { error: 'Could not load.' }, twilio: { error: 'Could not load.' } }));
+    adminAPI.getSmsBalance().then(setSmsBalance).catch(() => setSmsBalance({ termii: { error: 'Could not load.' }, twilio: { error: 'Could not load.' }, textflow: { error: 'Could not load.' } }));
   };
   useEffect(() => {
     if (normalizeRole(user?.role) !== 'global_admin') return;
@@ -186,7 +186,8 @@ const Dashboard = ({ onViewChange }) => {
     try {
       await settingsAPI.set('sms_provider', provider);
       setSmsBalance(prev => ({ ...prev, provider }));
-      toast.success(`${provider === 'twilio' ? 'Twilio' : 'Termii'} is now the active SMS provider.`);
+      const label = provider === 'twilio' ? 'Twilio' : provider === 'textflow' ? 'TextFlow' : 'Termii';
+      toast.success(`${label} is now the active SMS provider.`);
       loadSmsBalance();
     } catch {
       toast.error('Could not switch SMS provider.');
@@ -320,7 +321,7 @@ const Dashboard = ({ onViewChange }) => {
           </div>
         )}
 
-        <div className={`grid gap-3 sm:gap-6 ${normalizeRole(user?.role) === 'global_admin' ? 'grid-cols-2 lg:grid-cols-4 xl:grid-cols-7' : user?.role === 'department' ? 'grid-cols-2 lg:grid-cols-6' : 'grid-cols-2 lg:grid-cols-5'}`}>
+        <div className={`grid gap-3 sm:gap-6 ${normalizeRole(user?.role) === 'global_admin' ? 'grid-cols-2 lg:grid-cols-4 xl:grid-cols-8' : user?.role === 'department' ? 'grid-cols-2 lg:grid-cols-6' : 'grid-cols-2 lg:grid-cols-5'}`}>
           <StatCard label="Pending Actions" value={String(stats.pending).padStart(2, '0')} icon={Clock} color="orange" onClick={() => onViewChange('requisitions')} />
           <StatCard label="Approved Reqs" value={String(stats.approved).padStart(2, '0')} icon={CheckCircle2} color="emerald" onClick={() => onViewChange('requisitions')} />
           <StatCard label="Rejected Reqs" value={String(stats.rejected).padStart(2, '0')} icon={XCircle} color="red" onClick={() => onViewChange('requisitions')} />
@@ -357,7 +358,18 @@ const Dashboard = ({ onViewChange }) => {
                   activeLabel="Active"
                   danger={!!smsBalance?.twilio?.belowThreshold}
                   onClick={() => switchSmsProvider('twilio')}
-                  title={smsBalance?.twilio?.belowThreshold ? `⚠️ Balance below $${smsBalance?.thresholds?.twilio ?? 5} threshold — top up now` : smsBalance?.twilio?.error || (activeProvider === 'twilio' ? 'Active — click Termii to switch' : 'Click to activate Twilio')}
+                  title={smsBalance?.twilio?.belowThreshold ? `⚠️ Balance below $${smsBalance?.thresholds?.twilio ?? 5} threshold — top up now` : smsBalance?.twilio?.error || (activeProvider === 'twilio' ? 'Active — click to switch' : 'Click to activate Twilio')}
+                />
+                <StatCard
+                  label="TextFlow Balance"
+                  value={fmtProviderBalance(smsBalance?.textflow)}
+                  icon={MessageSquare}
+                  color="violet"
+                  active={activeProvider === 'textflow'}
+                  activeLabel="Active"
+                  danger={!!smsBalance?.textflow?.belowThreshold}
+                  onClick={() => switchSmsProvider('textflow')}
+                  title={smsBalance?.textflow?.belowThreshold ? `⚠️ Balance below ₦${smsBalance?.thresholds?.textflow ?? 1000} threshold — top up now` : smsBalance?.textflow?.error || (activeProvider === 'textflow' ? 'Active — click to switch' : 'Click to activate TextFlow')}
                 />
               </>
             );
