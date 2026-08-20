@@ -2206,18 +2206,18 @@ async function sendTwilioSms({ to, message }) {
 
 // ── TextFlow SMS ─────────────────────────────────────────────────────────────
 async function sendTextflowSms({ to, message }) {
-  const apiKey   = process.env.TEXTFLOW_API_KEY;
-  const senderId = process.env.TEXTFLOW_SENDER_ID || 'BurstBrain';
+  const apiKey = process.env.TEXTFLOW_API_KEY;
+  const sender = process.env.TEXTFLOW_SENDER_ID || 'BBConcepts';
   if (!apiKey || !to) {
     logger.warn(`[SMS] Skipped — ${!apiKey ? 'TEXTFLOW_API_KEY missing' : 'no phone number'}.`);
     return { skipped: true };
   }
   const phone = normalizeNgPhone(to);
   try {
-    const resp = await fetch('https://api.textflow.ng/sms/send', {
+    const resp = await fetch('https://textflow.ng/api/v1/sms/send', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: apiKey, to: phone, from: senderId, message }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ sender, to: phone, message }),
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
@@ -5056,12 +5056,15 @@ async function getTextflowBalance() {
   const apiKey = process.env.TEXTFLOW_API_KEY;
   if (!apiKey) return { configured: false };
   try {
-    const resp = await fetch(`https://api.textflow.ng/balance?api_key=${encodeURIComponent(apiKey)}`);
+    const resp = await fetch('https://textflow.ng/api/v1/balance', {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+    });
     const data = await resp.json().catch(() => ({}));
     logger.info(`[SMS] TextFlow balance check — status ${resp.status}, body: ${JSON.stringify(data)}`);
     if (!resp.ok) return { configured: true, error: data?.message || `TextFlow returned status ${resp.status}.` };
-    if (data.balance === undefined) return { configured: true, error: data?.message || 'Unexpected response from TextFlow.' };
-    return { configured: true, balance: data.balance, currency: data.currency || 'NGN' };
+    const bal = data?.data?.balance;
+    if (bal === undefined) return { configured: true, error: data?.message || 'Unexpected response from TextFlow.' };
+    return { configured: true, balance: bal, currency: data?.data?.currency || 'NGN' };
   } catch (error) {
     logger.warn('[SMS] TextFlow balance check failed:', error.message);
     return { configured: true, error: error.message };
