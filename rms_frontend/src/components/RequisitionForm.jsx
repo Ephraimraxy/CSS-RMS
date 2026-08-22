@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Upload, Send, Save, CreditCard, Package, FileText, AlertTriangle, CheckCircle2, Loader2, ArrowLeft, MessageSquare, Eye } from 'lucide-react';
 import { addRequisition, getDepartments, getRequisitionTypes, uploadAttachments } from '../lib/store';
-import { deptAPI, aiAPI, settingsAPI } from '../lib/api';
+import api, { deptAPI, aiAPI, settingsAPI } from '../lib/api';
 import { useNetwork } from '../App';
 import { toast } from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
@@ -179,14 +179,20 @@ const RequisitionForm = ({ isOpen, onClose }) => {
 
       const result = await addRequisition(payload);
 
-      // Upload attachments if created successfully
+      // Upload attachments — if upload fails, roll back the whole submission
       if (result && result.length > 0 && files.length > 0) {
+        const reqId = result[0].id;
         try {
           setUploadProgress(0);
-          await uploadAttachments(result[0].id, files, { onProgress: setUploadProgress, uploaderDept: user?.name, stageName: 'Initial Submission' });
+          await uploadAttachments(reqId, files, { onProgress: setUploadProgress, uploaderDept: user?.name, stageName: 'Initial Submission' });
           setUploadProgress(100);
-        } catch {
-          toast.error('Requisition created but file upload failed. You can add files later.');
+        } catch (uploadErr) {
+          // Roll back: delete the just-created requisition so nothing is half-submitted
+          try { await api.delete(`/requisitions/${reqId}`); } catch { /* ignore rollback errors */ }
+          setTimeout(() => setUploadProgress(null), 200);
+          const detail = uploadErr?.response?.data?.error || uploadErr?.message || 'Unknown error';
+          toast.error(`Submission failed — file could not be uploaded (${detail}). Please try again.`, { duration: 7000 });
+          return;
         } finally {
           setTimeout(() => setUploadProgress(null), 400);
         }
@@ -440,7 +446,17 @@ const RequisitionForm = ({ isOpen, onClose }) => {
               multiple
               className="sr-only"
               ref={fileInputRef}
-              onChange={e => { setFiles(prev => [...prev, ...Array.from(e.target.files)]); e.target.value = ''; }}
+              onChange={e => {
+                const MAX = 10 * 1024 * 1024;
+                const picked = Array.from(e.target.files);
+                const oversized = picked.filter(f => f.size > MAX);
+                if (oversized.length) {
+                  toast.error(`File too large (max 10 MB): ${oversized.map(f => f.name).join(', ')}`);
+                }
+                const valid = picked.filter(f => f.size <= MAX);
+                if (valid.length) setFiles(prev => [...prev, ...valid]);
+                e.target.value = '';
+              }}
               tabIndex={-1}
             />
             <label

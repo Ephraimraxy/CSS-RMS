@@ -31,7 +31,8 @@ const {
   deleteObject,
   getObjectStream,
   getObjectBuffer,
-  generateStorageKey
+  generateStorageKey,
+  useS3
 } = require('./lib/storage');
 const {
   getKeyPair,
@@ -4884,6 +4885,42 @@ app.get('/api/admin/pm2-logs', authenticateToken, requireRoles(['global_admin'])
 
 // Reads Prisma's own migration history table directly — this list is always accurate
 // with zero manual upkeep, since it's exactly what the database itself recorded.
+app.get('/api/admin/storage-status', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  const status = {
+    mode: useS3 ? 'r2' : 'local-disk',
+    r2Configured: useS3,
+    r2AccountId: process.env.R2_ACCOUNT_ID ? `${process.env.R2_ACCOUNT_ID.slice(0, 6)}***` : null,
+    r2Bucket: process.env.R2_BUCKET_NAME || null,
+    testResult: null,
+    testError: null,
+  };
+  if (useS3) {
+    try {
+      const testKey = `_healthcheck/ping-${Date.now()}.txt`;
+      await putObject({ key: testKey, body: Buffer.from('ping'), contentType: 'text/plain' });
+      await deleteObject(testKey);
+      status.testResult = 'ok';
+    } catch (err) {
+      status.testResult = 'failed';
+      status.testError = err.message;
+    }
+  } else {
+    const { promises: fsp, existsSync } = require('fs');
+    const uploadDir = require('path').join(__dirname, 'uploads');
+    try {
+      await fsp.mkdir(uploadDir, { recursive: true });
+      const testFile = require('path').join(uploadDir, `ping-${Date.now()}.txt`);
+      await fsp.writeFile(testFile, 'ping');
+      await fsp.unlink(testFile);
+      status.testResult = 'ok';
+    } catch (err) {
+      status.testResult = 'failed';
+      status.testError = err.message;
+    }
+  }
+  res.json(status);
+});
+
 app.get('/api/admin/migrations', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
     const rows = await prisma.$queryRaw`
@@ -8818,7 +8855,12 @@ app.post('/api/requisitions/:id/attachments', authenticateToken, upload.array('f
     const attachments = [];
     for (const file of files) {
       const storageKey = generateStorageKey(`attachments/${id}`, file.originalname);
-      await putObject({ key: storageKey, body: file.buffer, contentType: file.mimetype });
+      try {
+        await putObject({ key: storageKey, body: file.buffer, contentType: file.mimetype });
+      } catch (storageErr) {
+        logger.error(`[UPLOAD] Storage failed for ${file.originalname} (req #${id}): ${storageErr.message}`, { useS3, bucket: process.env.R2_BUCKET_NAME || 'local' });
+        return res.status(500).json({ error: `File storage failed: ${storageErr.message}` });
+      }
       const created = await prisma.attachment.create({
         data: {
           filename: file.originalname,
@@ -8845,7 +8887,10 @@ app.post('/api/requisitions/:id/attachments', authenticateToken, upload.array('f
     });
 
     res.json(attachments);
-  } catch (error) { sendError(res, 500, error.message); }
+  } catch (error) {
+    logger.error(`[UPLOAD] Attachment endpoint error for req #${req.params.id}:`, error.message);
+    sendError(res, 500, error.message);
+  }
 });
 
 app.get('/api/attachments/:id/download', authenticateToken, async (req, res) => {
