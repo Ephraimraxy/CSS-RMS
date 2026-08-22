@@ -2216,7 +2216,7 @@ async function sendTextflowSms({ to, message }) {
   try {
     // TextFlow requires local NG format (08012345678), not international (2348...)
     const localPhone = phone.startsWith('234') ? '0' + phone.slice(3) : phone;
-    const payload = { sender, to: localPhone, message };
+    const payload = { sender_id: sender, recipients: localPhone, message };
 
     // TextFlow's send endpoint sits behind Laravel web middleware (CSRF-protected).
     // We must fetch a CSRF token + session cookie from the homepage first.
@@ -2228,7 +2228,7 @@ async function sendTextflowSms({ to, message }) {
       .split(/,(?=[^;]+?=)/).map(c => c.split(';')[0]).join('; ');
     logger.info(`[SMS] TextFlow CSRF token obtained: ${csrfToken ? 'yes' : 'NO'}`);
 
-    logger.info(`[SMS] TextFlow send request — to=${localPhone} sender=${sender}`);
+    logger.info(`[SMS] TextFlow send request — recipients=${localPhone} sender_id=${sender}`);
     const resp = await fetch('https://textflow.ng/api/v1/sms/send', {
       method: 'POST',
       headers: {
@@ -2252,7 +2252,7 @@ async function sendTextflowSms({ to, message }) {
       logger.warn('[SMS] TextFlow send non-success:', JSON.stringify(data));
       return { error: data?.message || rawText.slice(0, 100) || JSON.stringify(data) };
     }
-    logger.info(`[SMS] Sent via TextFlow to ${localPhone}`);
+    logger.info(`[SMS] Sent via TextFlow to ${phone} (local: ${localPhone})`);
     return data;
   } catch (e) {
     logger.warn('[SMS] TextFlow request error:', e.message);
@@ -3746,7 +3746,8 @@ app.post('/api/sub-accounts/batch-upload', authenticateToken, requireSubAccountM
         ];
         const { text, html } = buildEmailContent({ title: 'Account Activated — Welcome to RMS Portal', lines, actionLabel: 'Open RMS Portal' });
         sendEmail({ to: headRow.email, subject: '[RMS] Account Activated — Welcome to RMS Portal', text, html }).catch(() => {});
-        sendSms({ to: headRow.phone, message: `HELLO ${headFullName}: Welcome to RMS portal, ${parent.name} department. Staff ID: ${headRow.staffId}. Access Code: ${headAccessCode}. Use the access code to login then create your personal password to access your dashboard.` }).catch(() => {});
+        sendSms({ to: headRow.phone, message: `HELLO ${headFullName}: Welcome to RMS portal, ${parent.name} department. Staff ID: ${headRow.staffId}. Access Code: ${headAccessCode}. Use the access code to login then create your personal password to access your dashboard.` })
+          .catch(e => logger.error(`[BATCH-UPLOAD] SMS failed for head ${headFullName} (${headRow.phone}):`, e.message));
       });
     }
 
@@ -3794,7 +3795,8 @@ app.post('/api/sub-accounts/batch-upload', authenticateToken, requireSubAccountM
         ];
         const { text, html } = buildEmailContent({ title: `Welcome to CSS Group RMS — ${fullName}`, lines, actionLabel: 'Log In to RMS Portal' });
         sendEmail({ to: r.email, subject: `[RMS] Welcome — Your Sub-Account Access Code: ${fullName}`, text, html }).catch(() => {});
-        sendSms({ to: r.phone, message: `CSS RMS: Your sub-account "${fullName}" under ${parent.name} is ready. Staff ID: ${r.staffId}. Access Code: ${plainCode}. Log in then create your password. - RMS Administrator` }).catch(() => {});
+        sendSms({ to: r.phone, message: `CSS RMS: Your sub-account "${fullName}" under ${parent.name} is ready. Staff ID: ${r.staffId}. Access Code: ${plainCode}. Log in then create your password. - RMS Administrator` })
+          .catch(e => logger.error(`[BATCH-UPLOAD] SMS failed for ${fullName} (${r.phone}):`, e.message));
       });
     }
 
