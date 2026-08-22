@@ -80,11 +80,13 @@ async function broadcastUpdate(reqId, meta = {}) {
   for (const [, { res, user }] of sseClients) {
     const role = normalizeRole(user?.role);
     const isIcc = role === 'department' && isIccDept(user?.name);
+    const oversightIds = await getOversightDeptIds().catch(() => []);
+    const isOversightDept = role === 'department' && oversightIds.includes(toIntOrNull(user?.deptId));
     const ownDeptInvolved = involvedDeptIds.has(toIntOrNull(user?.deptId));
     // Sub-accounts often carry their own deptId (different from the parent's) —
     // also match on parentDeptId so they get real-time updates for parent-routed requests.
     const parentDeptInvolved = user?.isSubAccount && involvedDeptIds.has(toIntOrNull(user?.parentDeptId));
-    if (role !== 'department' || isIcc || ownDeptInvolved || parentDeptInvolved) {
+    if (role !== 'department' || isIcc || isOversightDept || ownDeptInvolved || parentDeptInvolved) {
       try { res.write(payload); } catch (_) {}
     }
   }
@@ -236,6 +238,23 @@ async function getIccDeptId() {
   } catch (_) { _iccDeptIdCache = null; }
   return _iccDeptIdCache;
 }
+
+// Oversight departments — admin-configured list of dept IDs that get global observer
+// access (same as ICC). Cached for 2 minutes since this setting rarely changes.
+let _oversightDeptIdsCache = null;
+let _oversightDeptIdsCacheAt = 0;
+async function getOversightDeptIds() {
+  if (_oversightDeptIdsCache !== null && Date.now() - _oversightDeptIdsCacheAt < 2 * 60_000) return _oversightDeptIdsCache;
+  try {
+    const setting = await prisma.systemSetting.findUnique({ where: { key: 'oversight_departments' } });
+    const raw = setting?.value || '[]';
+    const parsed = JSON.parse(raw);
+    _oversightDeptIdsCache = Array.isArray(parsed) ? parsed.map(Number).filter(Boolean) : [];
+  } catch (_) { _oversightDeptIdsCache = []; }
+  _oversightDeptIdsCacheAt = Date.now();
+  return _oversightDeptIdsCache;
+}
+function invalidateOversightCache() { _oversightDeptIdsCache = null; }
 
 // ── Reference Code Generator ──────────────────────────────────────────────────
 const deriveCode = (name) => {
@@ -857,8 +876,10 @@ async function canReadRequisition(requisition, user) {
   const userRole = normalizeRole(user?.role);
   if (userRole === 'global_admin' || userRole !== 'department') return true;
 
-  // ICC can read every request (global observer)
+  // ICC and admin-designated oversight departments can read every request (global observer)
   if (isIccDept(user?.name)) return true;
+  const oversightIds = await getOversightDeptIds().catch(() => []);
+  if (oversightIds.includes(toIntOrNull(user?.deptId))) return true;
 
   const deptId = toIntOrNull(user?.deptId);
   const reqId = toIntOrNull(requisition?.id);
@@ -5015,6 +5036,7 @@ app.put('/api/system-settings/:key', authenticateToken, async (req, res) => {
       INSERT INTO "SystemSetting" ("key", "value") VALUES (${req.params.key}, ${value})
       ON CONFLICT ("key") DO UPDATE SET "value" = EXCLUDED."value"
     `;
+    if (req.params.key === 'oversight_departments') invalidateOversightCache();
     res.json({ key: req.params.key, value });
   } catch (error) { sendError(res, 500, error.message); }
 });
@@ -8678,9 +8700,12 @@ app.get('/api/requisitions', authenticateToken, async (req, res) => {
     const typeValues = [...new Set(scopeTypes.flatMap(t => typeAliases[t.toLowerCase()] || [t]))];
     const typeScopeWhere = typeValues.length > 0 ? { type: { in: typeValues } } : {};
     let where = typeScopeWhere;
-    // ICC: global observer — sees ALL requests regardless of routing
-    if (normalizeRole(req.user.role) === 'department' && isIccDept(req.user?.name)) {
-      // ICC sees everything — typeScopeWhere already applied above, no extra dept filter
+    // ICC and oversight departments: global observer — sees ALL requests regardless of routing
+    const _oversightIds = await getOversightDeptIds().catch(() => []);
+    const _isGlobalObserver = normalizeRole(req.user.role) === 'department' &&
+      (isIccDept(req.user?.name) || _oversightIds.includes(toIntOrNull(req.user?.deptId)));
+    if (_isGlobalObserver) {
+      // Global observer sees everything — typeScopeWhere already applied above, no extra dept filter
     } else if (normalizeRole(req.user.role) === 'department' && req.user.deptId) {
       const deptId = parseInt(req.user.deptId);
       // Extra IDs from columns not in Prisma schema — safe fallback if columns don't exist yet

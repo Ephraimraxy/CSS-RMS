@@ -195,6 +195,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [headsCanManageSubaccounts, setHeadsCanManageSubaccounts] = useState(true);
   const [headsCanSetSubPrivileges, setHeadsCanSetSubPrivileges]   = useState(true);
   const [iccOversightEnabled, setIccOversightEnabled]             = useState(true);
+  const [oversightDeptIds, setOversightDeptIds]                   = useState([]);
   const [deptCreationHeadDetailsEnabled, setDeptCreationHeadDetailsEnabled] = useState(true);
   const [accountIccBypassEnabled, setAccountIccBypassEnabled]     = useState(false);
   const [ceoIccBypassEnabled, setCeoIccBypassEnabled]             = useState(false);
@@ -366,7 +367,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const loadFeatureFlags = async () => {
     try {
       const [
-        studioRes, hrRes, hrAdminRes, loginRes, storeRes, headsManageRes, headsPrivRes, iccOversightRes, deptHeadDetailsRes,
+        studioRes, hrRes, hrAdminRes, loginRes, storeRes, headsManageRes, headsPrivRes, iccOversightRes, oversightDeptsRes, deptHeadDetailsRes,
         accountIccBypassRes, ceoIccBypassRes,
         accountThreshEnabledRes, accountThreshAmountRes, ceoThreshEnabledRes, ceoThreshAmountRes,
         adminCreateFundRes, adminCreateMaterialRes, adminCreateMemoRes,
@@ -379,6 +380,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.get('heads_can_manage_subaccounts'),
         settingsAPI.get('heads_can_set_subaccount_privileges'),
         settingsAPI.get('icc_oversight_enabled'),
+        settingsAPI.get('oversight_departments'),
         settingsAPI.get('dept_creation_head_details_enabled'),
         settingsAPI.get('icc_bypass_account_enabled'),
         settingsAPI.get('icc_bypass_ceo_enabled'),
@@ -406,6 +408,9 @@ const WorkflowBuilder = ({ onViewChange }) => {
         setHeadsCanSetSubPrivileges(headsPrivRes.value.value !== 'false');
       if (iccOversightRes.status === 'fulfilled' && iccOversightRes.value?.value !== undefined)
         setIccOversightEnabled(iccOversightRes.value.value !== 'false');
+      if (oversightDeptsRes.status === 'fulfilled' && oversightDeptsRes.value?.value) {
+        try { setOversightDeptIds(JSON.parse(oversightDeptsRes.value.value).map(Number)); } catch { setOversightDeptIds([]); }
+      }
       if (deptHeadDetailsRes.status === 'fulfilled' && deptHeadDetailsRes.value?.value !== undefined)
         setDeptCreationHeadDetailsEnabled(deptHeadDetailsRes.value.value !== 'false');
       if (accountIccBypassRes.status === 'fulfilled' && accountIccBypassRes.value?.value !== undefined)
@@ -491,6 +496,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.set('heads_can_manage_subaccounts', String(headsCanManageSubaccounts)),
         settingsAPI.set('heads_can_set_subaccount_privileges', String(headsCanSetSubPrivileges)),
         settingsAPI.set('icc_oversight_enabled', String(iccOversightEnabled)),
+        settingsAPI.set('oversight_departments', JSON.stringify(oversightDeptIds)),
         settingsAPI.set('dept_creation_head_details_enabled', String(deptCreationHeadDetailsEnabled)),
         settingsAPI.set('icc_bypass_account_enabled', String(accountIccBypassEnabled)),
         settingsAPI.set('icc_bypass_ceo_enabled', String(ceoIccBypassEnabled)),
@@ -846,7 +852,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 { label: 'HR Portal (Departments)', desc: 'Grants the HR department and HR-role users access to the HR management portal. When disabled, the HR Portal button is hidden from department sidebars — Super Admin access is controlled separately below.', value: hrPortalEnabled, set: setHrPortalEnabled },
                 { label: 'HR Portal (Super Admin)', desc: 'Grants the Super Admin account access to the HR management portal. Toggle this independently — disabling it hides HR Portal from the admin sidebar while departments can still have it enabled, and vice versa.', value: hrPortalAdminEnabled, set: setHrPortalAdminEnabled },
                 { label: 'Store Records', desc: 'Gives the Store department and all its sub-accounts access to the stock ledger (store records) module. When disabled the Store Records button is hidden from the sidebar.', value: storeRecordsEnabled, set: setStoreRecordsEnabled },
-                { label: 'ICC Oversight Console', desc: 'Shows the "Oversight" button in ICC\'s sidebar, giving them the global observer console (view all requests, freeze/unfreeze, comment). When disabled, the button is hidden from ICC\'s sidebar.', value: iccOversightEnabled, set: setIccOversightEnabled },
+                // ICC Oversight Console is now configured separately below as a dept multi-select
                 { label: 'Heads Can Create/Manage Sub-Accounts', desc: 'Lets department heads create new units and act on existing ones (rename, reset code, enable/disable, delete). When disabled, heads can still see their sub-account list but lose all action buttons — only Super Admin can manage units.', value: headsCanManageSubaccounts, set: setHeadsCanManageSubaccounts },
                 { label: 'Heads Can Set Sub-Account Privileges', desc: 'Lets department heads configure Cash/Memo/Material privileges, creation/approval limits, and direct routing for their sub-accounts. When disabled, the Privilege Settings section is hidden from heads — only Super Admin can configure it.', value: headsCanSetSubPrivileges, set: setHeadsCanSetSubPrivileges },
                 { label: 'Department Creation Includes Head Details', desc: 'When enabled, Super Admin fills in the head official\'s details (Staff ID, name, email, phone) together with the department at creation. When disabled, the head official fields are hidden — Super Admin creates a bare department (name + access code only) and assigns a head later via Edit.', value: deptCreationHeadDetailsEnabled, set: setDeptCreationHeadDetailsEnabled },
@@ -867,6 +873,46 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   </button>
                 </div>
               ))}
+
+              {/* ── Oversight Console — which departments get the global observer console ── */}
+              <div className="p-5 rounded-2xl border-2 border-indigo-200 bg-indigo-50/60 space-y-4">
+                <div>
+                  <p className="text-sm font-black text-foreground">Oversight Console Access</p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5">
+                    Select which departments can access the global Oversight Console (view all requests across every department, freeze/unfreeze, comment). Leave blank to disable for everyone. ICC has this access by default.
+                  </p>
+                </div>
+                {allDepts.filter(d => !d.isSubAccount && d.type !== 'Sub-Account').length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic">No departments found.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
+                    {allDepts.filter(d => !d.isSubAccount && d.type !== 'Sub-Account').map(dept => {
+                      const selected = oversightDeptIds.includes(dept.id);
+                      return (
+                        <button
+                          key={dept.id}
+                          type="button"
+                          onClick={() => setOversightDeptIds(prev =>
+                            prev.includes(dept.id) ? prev.filter(id => id !== dept.id) : [...prev, dept.id]
+                          )}
+                          className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all ${selected ? 'bg-indigo-100 border-indigo-400 text-indigo-800' : 'bg-white border-border/40 text-muted-foreground hover:border-indigo-300'}`}
+                        >
+                          <div className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${selected ? 'bg-indigo-600 border-indigo-600' : 'border-border'}`}>
+                            {selected && <CheckCircle2 size={10} className="text-white" />}
+                          </div>
+                          <span className="text-[11px] font-bold truncate">{dept.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {oversightDeptIds.length > 0 && (
+                  <p className="text-[10px] text-indigo-700 font-semibold">
+                    {oversightDeptIds.length} department{oversightDeptIds.length !== 1 ? 's' : ''} granted oversight access.
+                    <button type="button" className="ml-2 underline opacity-70 hover:opacity-100" onClick={() => setOversightDeptIds([])}>Clear all</button>
+                  </p>
+                )}
+              </div>
 
               {/* ICC Vets Protocol bypass cards — master toggle + optional amount threshold */}
               {[
@@ -1086,7 +1132,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 { label: 'HR Portal (Depts)', value: hrPortalEnabled },
                 { label: 'HR Portal (Admin)', value: hrPortalAdminEnabled },
                 { label: 'Store Records', value: storeRecordsEnabled },
-                { label: 'ICC Oversight', value: iccOversightEnabled },
+                { label: 'Oversight Console', value: oversightDeptIds.length > 0, customLabel: oversightDeptIds.length > 0 ? `${oversightDeptIds.length} dept${oversightDeptIds.length !== 1 ? 's' : ''}` : 'Off' },
                 { label: 'Heads Manage Sub-Accounts', value: headsCanManageSubaccounts },
                 { label: 'Heads Set Privileges', value: headsCanSetSubPrivileges },
                 { label: 'Dept Creation Includes Head Details', value: deptCreationHeadDetailsEnabled },
@@ -1095,10 +1141,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 { label: 'Admin Create Fund', value: adminCreateFundEnabled },
                 { label: 'Admin Create Material', value: adminCreateMaterialEnabled },
                 { label: 'Admin Create Memo', value: adminCreateMemoEnabled },
-              ].map(({ label, value }) => (
+              ].map(({ label, value, customLabel }) => (
                 <span key={label} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold border ${value ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-600'}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${value ? 'bg-emerald-500' : 'bg-red-400'}`} />
-                  {label}: {value ? 'On' : 'Off'}
+                  {label}: {customLabel ?? (value ? 'On' : 'Off')}
                 </span>
               ))}
               {accountIccBypassEnabled && accountThreshEnabled && (

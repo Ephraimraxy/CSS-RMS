@@ -418,7 +418,7 @@ const AppContent = () => {
   const canAccessHR    = user.role === 'hr' || user.role === 'global_admin' || isHRDept;
   const canAccessAdmin = user.role === 'global_admin';
   const canAccessStore = user.role === 'global_admin' || isStoreDept;
-  const canAccessIcc   = user.role === 'global_admin' || isIccDept;
+  const canAccessIcc   = user.role === 'global_admin' || user.role === 'department';
   const activeView = (isAdminView && !canAccessAdmin) ? 'dashboard'
     : (isHRView && !canAccessHR) ? 'dashboard'
     : (currentView === 'store_records' && !canAccessStore) ? 'dashboard'

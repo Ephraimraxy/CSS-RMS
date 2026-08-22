@@ -1026,6 +1026,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
   // Starts `null` (unknown) so the Oversight button stays hidden until the real setting
   // loads — defaulting to `true` would flash the button then hide it if disabled.
   const [iccOversightEnabled, setIccOversightEnabled] = useState(null);
+  const [oversightDeptIds, setOversightDeptIds] = useState(null); // null = loading, [] = nobody
   const [chatDeepLink, setChatDeepLink] = useState(null);
 
   useEffect(() => {
@@ -1045,6 +1046,15 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
       setStudioEnabled(studio);
       setStoreRecordsEnabled(store);
       setIccOversightEnabled(iccOversight);
+      // Load oversight departments list
+      try {
+        const ovRes = await settingsAPI.get('oversight_departments');
+        if (ovRes?.value) {
+          setOversightDeptIds(JSON.parse(ovRes.value).map(Number));
+        } else {
+          setOversightDeptIds([]);
+        }
+      } catch { setOversightDeptIds([]); }
     };
     loadFeatureFlags();
     window.addEventListener('rms:flags:updated', loadFeatureFlags);
@@ -1166,7 +1176,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
               {showStoreRecords && (
                 <SidebarItem icon={Package} label="Store Records" active={currentView === 'store_records'} onClick={() => onViewChange('store_records')} isCollapsed={isCollapsed} />
               )}
-              {isIccDept && iccOversightEnabled && (
+              {oversightDeptIds !== null && (isIccDept || oversightDeptIds.includes(user?.deptId)) && (
                 <SidebarItem icon={ScanEye} label="Oversight" active={currentView === 'icc_oversight'} onClick={() => onViewChange('icc_oversight')} isCollapsed={isCollapsed} />
               )}
             </div>
@@ -1282,7 +1292,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
               {showStoreRecords && (
                 <SidebarItem icon={Package} label="Store" active={currentView === 'store_records'} onClick={() => onViewChange('store_records')} mobile />
               )}
-              {isIccDept && iccOversightEnabled && (
+              {oversightDeptIds !== null && (isIccDept || oversightDeptIds.includes(user?.deptId)) && (
                 <SidebarItem icon={ScanEye} label="Oversight" active={currentView === 'icc_oversight'} onClick={() => onViewChange('icc_oversight')} mobile />
               )}
               <SidebarItem icon={deptStatus.isReady ? Building2 : ShieldAlert} label="Profile" active={currentView === 'dept_profile'} onClick={() => onViewChange('dept_profile')} mobile />
