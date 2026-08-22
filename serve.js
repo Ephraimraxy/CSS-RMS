@@ -1730,6 +1730,17 @@ app.post('/api/departments/activate', async (req, res) => {
     const dept = await prisma.department.findUnique({ where: { id: payload.deptId } });
     if (!dept) return res.status(404).json({ error: 'Department not found.' });
 
+    // Block reusing the access code as the permanent password — the code is admin-visible
+    // and is meant to be one-time only. Check plain label first, then fall back to bcrypt.
+    const originalLabel = dept.accessCodeLabel;
+    if (originalLabel && newPassword === originalLabel) {
+      return res.status(400).json({ error: 'Your new password cannot be the same as your access code. Please choose a different password.' });
+    }
+    if (!originalLabel && dept.accessCodeHash && !dept.codeChangedByDept) {
+      const sameAsCode = await bcrypt.compare(newPassword, dept.accessCodeHash);
+      if (sameAsCode) return res.status(400).json({ error: 'Your new password cannot be the same as your access code. Please choose a different password.' });
+    }
+
     const hash = await bcrypt.hash(newPassword, 10);
 
     if (isSub) {
