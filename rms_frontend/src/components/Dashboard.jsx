@@ -542,7 +542,7 @@ const Dashboard = ({ onViewChange }) => {
               <div className="flex items-center justify-between border-b border-border/20 pb-6">
                 <div className="flex items-center space-x-4">
                   <div className="w-1.5 h-6 bg-primary rounded-full" />
-                  <h3 className="text-xl font-bold text-foreground tracking-tight">My Incoming Records</h3>
+                  <h3 className="text-xl font-bold text-foreground tracking-tight">{normalizeRole(user?.role) === 'global_admin' ? 'All Pending Records' : 'My Incoming Records'}</h3>
                   {recentPending.length > 0 && (
                     <span className="bg-amber-500/10 text-amber-600 border border-amber-500/20 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-[0.15em] animate-pulse">Neural Alert</span>
                   )}
