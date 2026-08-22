@@ -2217,7 +2217,7 @@ async function sendTextflowSms({ to, message }) {
     const resp = await fetch('https://textflow.ng/api/v1/sms/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ sender_id: sender, to: phone, sms: message }),
+      body: JSON.stringify({ sender_id: sender, to: phone, message }),
     });
     const data = await resp.json().catch(() => ({}));
     logger.info(`[SMS] TextFlow send response — status ${resp.status}, body: ${JSON.stringify(data)}`);
