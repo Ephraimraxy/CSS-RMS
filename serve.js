@@ -2214,15 +2214,17 @@ async function sendTextflowSms({ to, message }) {
   }
   const phone = normalizeNgPhone(to);
   try {
-    const payload = { sender_id: sender, to: phone, message };
-    logger.info(`[SMS] TextFlow send request — to=${phone} sender_id=${sender} endpoint=https://textflow.ng/api/v1/sms/send`);
+    // TextFlow requires local NG format (08012345678), not international (2348...)
+    const localPhone = phone.startsWith('234') ? '0' + phone.slice(3) : phone;
+    const payload = { sender, to: localPhone, message };
+    logger.info(`[SMS] TextFlow send request — to=${localPhone} sender=${sender} endpoint=https://textflow.ng/api/v1/sms/send`);
     const resp = await fetch('https://textflow.ng/api/v1/sms/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify(payload),
     });
     const rawText = await resp.text();
-    logger.info(`[SMS] TextFlow send response — status ${resp.status}, raw: ${rawText.slice(0, 500)}`);
+    logger.info(`[SMS] TextFlow send response — status ${resp.status}, raw: ${rawText.slice(0, 300)}`);
     let data = {};
     try { data = JSON.parse(rawText); } catch { data = { _raw: rawText }; }
     if (!resp.ok) {
