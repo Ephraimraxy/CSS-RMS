@@ -8206,6 +8206,53 @@ app.get('/api/requisitions/:id/dynamic-pdf', authenticateToken, async (req, res)
         page.drawText(amtValue, { x: A4_W - margin - boldFont.widthOfTextAtSize(amtValue, 12), y, size: 12, font: boldFont, color: rgb(0.1, 0.22, 0.43) });
         y -= 25;
       }
+
+      // ── Payment Summary (only when Account has treated / partially paid) ─────
+      if (!isMemo && requisition.amountDisbursed != null) {
+        const reqAmt   = Number(requisition.amount || 0);
+        const disbursed = Number(requisition.amountDisbursed);
+        const remaining = reqAmt > 0 ? Math.max(0, reqAmt - disbursed) : null;
+        const isPartialTreatment = requisition.treatmentType === 'partial' || (remaining !== null && remaining > 0);
+        const isAdjusted = requisition.treatmentType === 'adjusted';
+        const payBoxColor = isPartialTreatment ? rgb(0.95, 0.60, 0.1) : rgb(0.1, 0.50, 0.2);
+        const payLabelColor = isPartialTreatment ? rgb(0.55, 0.3, 0.0) : rgb(0.05, 0.30, 0.1);
+
+        ensureSpace(80);
+        y -= 8;
+        // Header bar
+        page.drawRectangle({ x: margin, y: y - 2, width: contentWidth, height: 18, color: isPartialTreatment ? rgb(1.0, 0.93, 0.80) : rgb(0.88, 0.97, 0.88) });
+        const payHdrText = isPartialTreatment ? 'PARTIAL PAYMENT RECORD' : isAdjusted ? 'ADJUSTED PAYMENT RECORD' : 'PAYMENT RECORD — FULLY TREATED';
+        page.drawText(payHdrText, { x: margin + 6, y: y + 3, size: 10, font: boldFont, color: payBoxColor });
+        y -= 22;
+
+        // Amount Requested
+        if (reqAmt > 0) {
+          page.drawText('Amount Requested:', { x: margin + 6, y, size: 10, font });
+          const reqTxt = `NGN ${reqAmt.toLocaleString()}`;
+          page.drawText(reqTxt, { x: A4_W - margin - font.widthOfTextAtSize(reqTxt, 10), y, size: 10, font });
+          y -= 16;
+        }
+
+        // Amount Disbursed
+        page.drawText('Amount Disbursed:', { x: margin + 6, y, size: 11, font: boldFont, color: payLabelColor });
+        const disbTxt = `NGN ${disbursed.toLocaleString()}`;
+        page.drawText(disbTxt, { x: A4_W - margin - boldFont.widthOfTextAtSize(disbTxt, 11), y, size: 11, font: boldFont, color: payLabelColor });
+        y -= 16;
+
+        // Remaining Balance (only if partial and original amount known)
+        if (isPartialTreatment && remaining !== null) {
+          page.drawText('Balance Outstanding:', { x: margin + 6, y, size: 11, font: boldFont, color: rgb(0.7, 0.2, 0.0) });
+          const balTxt = `NGN ${remaining.toLocaleString()}`;
+          page.drawText(balTxt, { x: A4_W - margin - boldFont.widthOfTextAtSize(balTxt, 11), y, size: 11, font: boldFont, color: rgb(0.7, 0.2, 0.0) });
+          y -= 16;
+          page.drawText('(Partial payment — balance pending disbursement)', { x: margin + 6, y, size: 8, font: italicFont, color: rgb(0.6, 0.3, 0.0) });
+          y -= 14;
+        } else if (!isPartialTreatment) {
+          page.drawText(isAdjusted ? '(Treated with adjusted/negotiated amount)' : '(Fully disbursed — no outstanding balance)', { x: margin + 6, y, size: 8, font: italicFont, color: rgb(0.1, 0.4, 0.1) });
+          y -= 14;
+        }
+        y -= 8;
+      }
     }
 
     // ══════════════════════════════════════════════════════
