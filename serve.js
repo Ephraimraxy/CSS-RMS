@@ -2220,11 +2220,13 @@ async function sendTextflowSms({ to, message }) {
     logger.info(`[SMS] TextFlow send request — to=${localPhone} sender=${sender} endpoint=https://textflow.ng/api/v1/sms/send`);
     const resp = await fetch('https://textflow.ng/api/v1/sms/send', {
       method: 'POST',
+      redirect: 'manual',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify(payload),
     });
-    const rawText = await resp.text();
-    logger.info(`[SMS] TextFlow send response — status ${resp.status}, raw: ${rawText.slice(0, 300)}`);
+    const location = resp.headers.get('location') || '';
+    const rawText = resp.type === 'opaqueredirect' ? '' : await resp.text().catch(() => '');
+    logger.info(`[SMS] TextFlow send response — status ${resp.status}, type=${resp.type}, location=${location}, raw: ${rawText.slice(0, 200)}`);
     let data = {};
     try { data = JSON.parse(rawText); } catch { data = { _raw: rawText }; }
     if (!resp.ok) {
