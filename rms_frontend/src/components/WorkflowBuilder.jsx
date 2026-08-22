@@ -879,7 +879,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 <div>
                   <p className="text-sm font-black text-foreground">Oversight Console Access</p>
                   <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5">
-                    Select which departments can access the global Oversight Console (view all requests across every department, freeze/unfreeze, comment). Leave blank to disable for everyone. ICC has this access by default.
+                    Select which departments can access the global Oversight Console (view all requests across every department, freeze/unfreeze, comment). Leave blank to disable for everyone — including ICC.
                   </p>
                 </div>
                 {allDepts.filter(d => !d.isSubAccount && d.type !== 'Sub-Account').length === 0 ? (

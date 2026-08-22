@@ -1176,7 +1176,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
               {showStoreRecords && (
                 <SidebarItem icon={Package} label="Store Records" active={currentView === 'store_records'} onClick={() => onViewChange('store_records')} isCollapsed={isCollapsed} />
               )}
-              {oversightDeptIds !== null && (isIccDept || oversightDeptIds.includes(user?.deptId)) && (
+              {oversightDeptIds !== null && oversightDeptIds.includes(user?.deptId) && (
                 <SidebarItem icon={ScanEye} label="Oversight" active={currentView === 'icc_oversight'} onClick={() => onViewChange('icc_oversight')} isCollapsed={isCollapsed} />
               )}
             </div>
@@ -1292,7 +1292,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
               {showStoreRecords && (
                 <SidebarItem icon={Package} label="Store" active={currentView === 'store_records'} onClick={() => onViewChange('store_records')} mobile />
               )}
-              {oversightDeptIds !== null && (isIccDept || oversightDeptIds.includes(user?.deptId)) && (
+              {oversightDeptIds !== null && oversightDeptIds.includes(user?.deptId) && (
                 <SidebarItem icon={ScanEye} label="Oversight" active={currentView === 'icc_oversight'} onClick={() => onViewChange('icc_oversight')} mobile />
               )}
               <SidebarItem icon={deptStatus.isReady ? Building2 : ShieldAlert} label="Profile" active={currentView === 'dept_profile'} onClick={() => onViewChange('dept_profile')} mobile />

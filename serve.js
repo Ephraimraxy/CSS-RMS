@@ -79,14 +79,13 @@ async function broadcastUpdate(reqId, meta = {}) {
   const payload = `event: requisition_updated\ndata: ${JSON.stringify({ id: reqId, ts: Date.now(), ...meta })}\n\n`;
   for (const [, { res, user }] of sseClients) {
     const role = normalizeRole(user?.role);
-    const isIcc = role === 'department' && isIccDept(user?.name);
     const oversightIds = await getOversightDeptIds().catch(() => []);
     const isOversightDept = role === 'department' && oversightIds.includes(toIntOrNull(user?.deptId));
     const ownDeptInvolved = involvedDeptIds.has(toIntOrNull(user?.deptId));
     // Sub-accounts often carry their own deptId (different from the parent's) —
     // also match on parentDeptId so they get real-time updates for parent-routed requests.
     const parentDeptInvolved = user?.isSubAccount && involvedDeptIds.has(toIntOrNull(user?.parentDeptId));
-    if (role !== 'department' || isIcc || isOversightDept || ownDeptInvolved || parentDeptInvolved) {
+    if (role !== 'department' || isOversightDept || ownDeptInvolved || parentDeptInvolved) {
       try { res.write(payload); } catch (_) {}
     }
   }
@@ -876,8 +875,7 @@ async function canReadRequisition(requisition, user) {
   const userRole = normalizeRole(user?.role);
   if (userRole === 'global_admin' || userRole !== 'department') return true;
 
-  // ICC and admin-designated oversight departments can read every request (global observer)
-  if (isIccDept(user?.name)) return true;
+  // Departments granted oversight access (configured by Super Admin) can read every request
   const oversightIds = await getOversightDeptIds().catch(() => []);
   if (oversightIds.includes(toIntOrNull(user?.deptId))) return true;
 
@@ -8700,10 +8698,10 @@ app.get('/api/requisitions', authenticateToken, async (req, res) => {
     const typeValues = [...new Set(scopeTypes.flatMap(t => typeAliases[t.toLowerCase()] || [t]))];
     const typeScopeWhere = typeValues.length > 0 ? { type: { in: typeValues } } : {};
     let where = typeScopeWhere;
-    // ICC and oversight departments: global observer — sees ALL requests regardless of routing
+    // Oversight departments (configured by Super Admin): global observer — sees ALL requests
     const _oversightIds = await getOversightDeptIds().catch(() => []);
     const _isGlobalObserver = normalizeRole(req.user.role) === 'department' &&
-      (isIccDept(req.user?.name) || _oversightIds.includes(toIntOrNull(req.user?.deptId)));
+      _oversightIds.includes(toIntOrNull(req.user?.deptId));
     if (_isGlobalObserver) {
       // Global observer sees everything — typeScopeWhere already applied above, no extra dept filter
     } else if (normalizeRole(req.user.role) === 'department' && req.user.deptId) {
