@@ -198,6 +198,13 @@ const Dashboard = ({ onViewChange }) => {
     loadDashboard();
   }, []);
 
+  // Re-fetch when the hard-refresh button is clicked or the APK comes back to foreground
+  useEffect(() => {
+    const onRefresh = () => loadDashboard();
+    window.addEventListener('globalHardRefresh', onRefresh);
+    return () => window.removeEventListener('globalHardRefresh', onRefresh);
+  }, []);
+
   // Live sync — re-fetch dashboard data whenever any involved requisition changes
   useEffect(() => {
     if (!localStorage.getItem('rms_user')) return;

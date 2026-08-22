@@ -4997,6 +4997,13 @@ const RequisitionsPage = ({ onViewChange, initialReqId, onDeepLinkConsumed }) =>
 
   useEffect(() => { loadData(); }, []);
 
+  // Re-fetch when the hard-refresh button is clicked or the APK comes back to foreground
+  useEffect(() => {
+    const onRefresh = () => loadData(true);
+    window.addEventListener('globalHardRefresh', onRefresh);
+    return () => window.removeEventListener('globalHardRefresh', onRefresh);
+  }, []);
+
   // SSE real-time subscription — updates arrive within seconds of any action
   useEffect(() => {
     if (!localStorage.getItem('rms_user')) return;

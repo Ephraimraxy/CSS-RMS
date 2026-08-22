@@ -843,6 +843,24 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
     return () => { closed = true; es?.close(); clearTimeout(reconnectTimer); };
   }, []);
 
+  // Auto-refresh when the APK/PWA comes back to foreground after being backgrounded
+  useEffect(() => {
+    let hiddenAt = null;
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+      } else if (document.visibilityState === 'visible' && hiddenAt) {
+        if (Date.now() - hiddenAt > 30000) {
+          getNotifications().then(data => setNotifications(data)).catch(() => {});
+          window.dispatchEvent(new CustomEvent('globalHardRefresh'));
+        }
+        hiddenAt = null;
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
+
   const [deptStatus, setDeptStatus] = useState({ isReady: true });
   useEffect(() => {
     if (user?.role === 'department') {
