@@ -1219,7 +1219,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
           </div>
 
           <div className="p-3 border-t border-border/20 mb-2 space-y-1">
-            <SidebarItem icon={Smartphone} label="Applications" onClick={() => setShowAppModal(true)} isCollapsed={isCollapsed} />
+            <SidebarItem icon={Smartphone} label="Mobile Apps" onClick={() => setShowAppModal(true)} isCollapsed={isCollapsed} />
             <button
               onClick={toggleSidebar}
               title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
