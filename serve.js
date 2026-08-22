@@ -2217,12 +2217,17 @@ async function sendTextflowSms({ to, message }) {
     const resp = await fetch('https://textflow.ng/api/v1/sms/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ sender, to: phone, message }),
+      body: JSON.stringify({ sender_id: sender, to: phone, sms: message }),
     });
     const data = await resp.json().catch(() => ({}));
+    logger.info(`[SMS] TextFlow send response — status ${resp.status}, body: ${JSON.stringify(data)}`);
     if (!resp.ok) {
       logger.warn('[SMS] TextFlow send failed:', JSON.stringify(data));
       return { error: data };
+    }
+    if (data?.status !== 'success') {
+      logger.warn('[SMS] TextFlow send non-success:', JSON.stringify(data));
+      return { error: data?.message || JSON.stringify(data) };
     }
     logger.info(`[SMS] Sent via TextFlow to ${phone}`);
     return data;
