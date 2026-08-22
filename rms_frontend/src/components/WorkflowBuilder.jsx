@@ -255,6 +255,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [emailTestAddr, setEmailTestAddr]     = useState('');
   const [emailTesting, setEmailTesting]       = useState(false);
   const [emailTestResult, setEmailTestResult] = useState(null);
+  const [smsTestPhone, setSmsTestPhone]       = useState('');
+  const [smsTestProvider, setSmsTestProvider] = useState('all');
+  const [smsTesting, setSmsTesting]           = useState(false);
+  const [smsTestResults, setSmsTestResults]   = useState(null);
 
   // ── Media / Image Library ──────────────────────────────────────────────────
   const [mediaImages, setMediaImages] = useState([]);
@@ -665,6 +669,25 @@ const WorkflowBuilder = ({ onViewChange }) => {
       setEmailTestResult({ success: false, error: err.message });
       toast.error('Test failed: ' + err.message);
     } finally { setEmailTesting(false); }
+  };
+
+  const sendTestSms = async () => {
+    if (!smsTestPhone.trim()) return;
+    setSmsTesting(true);
+    setSmsTestResults(null);
+    try {
+      const res = await fetch('/api/test-sms', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: smsTestPhone.trim(), provider: smsTestProvider })
+      }).then(r => r.json());
+      setSmsTestResults(res.results || [res]);
+      if (res.results?.some(r => r.success) || res.success) toast.success('Test SMS sent!');
+      else toast.error('SMS test failed — check results below');
+    } catch (err) {
+      setSmsTestResults([{ provider: smsTestProvider, success: false, error: err.message }]);
+      toast.error('Test failed: ' + err.message);
+    } finally { setSmsTesting(false); }
   };
 
   useEffect(() => {
@@ -1896,61 +1919,91 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   <RotateCcw size={12} />
                 </button>
               </div>
-              {emailStatus ? (
-                <div className="space-y-4">
-                  <div className={`p-3 rounded-xl border text-xs flex items-start gap-3 ${emailStatus.configured ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
-                    {emailStatus.configured ? <CheckCircle2 size={14} className="shrink-0 mt-0.5" /> : <AlertCircle size={14} className="shrink-0 mt-0.5" />}
-                    <div>
-                      {emailStatus.configured ? (
-                        <>
-                          <p className="font-bold">Email ready via Resend{emailStatus.fromAddress ? ` · ${emailStatus.fromAddress}` : ''}</p>
-                          {emailStatus.error && <p className="mt-1 text-amber-700">⚠ {emailStatus.error}</p>}
-                        </>
-                      ) : (
-                        <>
-                          <p className="font-bold">Email is NOT configured — notifications will not be sent</p>
-                          {emailStatus.error && <p className="mt-1 opacity-80">{emailStatus.error}</p>}
-                          <div className="mt-2 space-y-1 opacity-90">
-                            <p className="font-semibold">Add to Railway Variables:</p>
-                            <code className="block bg-red-100 px-2 py-1 rounded text-[10px] font-mono">RESEND_API_KEY = re_xxxxxxxxxxxx</code>
-                            <code className="block bg-red-100 px-2 py-1 rounded text-[10px] font-mono">RESEND_FROM_EMAIL = info@yourdomain.com</code>
-                            <p className="text-[10px] mt-1">Get a free key at <strong>resend.com</strong> (3000 emails/month free)</p>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-[10px] font-black text-muted-foreground uppercase tracking-wider">Send Test Email</p>
-                    <div className="flex gap-2">
-                      <input
-                        type="email"
-                        value={emailTestAddr}
-                        onChange={e => setEmailTestAddr(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && sendTestEmail()}
-                        placeholder="recipient@example.com"
-                        className="flex-1 text-sm border border-border/50 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/20"
-                      />
-                      <button
-                        onClick={sendTestEmail}
-                        disabled={emailTesting || !emailTestAddr.trim()}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 disabled:opacity-50 transition-all"
-                      >
-                        {emailTesting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                        Send
-                      </button>
-                    </div>
-                    {emailTestResult && (
-                      <div className={`p-2.5 rounded-xl text-xs border ${emailTestResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
-                        {emailTestResult.success ? `✓ ${emailTestResult.message}` : `✗ ${emailTestResult.message || emailTestResult.error}`}
-                        {emailTestResult.hint && <p className="mt-1 opacity-80 text-[10px]">{emailTestResult.hint}</p>}
-                      </div>
-                    )}
-                  </div>
+              <div className="space-y-2">
+                <p className="text-[10px] font-black text-muted-foreground uppercase tracking-wider">Send Test Email</p>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={emailTestAddr}
+                    onChange={e => setEmailTestAddr(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && sendTestEmail()}
+                    placeholder="recipient@example.com"
+                    className="flex-1 text-sm border border-border/50 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                  <button
+                    onClick={sendTestEmail}
+                    disabled={emailTesting || !emailTestAddr.trim()}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 disabled:opacity-50 transition-all"
+                  >
+                    {emailTesting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                    Send
+                  </button>
                 </div>
-              ) : (
-                <div className="flex justify-center py-6"><Loader2 size={18} className="animate-spin text-muted-foreground/40" /></div>
-              )}
+                {emailTestResult && (
+                  <div className={`p-2.5 rounded-xl text-xs border ${emailTestResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                    {emailTestResult.success ? `✓ ${emailTestResult.message}` : `✗ ${emailTestResult.message || emailTestResult.error}`}
+                    {emailTestResult.hint && <p className="mt-1 opacity-80 text-[10px]">{emailTestResult.hint}</p>}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* SMS Test */}
+            <div className="glass bg-white/70 rounded-3xl border border-border/50 p-6 shadow-sm">
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
+                  <MessageSquare size={16} className="text-emerald-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">SMS Test</h3>
+                  <p className="text-[10px] text-muted-foreground/70 mt-0.5">Send a test SMS to verify your provider is working</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <select
+                    value={smsTestProvider}
+                    onChange={e => { setSmsTestProvider(e.target.value); setSmsTestResults(null); }}
+                    className="text-sm border border-border/50 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/20 shrink-0"
+                  >
+                    <option value="all">All Providers</option>
+                    <option value="termii">Termii only</option>
+                    <option value="textflow">TextFlow only</option>
+                    <option value="twilio">Twilio only</option>
+                  </select>
+                  <input
+                    type="tel"
+                    value={smsTestPhone}
+                    onChange={e => setSmsTestPhone(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && sendTestSms()}
+                    placeholder="08012345678 or +2348012345678"
+                    className="flex-1 text-sm border border-border/50 rounded-xl px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                  <button
+                    onClick={sendTestSms}
+                    disabled={smsTesting || !smsTestPhone.trim()}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-50 transition-all shrink-0"
+                  >
+                    {smsTesting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                    Send
+                  </button>
+                </div>
+                {smsTestResults && (
+                  <div className="space-y-1.5">
+                    {smsTestResults.map((r, i) => (
+                      <div key={i} className={`p-2.5 rounded-xl text-xs border flex items-start gap-2 ${r.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                        <span className="font-black shrink-0">{r.success ? '✓' : '✗'}</span>
+                        <div>
+                          <span className="font-bold capitalize">{r.provider}</span>
+                          {' — '}
+                          {r.success ? (r.message || 'SMS sent successfully') : (r.error || r.message || 'Failed')}
+                          {r.skipped && <span className="ml-1 opacity-70">(not configured — API key missing)</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 

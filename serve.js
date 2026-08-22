@@ -8940,6 +8940,46 @@ app.post('/api/test-email', authenticateToken, requireRoles(['global_admin']), a
   }
 });
 
+// ── SMS TEST ENDPOINT (Admin only) ────────────────────────────────────────────
+app.post('/api/test-sms', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { to, provider = 'all' } = req.body;
+    if (!to) return res.json({ success: false, results: [{ provider, success: false, error: 'Phone number is required.' }] });
+
+    const message = `CSS RMS test message — sent at ${new Date().toLocaleString('en-NG')}. If you received this, your SMS provider is working correctly.`;
+
+    const runProvider = async (name, fn) => {
+      try {
+        const result = await fn({ to, message });
+        if (result?.skipped) return { provider: name, success: false, skipped: true, error: 'API key not configured' };
+        if (result?.error)   return { provider: name, success: false, error: typeof result.error === 'string' ? result.error : JSON.stringify(result.error) };
+        return { provider: name, success: true, message: `Sent to ${to}` };
+      } catch (e) {
+        return { provider: name, success: false, error: e.message };
+      }
+    };
+
+    let results;
+    if (provider === 'all') {
+      results = await Promise.all([
+        runProvider('termii',   sendTermiiSms),
+        runProvider('textflow', sendTextflowSms),
+        runProvider('twilio',   sendTwilioSms),
+      ]);
+    } else if (provider === 'termii')   { results = [await runProvider('termii',   sendTermiiSms)]; }
+    else if (provider === 'textflow')   { results = [await runProvider('textflow', sendTextflowSms)]; }
+    else if (provider === 'twilio')     { results = [await runProvider('twilio',   sendTwilioSms)]; }
+    else { return res.json({ success: false, results: [{ provider, success: false, error: 'Unknown provider' }] }); }
+
+    const anyOk = results.some(r => r.success);
+    logger.info(`[SMS-TEST] to=${to} provider=${provider} ok=${anyOk}`);
+    res.json({ success: anyOk, results });
+  } catch (err) {
+    logger.error('[SMS-TEST] FAILED:', err.message);
+    res.json({ success: false, results: [{ provider: 'unknown', success: false, error: err.message }] });
+  }
+});
+
 // ── Store Records ─────────────────────────────────────────────────────────────
 function isStoreDept(name) { return /\bstore\b/i.test(name || ''); }
 
