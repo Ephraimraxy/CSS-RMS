@@ -2217,27 +2217,42 @@ async function sendTextflowSms({ to, message }) {
     // TextFlow requires local NG format (08012345678), not international (2348...)
     const localPhone = phone.startsWith('234') ? '0' + phone.slice(3) : phone;
     const payload = { sender, to: localPhone, message };
-    logger.info(`[SMS] TextFlow send request — to=${localPhone} sender=${sender} endpoint=https://textflow.ng/api/v1/sms/send`);
+
+    // TextFlow's send endpoint sits behind Laravel web middleware (CSRF-protected).
+    // We must fetch a CSRF token + session cookie from the homepage first.
+    const csrfPage = await fetch('https://textflow.ng', { headers: { 'Accept': 'text/html' } });
+    const csrfHtml = await csrfPage.text().catch(() => '');
+    const csrfMatch = csrfHtml.match(/<meta name="csrf-token" content="([^"]+)"/);
+    const csrfToken = csrfMatch ? csrfMatch[1] : '';
+    const sessionCookies = (csrfPage.headers.get('set-cookie') || '')
+      .split(/,(?=[^;]+?=)/).map(c => c.split(';')[0]).join('; ');
+    logger.info(`[SMS] TextFlow CSRF token obtained: ${csrfToken ? 'yes' : 'NO'}`);
+
+    logger.info(`[SMS] TextFlow send request — to=${localPhone} sender=${sender}`);
     const resp = await fetch('https://textflow.ng/api/v1/sms/send', {
       method: 'POST',
-      redirect: 'manual',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'X-CSRF-TOKEN': csrfToken,
+        'Cookie': sessionCookies,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
       body: JSON.stringify(payload),
     });
-    const location = resp.headers.get('location') || '';
-    const rawText = resp.type === 'opaqueredirect' ? '' : await resp.text().catch(() => '');
-    logger.info(`[SMS] TextFlow send response — status ${resp.status}, type=${resp.type}, location=${location}, raw: ${rawText.slice(0, 200)}`);
+    const rawText = await resp.text().catch(() => '');
+    logger.info(`[SMS] TextFlow send response — status ${resp.status}, raw: ${rawText.slice(0, 300)}`);
     let data = {};
-    try { data = JSON.parse(rawText); } catch { data = { _raw: rawText }; }
+    try { data = JSON.parse(rawText); } catch { data = { _raw: rawText.slice(0, 100) }; }
     if (!resp.ok) {
       logger.warn('[SMS] TextFlow send failed:', JSON.stringify(data));
       return { error: data };
     }
     if (data?.status !== 'success') {
       logger.warn('[SMS] TextFlow send non-success:', JSON.stringify(data));
-      return { error: data?.message || rawText || JSON.stringify(data) };
+      return { error: data?.message || rawText.slice(0, 100) || JSON.stringify(data) };
     }
-    logger.info(`[SMS] Sent via TextFlow to ${phone}`);
+    logger.info(`[SMS] Sent via TextFlow to ${localPhone}`);
     return data;
   } catch (e) {
     logger.warn('[SMS] TextFlow request error:', e.message);
