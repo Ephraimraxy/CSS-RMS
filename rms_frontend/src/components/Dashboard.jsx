@@ -91,7 +91,7 @@ const Dashboard = ({ onViewChange }) => {
       // for admin; gating on `!userDeptId` silently fell through to the narrow
       // per-department filter below and made every admin stat read zero.
       if (isDone) {
-        if (isAdmin) return false;
+        if (isAdmin) return true;
         if (!userDeptId) return false;
         return Number(r.currentVettingDeptId) === userDeptId ||
                (isExecutive && Number(r.finalApprovedByDeptId) === userDeptId);
