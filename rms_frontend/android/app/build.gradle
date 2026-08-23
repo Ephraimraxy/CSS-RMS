@@ -1,5 +1,11 @@
 apply plugin: 'com.android.application'
 
+def localProps = new Properties()
+def localPropsFile = rootProject.file('local.properties')
+if (localPropsFile.exists()) {
+    localPropsFile.withInputStream { localProps.load(it) }
+}
+
 android {
     namespace = "com.cssgroup.rms"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +13,8 @@ android {
         applicationId "com.cssgroup.rms"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -18,10 +24,10 @@ android {
     }
     signingConfigs {
         release {
-            storeFile file('../cssrms-release.keystore')
-            storePassword 'CssRms@2024'
-            keyAlias 'cssrms'
-            keyPassword 'CssRms@2024'
+            storeFile file(localProps.getProperty('KEYSTORE_FILE', '../cssrms-release.keystore'))
+            storePassword localProps.getProperty('KEYSTORE_PASSWORD')
+            keyAlias localProps.getProperty('KEY_ALIAS')
+            keyPassword localProps.getProperty('KEY_PASSWORD')
         }
     }
     buildTypes {
