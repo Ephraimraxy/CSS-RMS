@@ -2230,6 +2230,43 @@ const WorkflowBuilder = ({ onViewChange }) => {
               </p>
             </div>
 
+            {/* Expected format guide */}
+            <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 space-y-3">
+              <div className="space-y-0.5">
+                <p className="text-sm font-black text-foreground">Expected File Format</p>
+                <p className="text-[11px] text-muted-foreground">Your CSV or Excel must have these column headers (exact spelling not required — the system matches by keyword):</p>
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-border/30">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="bg-primary/5 text-left text-[9px] font-black uppercase tracking-widest text-primary border-b border-border/30">
+                      <th className="px-3 py-2">Staff ID</th>
+                      <th className="px-3 py-2">Surname</th>
+                      <th className="px-3 py-2">First Name</th>
+                      <th className="px-3 py-2">Other Name</th>
+                      <th className="px-3 py-2">Position / Title</th>
+                      <th className="px-3 py-2">Department</th>
+                      <th className="px-3 py-2">Phone Number</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ['10534', 'OKOLIKO', 'JOHN', 'ADOKO', 'SUPERVISOR', 'MONITORING & EVAL', '8133327398'],
+                      ['10096', 'BAMGBOYE', 'ADENRELE', 'OLUFEMI', 'PROCUREMENT MANAGER', 'PROCUREMENT', '8037309447'],
+                      ['', 'EKWEM', 'CHINEDU', 'BIZMARCK', 'STORE SUPERVISOR', 'MAIN STORES', '8036914096'],
+                    ].map((row, i) => (
+                      <tr key={i} className="border-t border-border/10 text-muted-foreground">
+                        {row.map((cell, j) => (
+                          <td key={j} className="px-3 py-2">{cell || <span className="italic text-muted-foreground/50">optional</span>}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-muted-foreground italic">Staff ID is optional — leave blank if not yet assigned. Email column is not required here; it will be auto-generated.</p>
+            </div>
+
             <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 space-y-4">
               <div className="space-y-2">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Upload CSV or Excel File</label>
