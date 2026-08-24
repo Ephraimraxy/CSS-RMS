@@ -7,6 +7,9 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Never use HTTP cache for the SW script — bypass browser's 24-hour
+      // default so reg.update() always fetches fresh from the server.
+      updateViaCache: 'none',
       // Registration is handled manually in main.jsx via virtual:pwa-register
       // (immediate registration + periodic update polling) — disable the
       // plugin's auto-injected script to avoid double-registering.

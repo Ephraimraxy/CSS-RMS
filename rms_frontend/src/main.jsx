@@ -26,7 +26,7 @@ const updateSW = registerSW({
   immediate: true,
   onRegisteredSW(swUrl, registration) {
     if (!registration) return;
-    setInterval(() => { registration.update().catch(() => {}); }, 60_000);
+    setInterval(() => { registration.update().catch(() => {}); }, 10_000);
   },
   onNeedRefresh() {
     // registerType: 'autoUpdate' — apply the new SW immediately rather than

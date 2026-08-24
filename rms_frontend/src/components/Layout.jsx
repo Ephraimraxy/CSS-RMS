@@ -292,7 +292,7 @@ const Navbar = ({ user, toggleSidebar, isCollapsed, notifications, setNotificati
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.ready
         .then(reg => {
-          swPollRef.current = setInterval(() => reg.update().catch(() => {}), 120000);
+          swPollRef.current = setInterval(() => reg.update().catch(() => {}), 10000);
           reg.addEventListener('updatefound', () => {
             const newWorker = reg.installing;
             if (!newWorker) return;
