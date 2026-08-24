@@ -9340,6 +9340,9 @@ app.post('/api/onboarding/bulk-sms-send', authenticateToken, requireRoles(['glob
     };
 
     const defaultPwd = process.env.ONBOARDING_DEFAULT_PASSWORD || 'CssPWorD1';
+    // Only Termii strips @ from message bodies — other providers handle it fine
+    const smsProvider = await getSmsProvider();
+    const atChar = smsProvider === 'termii' ? '＠' : '@';
     const results = [];
 
     for (const row of rows) {
@@ -9357,8 +9360,7 @@ app.post('/api/onboarding/bulk-sms-send', authenticateToken, requireRoles(['glob
       }
 
       const displayName = firstName.split(' ')[0];
-      // Termii strips bare @ in message bodies — fullwidth ＠ (U+FF20) looks identical but passes through
-      const emailSafe = email.replace('@', '＠');
+      const emailSafe = email.replace('@', atChar);
       const message = msgTemplate
         .replace(/\{name\}/g, displayName)
         .replace(/\{fullname\}/g, `${firstName} ${surname}`.trim())
