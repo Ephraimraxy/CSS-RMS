@@ -2306,9 +2306,11 @@ async function getSmsProvider() {
 // provider Super Admin has selected in System Settings.
 async function sendSms({ to, message }) {
   const provider = await getSmsProvider();
-  if (provider === 'twilio') return sendTwilioSms({ to, message });
-  if (provider === 'textflow') return sendTextflowSms({ to, message });
-  return sendTermiiSms({ to, message });
+  let result;
+  if (provider === 'twilio')    result = await sendTwilioSms({ to, message });
+  else if (provider === 'textflow') result = await sendTextflowSms({ to, message });
+  else                          result = await sendTermiiSms({ to, message });
+  return { ...result, provider };
 }
 
 async function notifyDepartmentHead({ departmentId, requisition, subject, lines }) {
@@ -9369,10 +9371,10 @@ app.post('/api/onboarding/bulk-sms-send', authenticateToken, requireRoles(['glob
         .replace(/\{staffId\}/g, staffId);
 
       try {
-        await sendSms({ to: phone, message });
-        results.push({ name: `${firstName} ${surname}`, phone, email, staffId, dept, status: 'sent' });
+        const smsResult = await sendSms({ to: phone, message });
+        results.push({ name: `${firstName} ${surname}`, phone, email, staffId, dept, status: 'sent', provider: smsResult?.provider || 'unknown' });
       } catch (e) {
-        results.push({ name: `${firstName} ${surname}`, phone, email, staffId, dept, status: 'failed', reason: e.message });
+        results.push({ name: `${firstName} ${surname}`, phone, email, staffId, dept, status: 'failed', reason: e.message, provider: '—' });
       }
     }
 

@@ -150,9 +150,11 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [onboardingParsed, setOnboardingParsed] = useState(null);
   const [onboardingSending, setOnboardingSending] = useState(false);
   const [onboardingResults, setOnboardingResults] = useState(null);
-  const [onboardingTemplate, setOnboardingTemplate] = useState(
-    'Dear {name}, welcome to CSS Group! Your official email is: {email}. Default password: {password}. Login at webmail.cssgroup.com.ng and change your password immediately after first login. Department: {department}. Role: {position}. - CSS ICT Team'
-  );
+  const DEFAULT_ONBOARDING_TEMPLATE = 'Dear {name}, welcome to CSS Group! Your official email is: {email}. Default password: {password}. Login at webmail.cssgroup.com.ng and change your password immediately after first login. Department: {department}. Role: {position}. - CSS ICT Team';
+  const [onboardingTemplate, setOnboardingTemplate] = useState(() => {
+    try { return localStorage.getItem('onboarding_sms_template') || DEFAULT_ONBOARDING_TEMPLATE; } catch { return DEFAULT_ONBOARDING_TEMPLATE; }
+  });
+  const [onboardingTemplateSaved, setOnboardingTemplateSaved] = useState(false);
 
   const loadSyncSettings = async () => {
     try {
@@ -2303,7 +2305,19 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   </button>
                 ))}
               </div>
-              <p className="text-[10px] text-muted-foreground italic">Click any placeholder above to insert it at the end. Character count: {onboardingTemplate.length} (SMS limit ~160 per segment)</p>
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] text-muted-foreground italic">Character count: {onboardingTemplate.length} (SMS limit ~160 per segment — going over splits into 2 messages)</p>
+                <button
+                  onClick={() => {
+                    try { localStorage.setItem('onboarding_sms_template', onboardingTemplate); } catch {}
+                    setOnboardingTemplateSaved(true);
+                    setTimeout(() => setOnboardingTemplateSaved(false), 2500);
+                  }}
+                  className="px-4 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
+                >
+                  {onboardingTemplateSaved ? '✓ Saved' : 'Save Template'}
+                </button>
+              </div>
             </div>
 
             <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 space-y-4">
@@ -2433,6 +2447,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                           <th className="px-3 py-2">Name</th>
                           <th className="px-3 py-2">Phone</th>
                           <th className="px-3 py-2">Email Assigned</th>
+                          <th className="px-3 py-2">Provider</th>
                           <th className="px-3 py-2">Status</th>
                         </tr>
                       </thead>
@@ -2442,6 +2457,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                             <td className="px-3 py-2 font-bold">{r.name}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.phone}</td>
                             <td className="px-3 py-2 font-mono text-[10px] text-primary">{r.email || '—'}</td>
+                            <td className="px-3 py-2 text-[10px] font-black uppercase text-muted-foreground">{r.provider || '—'}</td>
                             <td className="px-3 py-2">
                               <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
                                 r.status === 'sent' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
