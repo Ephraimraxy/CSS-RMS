@@ -9340,9 +9340,8 @@ app.post('/api/onboarding/bulk-sms-send', authenticateToken, requireRoles(['glob
     };
 
     const defaultPwd = process.env.ONBOARDING_DEFAULT_PASSWORD || 'CssPWorD1';
-    // Only Termii strips @ from message bodies — other providers handle it fine
-    const smsProvider = await getSmsProvider();
-    const atChar = smsProvider === 'termii' ? '＠' : '@';
+    // Both Termii and Textflow strip/replace @ in message bodies — [at] is ASCII-safe across all providers
+    const atChar = '[at]';
     const results = [];
 
     for (const row of rows) {
