@@ -9248,6 +9248,68 @@ app.post('/api/test-sms', authenticateToken, requireRoles(['global_admin']), asy
   }
 });
 
+// ── Onboarding Bulk SMS ───────────────────────────────────────────────────────
+app.post('/api/onboarding/bulk-sms', authenticateToken, requireRoles(['global_admin']), batchUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+    if (!rows.length) return res.status(400).json({ error: 'File is empty or unreadable.' });
+
+    // Flexible column matching
+    const findCol = (row, ...keywords) => {
+      const key = Object.keys(row).find(k => keywords.some(kw => k.toLowerCase().includes(kw.toLowerCase())));
+      return key ? String(row[key]).trim() : '';
+    };
+
+    const generateEmail = (firstName, surname) => {
+      const fn = firstName.split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
+      const sn = surname.toLowerCase().replace(/[^a-z]/g, '');
+      return fn && sn ? `${fn}.${sn}@cssgroup.com.ng` : '';
+    };
+
+    const results = [];
+
+    for (const row of rows) {
+      const firstName = findCol(row, 'first name', 'firstname');
+      const surname   = findCol(row, 'surname', 'last name');
+      const phone     = findCol(row, 'phone');
+      const staffId   = findCol(row, 'staff id', 'staffid');
+      const dept      = findCol(row, 'department', 'dept');
+      const position  = findCol(row, 'position', 'title');
+
+      if (!phone || !firstName || !surname) {
+        results.push({ name: `${firstName} ${surname}`.trim() || 'Unknown', phone, status: 'skipped', reason: 'Missing name or phone' });
+        continue;
+      }
+
+      const email = generateEmail(firstName, surname);
+      const displayName = `${firstName.split(' ')[0]}`;
+      const message = `Dear ${displayName}, your CSS RMS onboarding details have been received. Welcome! Your official email is: ${email}. Use it for all official CSS Group correspondence.${dept ? ` Department: ${dept}.` : ''}${position ? ` Role: ${position}.` : ''} - CSS Group Admin`;
+
+      try {
+        await sendSms({ to: phone, message });
+        results.push({ name: `${firstName} ${surname}`, phone, email, staffId, dept, status: 'sent' });
+      } catch (e) {
+        results.push({ name: `${firstName} ${surname}`, phone, email, staffId, dept, status: 'failed', reason: e.message });
+      }
+    }
+
+    const sent   = results.filter(r => r.status === 'sent').length;
+    const failed = results.filter(r => r.status === 'failed').length;
+    const skipped = results.filter(r => r.status === 'skipped').length;
+
+    logger.info(`[ONBOARDING-SMS] sent=${sent} failed=${failed} skipped=${skipped}`);
+    res.json({ sent, failed, skipped, total: results.length, results });
+  } catch (err) {
+    logger.error('[ONBOARDING-SMS]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Store Records ─────────────────────────────────────────────────────────────
 function isStoreDept(name) { return /\bstore\b/i.test(name || ''); }
 

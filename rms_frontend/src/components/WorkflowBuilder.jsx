@@ -146,6 +146,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
   });
   const [syncLoaded, setSyncLoaded] = useState(false);
   const [savingSync, setSavingSync] = useState(false);
+  const [onboardingFile, setOnboardingFile] = useState(null);
+  const [onboardingParsed, setOnboardingParsed] = useState(null);
+  const [onboardingSending, setOnboardingSending] = useState(false);
+  const [onboardingResults, setOnboardingResults] = useState(null);
 
   const loadSyncSettings = async () => {
     try {
@@ -856,8 +860,9 @@ const WorkflowBuilder = ({ onViewChange }) => {
               { id: 'stages',   label: 'Workflow, Types & Ref Code' },
               { id: 'print',    label: 'Print, Stamp & Contact' },
               { id: 'images',   label: 'Images' },
-              { id: 'zkteco',   label: 'ZKTeco & Desktop Sync' },
-              { id: 'bin',      label: 'Deleted Records & Danger Zone' },
+              { id: 'zkteco',     label: 'ZKTeco & Desktop Sync' },
+              { id: 'onboarding', label: 'Staff Onboarding SMS' },
+              { id: 'bin',        label: 'Deleted Records & Danger Zone' },
             ].map(({ id, label }) => (
               <button
                 key={id}
@@ -2215,6 +2220,157 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 </div>
               </div>
             )}
+          </div>
+        ) : activeTab === 'onboarding' ? (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+            <div className="space-y-2">
+              <h3 className="text-base font-black text-foreground">Staff Onboarding SMS</h3>
+              <p className="text-[12px] text-muted-foreground leading-relaxed">
+                Upload the Google Form responses CSV. The system will auto-generate each staff member's official email (<span className="font-mono text-[11px]">firstname.surname@cssgroup.com.ng</span>) and send them a welcome SMS with their details.
+              </p>
+            </div>
+
+            <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 space-y-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Upload CSV or Excel File</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx,.xls"
+                    onChange={e => {
+                      const file = e.target.files[0];
+                      if (!file) return;
+                      setOnboardingFile(file);
+                      setOnboardingResults(null);
+                      // Quick client-side preview using FileReader
+                      const reader = new FileReader();
+                      reader.onload = evt => {
+                        try {
+                          const lines = evt.target.result.split('\n').filter(Boolean);
+                          const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+                          const rows = lines.slice(1).map(line => {
+                            const cols = line.match(/(".*?"|[^,]+)(?=,|$)/g) || [];
+                            return Object.fromEntries(headers.map((h, i) => [h, (cols[i] || '').replace(/"/g, '').trim()]));
+                          });
+                          setOnboardingParsed(rows);
+                        } catch { setOnboardingParsed(null); }
+                      };
+                      reader.readAsText(file);
+                    }}
+                    className="flex-1 text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-[11px] file:font-black file:uppercase file:tracking-widest file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 cursor-pointer"
+                  />
+                  {onboardingFile && (
+                    <span className="text-[11px] text-muted-foreground">{onboardingFile.name}</span>
+                  )}
+                </div>
+              </div>
+
+              {onboardingParsed && onboardingParsed.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{onboardingParsed.length} Staff Detected — Preview</p>
+                  <div className="overflow-x-auto rounded-xl border border-border/30">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="bg-muted/30 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">
+                          <th className="px-3 py-2">Name</th>
+                          <th className="px-3 py-2">Phone</th>
+                          <th className="px-3 py-2">Department</th>
+                          <th className="px-3 py-2">Generated Email</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {onboardingParsed.slice(0, 10).map((row, i) => {
+                          const firstName = (row['First Name'] || row['FIRST NAME'] || row['first name'] || '').trim();
+                          const surname = (row['Surname'] || row['SURNAME'] || row['surname'] || '').trim();
+                          const phone = (row['Phone'] || row['PHONE NUMBER'] || row['phone'] || '').trim();
+                          const dept = (row['Department'] || row['DEPARTMENT'] || row['dept'] || '').trim();
+                          const fn = firstName.split(' ')[0].toLowerCase().replace(/[^a-z]/g, '');
+                          const sn = surname.toLowerCase().replace(/[^a-z]/g, '');
+                          const email = fn && sn ? `${fn}.${sn}@cssgroup.com.ng` : '—';
+                          return (
+                            <tr key={i} className="border-t border-border/10">
+                              <td className="px-3 py-2 font-bold">{firstName} {surname}</td>
+                              <td className="px-3 py-2 text-muted-foreground">{phone}</td>
+                              <td className="px-3 py-2 text-muted-foreground">{dept}</td>
+                              <td className="px-3 py-2 text-primary font-mono text-[10px]">{email}</td>
+                            </tr>
+                          );
+                        })}
+                        {onboardingParsed.length > 10 && (
+                          <tr><td colSpan={4} className="px-3 py-2 text-[10px] text-muted-foreground italic">...and {onboardingParsed.length - 10} more</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button
+                    disabled={onboardingSending}
+                    onClick={async () => {
+                      if (!onboardingFile) return;
+                      setOnboardingSending(true);
+                      setOnboardingResults(null);
+                      try {
+                        const fd = new FormData();
+                        fd.append('file', onboardingFile);
+                        const res = await fetch('/api/onboarding/bulk-sms', { method: 'POST', body: fd });
+                        const data = await res.json();
+                        setOnboardingResults(data);
+                        if (data.sent > 0) toast.success(`${data.sent} SMS sent successfully`);
+                        if (data.failed > 0) toast.error(`${data.failed} failed — check results below`);
+                      } catch (e) {
+                        toast.error('Request failed: ' + e.message);
+                      } finally {
+                        setOnboardingSending(false);
+                      }
+                    }}
+                    className="flex items-center gap-2 px-5 py-2.5 text-xs font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground disabled:opacity-50 transition-all"
+                  >
+                    {onboardingSending ? (
+                      <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />Sending SMS...</>
+                    ) : (
+                      <>Send SMS to All {onboardingParsed.length} Staff</>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {onboardingResults && (
+                <div className="space-y-3 border-t border-border/30 pt-4">
+                  <div className="flex items-center gap-4 text-[11px]">
+                    <span className="font-black text-emerald-600">{onboardingResults.sent} Sent</span>
+                    <span className="font-black text-red-500">{onboardingResults.failed} Failed</span>
+                    <span className="font-black text-muted-foreground">{onboardingResults.skipped} Skipped</span>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-border/30">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="bg-muted/30 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">
+                          <th className="px-3 py-2">Name</th>
+                          <th className="px-3 py-2">Phone</th>
+                          <th className="px-3 py-2">Email Assigned</th>
+                          <th className="px-3 py-2">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {onboardingResults.results.map((r, i) => (
+                          <tr key={i} className="border-t border-border/10">
+                            <td className="px-3 py-2 font-bold">{r.name}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.phone}</td>
+                            <td className="px-3 py-2 font-mono text-[10px] text-primary">{r.email || '—'}</td>
+                            <td className="px-3 py-2">
+                              <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
+                                r.status === 'sent' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+                                r.status === 'failed' ? 'bg-red-50 border-red-200 text-red-700' :
+                                'bg-amber-50 border-amber-200 text-amber-700'
+                              }`}>{r.status}{r.reason ? ` — ${r.reason}` : ''}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         ) : activeTab === 'bin' ? (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
