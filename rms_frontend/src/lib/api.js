@@ -236,6 +236,17 @@ export const settingsAPI = {
   },
 };
 
+// Manual attendance corrections for the desktop client — see
+// GET/POST /api/attendance-corrections in serve.js.
+export const attendanceCorrectionsAPI = {
+  async list() {
+    return api.get('/attendance-corrections');
+  },
+  async add(staffId, date, reason) {
+    return api.post('/attendance-corrections', { staffId, date, reason });
+  },
+};
+
 export const reqAPI = {
   async getSseTicket() {
     return api.post('/events/ticket');

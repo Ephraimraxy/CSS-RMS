@@ -421,6 +421,21 @@ model SystemSetting {
   value String @default("")
 }
 
+// Documentation/type-reference only, same as SystemSetting above — the
+// actual table is self-provisioned via CREATE TABLE IF NOT EXISTS in
+// serve.js's ensureCorrectionsTable(), not via a migration against this
+// schema, so a fresh deploy never depends on `prisma migrate` having run.
+model PendingAttendanceCorrection {
+  id        Int       @id @default(autoincrement())
+  staffId   String
+  date      String
+  reason    String    @default("")
+  status    String    @default("pending") // "pending" | "applied"
+  createdBy String?
+  createdAt DateTime  @default(now())
+  appliedAt DateTime?
+}
+
 model PushSubscription {
   id        Int      @id @default(autoincrement())
   endpoint  String   @unique

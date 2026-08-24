@@ -54,7 +54,7 @@ const WorkflowStage = ({ stage, onUpdate, onDelete, isFirst }) => {
 };
 
 import { getWorkflows, updateWorkflows, getRequisitionTypes, addRequisitionType, deleteRequisitionType } from '../lib/store';
-import { settingsAPI, adminAPI } from '../lib/api';
+import { settingsAPI, adminAPI, attendanceCorrectionsAPI } from '../lib/api';
 import { useAIFeatures } from '../context/AIFeaturesContext';
 import { toast } from 'react-hot-toast';
 import ConfirmModal from './ConfirmModal';
@@ -184,6 +184,43 @@ const WorkflowBuilder = ({ onViewChange }) => {
     } catch {
       toast.error('Could not save.');
     } finally { setSavingSync(false); }
+  };
+
+  // ── Manual attendance corrections — a staff ID + date the desktop client
+  // should count as Present despite having no real device punch (e.g.
+  // enrolled a day after tracking started). Delivered to the desktop app
+  // on its next heartbeat, actually applied there only on the next Extract
+  // run — this list is the audit trail: who entered what, when, and
+  // whether the desktop app has confirmed applying it yet.
+  const [corrections, setCorrections] = useState([]);
+  const [correctionsLoaded, setCorrectionsLoaded] = useState(false);
+  const [newCorrection, setNewCorrection] = useState({ staffId: '', date: '', reason: '' });
+  const [savingCorrection, setSavingCorrection] = useState(false);
+
+  const loadCorrections = async () => {
+    try {
+      const res = await attendanceCorrectionsAPI.list();
+      setCorrections(Array.isArray(res?.corrections) ? res.corrections : []);
+    } catch {}
+    setCorrectionsLoaded(true);
+  };
+
+  const addCorrection = async () => {
+    const staffId = newCorrection.staffId.trim();
+    const date = newCorrection.date.trim();
+    if (!staffId || !date) {
+      toast.error('Staff ID and date are both required.');
+      return;
+    }
+    setSavingCorrection(true);
+    try {
+      await attendanceCorrectionsAPI.add(staffId, date, newCorrection.reason.trim());
+      toast.success('Correction added — the desktop app will pick it up on its next check-in.');
+      setNewCorrection({ staffId: '', date: '', reason: '' });
+      await loadCorrections();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not add correction.');
+    } finally { setSavingCorrection(false); }
   };
 
   // ── Feature flags ──────────────────────────────────────────────────────────
@@ -715,6 +752,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         loadEmailStatus(),
         loadDeletedRecords(),
         loadSyncSettings(),
+        loadCorrections(),
       ]);
       setSettingsReady(true);
     })();
@@ -1086,6 +1124,107 @@ const WorkflowBuilder = ({ onViewChange }) => {
                     >
                       {savingSync ? 'Saving...' : 'Save'}
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Manual Attendance Corrections — spans both columns. A separate
+                  concern from the sync on/off toggle above: entries here flow
+                  to the desktop client on its next heartbeat and are folded
+                  into that person's attendance the next time it runs an
+                  Extract, not applied instantly. */}
+              {correctionsLoaded && (
+                <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-black text-foreground">Manual Attendance Corrections</p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      For staff who were genuinely present but have no device punch (e.g. enrolled a day
+                      after tracking started). The desktop app picks these up automatically and applies
+                      them the next time it runs an Extract — shows up as a normal Present day there,
+                      nothing special-cased in daily reports. This list is the audit trail.
+                    </p>
+                  </div>
+
+                  <div className="border-t border-border/30 pt-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_2fr_auto] gap-3 items-end">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Staff ID</label>
+                      <input
+                        type="text"
+                        value={newCorrection.staffId}
+                        onChange={(e) => setNewCorrection(c => ({ ...c, staffId: e.target.value }))}
+                        placeholder="e.g. 30225"
+                        className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Date</label>
+                      <input
+                        type="date"
+                        value={newCorrection.date}
+                        onChange={(e) => setNewCorrection(c => ({ ...c, date: e.target.value }))}
+                        className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Reason</label>
+                      <input
+                        type="text"
+                        value={newCorrection.reason}
+                        onChange={(e) => setNewCorrection(c => ({ ...c, reason: e.target.value }))}
+                        placeholder="e.g. Enrolled day 2, present day 1"
+                        className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
+                    <button
+                      onClick={addCorrection}
+                      disabled={savingCorrection}
+                      className="px-5 py-2.5 text-xs font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground disabled:opacity-50 transition-all whitespace-nowrap"
+                    >
+                      {savingCorrection ? 'Adding...' : 'Add'}
+                    </button>
+                  </div>
+
+                  <div className="border-t border-border/30 pt-4">
+                    {corrections.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground italic">No corrections entered yet.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[11px]">
+                          <thead>
+                            <tr className="text-left text-muted-foreground uppercase tracking-widest text-[9px] font-bold border-b border-border/30">
+                              <th className="py-2 pr-3">Staff ID</th>
+                              <th className="py-2 pr-3">Date</th>
+                              <th className="py-2 pr-3">Reason</th>
+                              <th className="py-2 pr-3">Status</th>
+                              <th className="py-2 pr-3">Applied At</th>
+                              <th className="py-2 pr-3">Added By</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {corrections.map(c => (
+                              <tr key={c.id} className="border-b border-border/10">
+                                <td className="py-2 pr-3 font-bold">{c.staffId}</td>
+                                <td className="py-2 pr-3">{c.date}</td>
+                                <td className="py-2 pr-3 text-muted-foreground">{c.reason || '—'}</td>
+                                <td className="py-2 pr-3">
+                                  <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
+                                    c.status === 'applied'
+                                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                      : 'bg-amber-50 border-amber-200 text-amber-700'
+                                  }`}>
+                                    {c.status}
+                                  </span>
+                                </td>
+                                <td className="py-2 pr-3 text-muted-foreground">
+                                  {c.appliedAt ? new Date(c.appliedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                                </td>
+                                <td className="py-2 pr-3 text-muted-foreground">{c.createdBy || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

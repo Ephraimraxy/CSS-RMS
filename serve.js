@@ -5082,6 +5082,100 @@ app.get('/api/sync/heartbeat', desktopSyncLimiter, async (req, res) => {
   } catch (error) { sendError(res, 500, error.message); }
 });
 
+// ── Manual Attendance Corrections (desktop sync) ─────────────────────────────
+// Lets a Super Admin record, from this portal, that a specific staff member
+// should count as Present on a specific date despite having no real device
+// punch (e.g. they were enrolled a day after attendance tracking started).
+// The desktop app picks pending entries up on its next heartbeat, applies
+// them locally the next time an Extract actually runs (not immediately —
+// this is a software-side correction, not something faked onto the device),
+// then reports back which ones landed via POST .../corrections-applied so
+// the status/appliedAt below reflect reality, not just "we sent it". New,
+// isolated routes — deliberately not touching GET /api/sync/heartbeat itself
+// yet (see the small separate addition to that handler once these are
+// verified working on their own).
+async function ensureCorrectionsTable() {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "PendingAttendanceCorrection" (
+      "id" SERIAL PRIMARY KEY,
+      "staffId" TEXT NOT NULL,
+      "date" TEXT NOT NULL,
+      "reason" TEXT NOT NULL DEFAULT '',
+      "status" TEXT NOT NULL DEFAULT 'pending',
+      "createdBy" TEXT,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+      "appliedAt" TIMESTAMPTZ
+    )
+  `;
+}
+
+// GET /api/attendance-corrections — Super Admin only: the audit list (pending + applied)
+app.get('/api/attendance-corrections', authenticateToken, async (req, res) => {
+  if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
+  try {
+    await ensureCorrectionsTable();
+    const rows = await prisma.$queryRaw`
+      SELECT "id", "staffId", "date", "reason", "status", "createdBy", "createdAt", "appliedAt"
+      FROM "PendingAttendanceCorrection" ORDER BY "createdAt" DESC
+    `;
+    res.json({ corrections: rows });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// POST /api/attendance-corrections — Super Admin only. Body: either one
+// {staffId, date, reason} or {corrections: [{staffId, date, reason}, ...]}
+// for bulk entry. Rows missing staffId/date are silently skipped rather
+// than failing the whole batch, so one typo doesn't block the rest.
+app.post('/api/attendance-corrections', authenticateToken, async (req, res) => {
+  if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
+  try {
+    await ensureCorrectionsTable();
+    const entries = Array.isArray(req.body?.corrections) ? req.body.corrections : [req.body];
+    const createdBy = req.user?.email || req.user?.name || 'admin';
+    const created = [];
+    for (const entry of entries) {
+      const staffId = String(entry?.staffId || '').trim();
+      const date = String(entry?.date || '').trim();
+      const reason = String(entry?.reason || '').trim();
+      if (!staffId || !date) continue;
+      const rows = await prisma.$queryRaw`
+        INSERT INTO "PendingAttendanceCorrection" ("staffId", "date", "reason", "createdBy")
+        VALUES (${staffId}, ${date}, ${reason}, ${createdBy})
+        RETURNING "id", "staffId", "date", "reason", "status", "createdBy", "createdAt", "appliedAt"
+      `;
+      created.push(rows[0]);
+    }
+    res.json({ ok: true, created });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// POST /api/sync/corrections-applied — called by the desktop app itself once
+// it has actually folded a correction into a real Extract run locally, NOT
+// by a logged-in admin — same shared-secret auth as the heartbeat, matching
+// that route's own auth style exactly (wrong/missing key -> plain 404).
+app.post('/api/sync/corrections-applied', desktopSyncLimiter, async (req, res) => {
+  if (!process.env.DESKTOP_SYNC_KEY || req.headers['x-sync-key'] !== process.env.DESKTOP_SYNC_KEY) {
+    return res.status(404).end();
+  }
+  try {
+    await ensureCorrectionsTable();
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+    // One UPDATE per id rather than a single array-bound query — batches here
+    // are always small (a handful of corrections per Extract run at most),
+    // and this sidesteps any doubt about how Prisma's raw-query layer binds
+    // array parameters against Postgres, which isn't something testable
+    // against a real database from this environment.
+    for (const id of ids) {
+      await prisma.$executeRaw`
+        UPDATE "PendingAttendanceCorrection"
+        SET "status" = 'applied', "appliedAt" = now()
+        WHERE "id" = ${id} AND "status" = 'pending'
+      `;
+    }
+    res.json({ ok: true, applied: ids.length });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
 // ── Reference Code Pattern Settings ──────────────────────────────────────────
 app.get('/api/settings/ref-pattern', authenticateToken, async (req, res) => {
   if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
