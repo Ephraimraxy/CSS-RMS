@@ -5067,6 +5067,20 @@ app.get('/api/sync/heartbeat', desktopSyncLimiter, async (req, res) => {
     const expiresAt = map.desktop_sync_expires_at || null;
     const notExpired = !expiresAt || new Date(expiresAt) > new Date();
     const enabled = map.desktop_sync_enabled !== 'false' && notExpired;
+
+    // Own try/catch, deliberately isolated from the block above: a problem
+    // fetching pending corrections must never turn the whole heartbeat into
+    // a 500 and break activation checks for everyone — worst case here is
+    // just "no corrections delivered this check-in", not an outage.
+    let pendingCorrections = [];
+    try {
+      await ensureCorrectionsTable();
+      const pending = await prisma.$queryRaw`
+        SELECT "id", "staffId", "date", "reason" FROM "PendingAttendanceCorrection" WHERE "status" = 'pending'
+      `;
+      pendingCorrections = pending.map(p => ({ id: p.id, staffId: p.staffId, date: p.date, reason: p.reason }));
+    } catch (e) { logger.error(`[heartbeat] pendingCorrections fetch failed: ${e.message}`); }
+
     res.json({
       enabled,
       expiresAt,
@@ -5078,6 +5092,10 @@ app.get('/api/sync/heartbeat', desktopSyncLimiter, async (req, res) => {
       latestVersion: map.desktop_app_latest_version || null,
       downloadUrl: map.desktop_app_download_url || null,
       releaseNotes: map.desktop_app_release_notes || null,
+      // New, additive field — see app/licensing/client.py's defensive
+      // .get("pendingCorrections", []) on the desktop side, which treats a
+      // missing field (an older backend) the same as an empty list.
+      pendingCorrections,
     });
   } catch (error) { sendError(res, 500, error.message); }
 });
