@@ -156,6 +156,19 @@ const WorkflowBuilder = ({ onViewChange }) => {
   });
   const [onboardingTemplateSaved, setOnboardingTemplateSaved] = useState(false);
 
+  const DEFAULT_ONBOARDING_EMAIL_TEMPLATE = `Dear {name},\n\nWelcome to CSS Group! We are pleased to inform you that your official CSS Group email has been set up.\n\nYour Official Email: {email}\nDefault Password: {password}\nWebmail: webmail.cssgroup.com.ng\n\nYour Details:\nDepartment: {department}\nRole: {position}\nStaff ID: {staffId}\n\nPlease log in to your webmail and change your default password immediately after first login.\n\nRegards,\nCSS ICT Team`;
+  const [emailFile, setEmailFile] = useState(null);
+  const [emailParsed, setEmailParsed] = useState(null);
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailResults, setEmailResults] = useState(null);
+  const [emailTemplate, setEmailTemplate] = useState(() => {
+    try { return localStorage.getItem('onboarding_email_template') || DEFAULT_ONBOARDING_EMAIL_TEMPLATE; } catch { return DEFAULT_ONBOARDING_EMAIL_TEMPLATE; }
+  });
+  const [emailTemplateSaved, setEmailTemplateSaved] = useState(false);
+  const [emailSubject, setEmailSubject] = useState(() => {
+    try { return localStorage.getItem('onboarding_email_subject') || 'Welcome to CSS Group — Your Official Email Details'; } catch { return 'Welcome to CSS Group — Your Official Email Details'; }
+  });
+
   const loadSyncSettings = async () => {
     try {
       const [e, exp, msg, ver, url, notes] = await Promise.all([
@@ -2252,13 +2265,14 @@ const WorkflowBuilder = ({ onViewChange }) => {
                       <th className="px-3 py-2">Position / Title</th>
                       <th className="px-3 py-2">Department</th>
                       <th className="px-3 py-2">Phone Number</th>
+                      <th className="px-3 py-2 text-amber-600">Personal Email <span className="font-normal normal-case">(Gmail/Yahoo)</span></th>
                     </tr>
                   </thead>
                   <tbody>
                     {[
-                      ['10534', 'OKOLIKO', 'JOHN', 'ADOKO', 'SUPERVISOR', 'MONITORING & EVAL', '8133327398'],
-                      ['10096', 'BAMGBOYE', 'ADENRELE', 'OLUFEMI', 'PROCUREMENT MANAGER', 'PROCUREMENT', '8037309447'],
-                      ['', 'EKWEM', 'CHINEDU', 'BIZMARCK', 'STORE SUPERVISOR', 'MAIN STORES', '8036914096'],
+                      ['10534', 'OKOLIKO', 'JOHN', 'ADOKO', 'SUPERVISOR', 'MONITORING & EVAL', '8133327398', 'johnnysuccess009@gmail.com'],
+                      ['10096', 'BAMGBOYE', 'ADENRELE', 'OLUFEMI', 'PROCUREMENT MANAGER', 'PROCUREMENT', '8037309447', 'adebamgboye@gmail.com'],
+                      ['', 'EKWEM', 'CHINEDU', 'BIZMARCK', 'STORE SUPERVISOR', 'MAIN STORES', '8036914096', ''],
                     ].map((row, i) => (
                       <tr key={i} className="border-t border-border/10 text-muted-foreground">
                         {row.map((cell, j) => (
@@ -2269,7 +2283,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   </tbody>
                 </table>
               </div>
-              <p className="text-[10px] text-muted-foreground italic">Staff ID is optional — leave blank if not yet assigned. Email column is not required here; it will be auto-generated.</p>
+              <p className="text-[10px] text-muted-foreground italic">Staff ID and Personal Email are optional. Personal Email (Gmail/Yahoo) is not used for SMS — it's only required for the Email section below.</p>
             </div>
 
             {/* SMS Message Template */}
@@ -2462,6 +2476,237 @@ const WorkflowBuilder = ({ onViewChange }) => {
                               <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
                                 r.status === 'sent' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
                                 r.status === 'failed' ? 'bg-red-50 border-red-200 text-red-700' :
+                                'bg-amber-50 border-amber-200 text-amber-700'
+                              }`}>{r.status}{r.reason ? ` — ${r.reason}` : ''}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ── Email Section ── */}
+            <div className="space-y-2 pt-2">
+              <h3 className="text-base font-black text-foreground">Staff Onboarding Email</h3>
+              <p className="text-[12px] text-muted-foreground leading-relaxed">
+                Send a personalised welcome email to each staff member's personal Gmail/Yahoo address. The email uses the RMS email template and includes their official CSS Group email and default password.
+              </p>
+            </div>
+
+            {/* Email template */}
+            <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 space-y-4">
+              <div className="space-y-0.5">
+                <p className="text-sm font-black text-foreground">Email Subject</p>
+              </div>
+              <input
+                value={emailSubject}
+                onChange={e => setEmailSubject(e.target.value)}
+                className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="Email subject line..."
+              />
+              <div className="space-y-0.5">
+                <p className="text-sm font-black text-foreground">Email Body Template</p>
+                <p className="text-[11px] text-muted-foreground">Same <span className="font-mono text-primary">{`{placeholder}`}</span> system as SMS — each line becomes a paragraph in the branded email.</p>
+              </div>
+              <textarea
+                value={emailTemplate}
+                onChange={e => setEmailTemplate(e.target.value)}
+                rows={10}
+                className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono leading-relaxed resize-y"
+              />
+              <div className="flex flex-wrap gap-2">
+                {[
+                  ['{name}', 'First name'],
+                  ['{fullname}', 'Full name'],
+                  ['{surname}', 'Surname'],
+                  ['{email}', 'Official email'],
+                  ['{password}', 'Default password'],
+                  ['{department}', 'Department'],
+                  ['{position}', 'Role / Position'],
+                  ['{staffId}', 'Staff ID'],
+                ].map(([ph, label]) => (
+                  <button
+                    key={ph}
+                    onClick={() => setEmailTemplate(t => t + ph)}
+                    title={`Insert ${label}`}
+                    className="px-2 py-1 rounded-lg border border-border/50 bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-[10px] font-mono text-primary"
+                  >
+                    {ph} <span className="text-muted-foreground font-sans">— {label}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center justify-end">
+                <button
+                  onClick={() => {
+                    try {
+                      localStorage.setItem('onboarding_email_template', emailTemplate);
+                      localStorage.setItem('onboarding_email_subject', emailSubject);
+                    } catch {}
+                    setEmailTemplateSaved(true);
+                    setTimeout(() => setEmailTemplateSaved(false), 2500);
+                  }}
+                  className="px-4 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
+                >
+                  {emailTemplateSaved ? '✓ Saved' : 'Save Template'}
+                </button>
+              </div>
+            </div>
+
+            {/* Email file upload */}
+            <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 space-y-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Upload CSV or Excel File (with Personal Email column)</label>
+                <p className="text-[11px] text-muted-foreground">The file must have a column for each staff member's personal Gmail or Yahoo address (not the official CSS email). Same format as the SMS upload — the <span className="font-bold text-amber-600">Personal Email</span> column is required here.</p>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx,.xls"
+                    onChange={e => {
+                      const file = e.target.files[0];
+                      if (!file) return;
+                      setEmailFile(file);
+                      setEmailResults(null);
+                      const find = (obj, ...kws) => { const k = Object.keys(obj).find(k => kws.some(w => k.toLowerCase().includes(w))); return k ? String(obj[k]).trim() : ''; };
+                      const genEmail = (fn, sn) => { const f = fn.split(' ')[0].toLowerCase().replace(/[^a-z]/g, ''); const s = sn.toLowerCase().replace(/[^a-z]/g, ''); return f && s ? `${f}.${s}@cssgroup.com.ng` : ''; };
+                      const reader = new FileReader();
+                      reader.onload = evt => {
+                        try {
+                          const lines = evt.target.result.split('\n').filter(Boolean);
+                          const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+                          const raw = lines.slice(1).map(line => { const cols = line.match(/(".*?"|[^,]+)(?=,|$)/g) || []; return Object.fromEntries(headers.map((h, i) => [h, (cols[i] || '').replace(/"/g, '').trim()])); });
+                          const normalized = raw.map(r => {
+                            const firstName    = find(r, 'first name', 'firstname');
+                            const surname      = find(r, 'surname', 'last name');
+                            const personalEmail = find(r, 'personal email', 'personal_email', 'email');
+                            const dept         = find(r, 'department', 'dept');
+                            const position     = find(r, 'position', 'title');
+                            const staffId      = find(r, 'staff id', 'staffid');
+                            const officialEmail = genEmail(firstName, surname);
+                            return { firstName, surname, personalEmail, dept, position, staffId, email: officialEmail };
+                          }).filter(r => r.firstName || r.surname || r.personalEmail);
+                          setEmailParsed(normalized);
+                        } catch { setEmailParsed(null); }
+                      };
+                      reader.readAsText(file);
+                    }}
+                    className="flex-1 text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-[11px] file:font-black file:uppercase file:tracking-widest file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 cursor-pointer"
+                  />
+                  {emailFile && (
+                    <span className="text-[11px] text-muted-foreground">{emailFile.name}</span>
+                  )}
+                </div>
+              </div>
+
+              {emailParsed && emailParsed.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{emailParsed.length} Staff — Click any cell to edit</p>
+                    <span className="text-[9px] text-muted-foreground italic">Official email updates live as you edit names · ✕ removes a row</span>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-border/30">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="bg-muted/30 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">
+                          <th className="px-3 py-2">First Name</th>
+                          <th className="px-3 py-2">Surname</th>
+                          <th className="px-3 py-2">Personal Email</th>
+                          <th className="px-3 py-2">Official Email</th>
+                          <th className="px-3 py-2">Dept</th>
+                          <th className="px-3 py-2">Position</th>
+                          <th className="px-3 py-2">Staff ID</th>
+                          <th className="px-3 py-2"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {emailParsed.map((row, i) => {
+                          const updateEmailRow = (field, val) => setEmailParsed(prev => {
+                            const next = [...prev];
+                            const updated = { ...next[i], [field]: val };
+                            if (field === 'firstName' || field === 'surname') {
+                              const fn = updated.firstName.split(' ')[0].toLowerCase().replace(/[^a-z]/g, '');
+                              const sn = updated.surname.toLowerCase().replace(/[^a-z]/g, '');
+                              updated.email = fn && sn ? `${fn}.${sn}@cssgroup.com.ng` : '';
+                            }
+                            next[i] = updated;
+                            return next;
+                          });
+                          const cellCls = 'px-2 py-1.5 rounded-lg bg-muted/30 border border-transparent focus:border-primary/40 focus:bg-white focus:outline-none w-full text-[11px]';
+                          return (
+                            <tr key={i} className="border-t border-border/10">
+                              <td className="px-2 py-1"><input value={row.firstName} onChange={e => updateEmailRow('firstName', e.target.value)} className={cellCls} /></td>
+                              <td className="px-2 py-1"><input value={row.surname} onChange={e => updateEmailRow('surname', e.target.value)} className={cellCls} /></td>
+                              <td className="px-2 py-1"><input value={row.personalEmail} onChange={e => updateEmailRow('personalEmail', e.target.value)} className={`${cellCls} ${!row.personalEmail ? 'border-amber-300 bg-amber-50/50' : ''}`} placeholder="gmail / yahoo" /></td>
+                              <td className="px-2 py-1 font-mono text-[10px] text-primary whitespace-nowrap">{row.email || '—'}</td>
+                              <td className="px-2 py-1"><input value={row.dept} onChange={e => updateEmailRow('dept', e.target.value)} className={cellCls} /></td>
+                              <td className="px-2 py-1"><input value={row.position} onChange={e => updateEmailRow('position', e.target.value)} className={cellCls} /></td>
+                              <td className="px-2 py-1"><input value={row.staffId} onChange={e => updateEmailRow('staffId', e.target.value)} className={cellCls} /></td>
+                              <td className="px-2 py-1"><button onClick={() => setEmailParsed(prev => prev.filter((_, j) => j !== i))} className="text-muted-foreground/40 hover:text-red-500 transition-colors text-base leading-none">✕</button></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button
+                    disabled={emailSending}
+                    onClick={async () => {
+                      setEmailSending(true);
+                      setEmailResults(null);
+                      try {
+                        const res = await fetch('/api/onboarding/bulk-email', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ rows: emailParsed, template: emailTemplate, subject: emailSubject }),
+                        });
+                        const data = await res.json();
+                        setEmailResults(data);
+                        if (data.sent > 0) toast.success(`${data.sent} email${data.sent !== 1 ? 's' : ''} sent successfully`);
+                        if (data.failed > 0) toast.error(`${data.failed} failed — check results below`);
+                      } catch (ex) {
+                        toast.error('Request failed: ' + ex.message);
+                      } finally {
+                        setEmailSending(false);
+                      }
+                    }}
+                    className="flex items-center gap-2 px-5 py-2.5 text-xs font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground disabled:opacity-50 transition-all"
+                  >
+                    {emailSending ? (
+                      <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />Sending Emails...</>
+                    ) : <>Send Email to All {emailParsed.filter(r => r.personalEmail).length} Staff</>}
+                  </button>
+                </div>
+              )}
+
+              {emailResults && (
+                <div className="space-y-3 border-t border-border/30 pt-4">
+                  <div className="flex items-center gap-4 text-[11px]">
+                    <span className="font-black text-emerald-600">{emailResults.sent} Sent</span>
+                    <span className="font-black text-red-500">{emailResults.failed} Failed</span>
+                    <span className="font-black text-muted-foreground">{emailResults.skipped} Skipped</span>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-border/30">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="bg-muted/30 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">
+                          <th className="px-3 py-2">Name</th>
+                          <th className="px-3 py-2">Personal Email</th>
+                          <th className="px-3 py-2">Official Email Sent</th>
+                          <th className="px-3 py-2">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {emailResults.results.map((r, i) => (
+                          <tr key={i} className="border-t border-border/10">
+                            <td className="px-3 py-2 font-bold">{r.name}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.personalEmail || '—'}</td>
+                            <td className="px-3 py-2 font-mono text-[10px] text-primary">{r.officialEmail || '—'}</td>
+                            <td className="px-3 py-2">
+                              <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
+                                r.status === 'sent'    ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+                                r.status === 'failed'  ? 'bg-red-50 border-red-200 text-red-700' :
                                 'bg-amber-50 border-amber-200 text-amber-700'
                               }`}>{r.status}{r.reason ? ` — ${r.reason}` : ''}</span>
                             </td>

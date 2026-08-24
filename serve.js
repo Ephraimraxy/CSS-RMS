@@ -9389,6 +9389,79 @@ app.post('/api/onboarding/bulk-sms-send', authenticateToken, requireRoles(['glob
   }
 });
 
+// ── Onboarding Bulk Email ─────────────────────────────────────────────────────
+app.post('/api/onboarding/bulk-email', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { rows, template, subject: subjectTpl } = req.body;
+    if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'No rows provided.' });
+
+    const DEFAULT_TEMPLATE = `Dear {name},\n\nWelcome to CSS Group! We are pleased to inform you that your official CSS Group email has been set up.\n\nYour Official Email: {email}\nDefault Password: {password}\nWebmail: webmail.cssgroup.com.ng\n\nYour Details:\nDepartment: {department}\nRole: {position}\nStaff ID: {staffId}\n\nPlease log in to your webmail and change your default password immediately after first login.\n\nRegards,\nCSS ICT Team`;
+    const DEFAULT_SUBJECT = 'Welcome to CSS Group — Your Official Email Details';
+
+    const msgTemplate = (typeof template === 'string' && template.trim()) ? template.trim() : DEFAULT_TEMPLATE;
+    const emailSubject = (typeof subjectTpl === 'string' && subjectTpl.trim()) ? subjectTpl.trim() : DEFAULT_SUBJECT;
+
+    const generateOfficialEmail = (firstName, surname) => {
+      const fn = String(firstName).split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
+      const sn = String(surname).toLowerCase().replace(/[^a-z]/g, '');
+      return fn && sn ? `${fn}.${sn}@cssgroup.com.ng` : '';
+    };
+
+    const defaultPwd = process.env.ONBOARDING_DEFAULT_PASSWORD || 'CssPWorD1';
+    const results = [];
+
+    for (const row of rows) {
+      const firstName     = String(row.firstName || '').trim();
+      const surname       = String(row.surname || '').trim();
+      const personalEmail = String(row.personalEmail || '').trim();
+      const dept          = String(row.dept || '').trim();
+      const position      = String(row.position || '').trim();
+      const staffId       = String(row.staffId || '').trim();
+      const officialEmail = row.email || generateOfficialEmail(firstName, surname);
+
+      if (!personalEmail || !firstName || !surname) {
+        results.push({ name: `${firstName} ${surname}`.trim() || 'Unknown', personalEmail, status: 'skipped', reason: !personalEmail ? 'No personal email' : 'Missing name' });
+        continue;
+      }
+
+      const displayName = firstName.split(' ')[0];
+      const body = msgTemplate
+        .replace(/\{name\}/g, displayName)
+        .replace(/\{fullname\}/g, `${firstName} ${surname}`.trim())
+        .replace(/\{surname\}/g, surname)
+        .replace(/\{email\}/g, officialEmail)
+        .replace(/\{emailUser\}/g, officialEmail.split('@')[0])
+        .replace(/\{password\}/g, defaultPwd)
+        .replace(/\{department\}/g, dept)
+        .replace(/\{position\}/g, position)
+        .replace(/\{staffId\}/g, staffId);
+
+      const subject = emailSubject
+        .replace(/\{name\}/g, displayName)
+        .replace(/\{fullname\}/g, `${firstName} ${surname}`.trim());
+
+      const lines = body.split('\n').map(l => l.trim()).filter(l => l);
+      const { text, html } = buildEmailContent({ title: subject, lines, actionLabel: 'Open Webmail' });
+
+      try {
+        await sendEmail({ to: personalEmail, subject, text, html });
+        results.push({ name: `${firstName} ${surname}`, personalEmail, officialEmail, staffId, dept, status: 'sent' });
+      } catch (e) {
+        results.push({ name: `${firstName} ${surname}`, personalEmail, officialEmail, staffId, dept, status: 'failed', reason: e.message });
+      }
+    }
+
+    const sent    = results.filter(r => r.status === 'sent').length;
+    const failed  = results.filter(r => r.status === 'failed').length;
+    const skipped = results.filter(r => r.status === 'skipped').length;
+    logger.info(`[ONBOARDING-EMAIL] sent=${sent} failed=${failed} skipped=${skipped}`);
+    res.json({ sent, failed, skipped, total: results.length, results });
+  } catch (err) {
+    logger.error('[ONBOARDING-EMAIL]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Store Records ─────────────────────────────────────────────────────────────
 function isStoreDept(name) { return /\bstore\b/i.test(name || ''); }
 
