@@ -150,6 +150,9 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [onboardingParsed, setOnboardingParsed] = useState(null);
   const [onboardingSending, setOnboardingSending] = useState(false);
   const [onboardingResults, setOnboardingResults] = useState(null);
+  const [onboardingTemplate, setOnboardingTemplate] = useState(
+    'Dear {name}, welcome to CSS Group! Your official email is: {email}. Default password: {password}. Login at webmail.cssgroup.com.ng and change your password immediately after first login. Department: {department}. Role: {position}. - CSS ICT Team'
+  );
 
   const loadSyncSettings = async () => {
     try {
@@ -2267,6 +2270,42 @@ const WorkflowBuilder = ({ onViewChange }) => {
               <p className="text-[10px] text-muted-foreground italic">Staff ID is optional — leave blank if not yet assigned. Email column is not required here; it will be auto-generated.</p>
             </div>
 
+            {/* SMS Message Template */}
+            <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 space-y-4">
+              <div className="space-y-0.5">
+                <p className="text-sm font-black text-foreground">SMS Message Template</p>
+                <p className="text-[11px] text-muted-foreground">Edit the message freely. The placeholders in <span className="font-mono text-primary">{`{curly braces}`}</span> are auto-replaced per person — don't remove them unless you don't need that info.</p>
+              </div>
+              <textarea
+                value={onboardingTemplate}
+                onChange={e => setOnboardingTemplate(e.target.value)}
+                rows={5}
+                className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono leading-relaxed resize-y"
+              />
+              <div className="flex flex-wrap gap-2">
+                {[
+                  ['{name}', 'First name'],
+                  ['{fullname}', 'Full name'],
+                  ['{surname}', 'Surname'],
+                  ['{email}', 'Generated email'],
+                  ['{password}', 'Default password'],
+                  ['{department}', 'Department'],
+                  ['{position}', 'Role / Position'],
+                  ['{staffId}', 'Staff ID'],
+                ].map(([ph, label]) => (
+                  <button
+                    key={ph}
+                    onClick={() => setOnboardingTemplate(t => t + ph)}
+                    title={`Insert ${label}`}
+                    className="px-2 py-1 rounded-lg border border-border/50 bg-muted/30 hover:bg-primary/10 hover:border-primary/30 transition-all text-[10px] font-mono text-primary"
+                  >
+                    {ph} <span className="text-muted-foreground font-sans">— {label}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground italic">Click any placeholder above to insert it at the end. Character count: {onboardingTemplate.length} (SMS limit ~160 per segment)</p>
+            </div>
+
             <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 space-y-4">
               <div className="space-y-2">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Upload CSV or Excel File</label>
@@ -2359,7 +2398,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                         const res = await fetch('/api/onboarding/bulk-sms-send', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ rows: onboardingParsed }),
+                          body: JSON.stringify({ rows: onboardingParsed, template: onboardingTemplate }),
                         });
                         const data = await res.json();
                         setOnboardingResults(data);

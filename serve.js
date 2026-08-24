@@ -9318,8 +9318,11 @@ app.post('/api/onboarding/bulk-sms', authenticateToken, requireRoles(['global_ad
 // ── Onboarding Bulk SMS from edited JSON rows ─────────────────────────────────
 app.post('/api/onboarding/bulk-sms-send', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
-    const { rows } = req.body;
+    const { rows, template } = req.body;
     if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'No rows provided.' });
+
+    const DEFAULT_TEMPLATE = `Dear {name}, welcome to CSS Group! Your official email is: {email}. Default password: {password}. Login at webmail.cssgroup.com.ng and change your password immediately after first login. Department: {department}. Role: {position}. - CSS ICT Team`;
+    const msgTemplate = (typeof template === 'string' && template.trim()) ? template.trim() : DEFAULT_TEMPLATE;
 
     const normalizePhone = (p) => {
       const n = String(p).replace(/\D/g, '');
@@ -9352,7 +9355,18 @@ app.post('/api/onboarding/bulk-sms-send', authenticateToken, requireRoles(['glob
       }
 
       const displayName = firstName.split(' ')[0];
-      const message = `Dear ${displayName}, welcome to CSS Group! Your official email is: ${email}. Default password: ${defaultPwd}. Login at webmail.cssgroup.com.ng and change your password immediately after first login.${dept ? ` Department: ${dept}.` : ''}${position ? ` Role: ${position}.` : ''} - CSS ICT Team`;
+      // Termii strips bare @ in message bodies — fullwidth ＠ (U+FF20) looks identical but passes through
+      const emailSafe = email.replace('@', '＠');
+      const message = msgTemplate
+        .replace(/\{name\}/g, displayName)
+        .replace(/\{fullname\}/g, `${firstName} ${surname}`.trim())
+        .replace(/\{surname\}/g, surname)
+        .replace(/\{email\}/g, emailSafe)
+        .replace(/\{emailUser\}/g, email.split('@')[0])
+        .replace(/\{password\}/g, defaultPwd)
+        .replace(/\{department\}/g, dept)
+        .replace(/\{position\}/g, position)
+        .replace(/\{staffId\}/g, staffId);
 
       try {
         await sendSms({ to: phone, message });
