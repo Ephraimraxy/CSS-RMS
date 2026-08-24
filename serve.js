@@ -9276,7 +9276,11 @@ app.post('/api/onboarding/bulk-sms', authenticateToken, requireRoles(['global_ad
     for (const row of rows) {
       const firstName = findCol(row, 'first name', 'firstname');
       const surname   = findCol(row, 'surname', 'last name');
-      const phone     = findCol(row, 'phone');
+      const rawPhone  = findCol(row, 'phone').replace(/\D/g, '');
+      // Excel strips leading zero from Nigerian numbers — restore it
+      const phone = rawPhone.startsWith('234') ? '0' + rawPhone.slice(3)
+                  : rawPhone.length === 10 && !rawPhone.startsWith('0') ? '0' + rawPhone
+                  : rawPhone;
       const staffId   = findCol(row, 'staff id', 'staffid');
       const dept      = findCol(row, 'department', 'dept');
       const position  = findCol(row, 'position', 'title');
