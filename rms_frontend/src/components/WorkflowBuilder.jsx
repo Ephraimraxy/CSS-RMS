@@ -2279,17 +2279,17 @@ const WorkflowBuilder = ({ onViewChange }) => {
                       if (!file) return;
                       setOnboardingFile(file);
                       setOnboardingResults(null);
-                      // Quick client-side preview using FileReader
+                      const find = (obj, ...kws) => { const k = Object.keys(obj).find(k => kws.some(w => k.toLowerCase().includes(w))); return k ? String(obj[k]).trim() : ''; };
+                      const normPhone = p => { const n = p.replace(/\D/g, ''); if (n.startsWith('234')) return '0' + n.slice(3); if (n.length === 10 && !n.startsWith('0')) return '0' + n; return n; };
+                      const genEmail = (fn, sn) => { const f = fn.split(' ')[0].toLowerCase().replace(/[^a-z]/g, ''); const s = sn.toLowerCase().replace(/[^a-z]/g, ''); return f && s ? `${f}.${s}@cssgroup.com.ng` : ''; };
                       const reader = new FileReader();
                       reader.onload = evt => {
                         try {
                           const lines = evt.target.result.split('\n').filter(Boolean);
                           const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
-                          const rows = lines.slice(1).map(line => {
-                            const cols = line.match(/(".*?"|[^,]+)(?=,|$)/g) || [];
-                            return Object.fromEntries(headers.map((h, i) => [h, (cols[i] || '').replace(/"/g, '').trim()]));
-                          });
-                          setOnboardingParsed(rows);
+                          const raw = lines.slice(1).map(line => { const cols = line.match(/(".*?"|[^,]+)(?=,|$)/g) || []; return Object.fromEntries(headers.map((h, i) => [h, (cols[i] || '').replace(/"/g, '').trim()])); });
+                          const normalized = raw.map(r => { const firstName = find(r, 'first name', 'firstname'); const surname = find(r, 'surname', 'last name'); const phone = normPhone(find(r, 'phone')); const dept = find(r, 'department', 'dept'); const position = find(r, 'position', 'title'); const staffId = find(r, 'staff id', 'staffid'); const email = genEmail(firstName, surname); return { firstName, surname, phone, dept, position, staffId, email }; }).filter(r => r.firstName || r.surname || r.phone);
+                          setOnboardingParsed(normalized);
                         } catch { setOnboardingParsed(null); }
                       };
                       reader.readAsText(file);
@@ -2304,51 +2304,63 @@ const WorkflowBuilder = ({ onViewChange }) => {
 
               {onboardingParsed && onboardingParsed.length > 0 && (
                 <div className="space-y-3">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{onboardingParsed.length} Staff Detected — Preview</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{onboardingParsed.length} Staff — Click any cell to edit</p>
+                    <span className="text-[9px] text-muted-foreground italic">Email updates live as you edit names · ✕ removes a row</span>
+                  </div>
                   <div className="overflow-x-auto rounded-xl border border-border/30">
                     <table className="w-full text-[11px]">
                       <thead>
                         <tr className="bg-muted/30 text-left text-[9px] font-black uppercase tracking-widest text-muted-foreground">
-                          <th className="px-3 py-2">Name</th>
-                          <th className="px-3 py-2">Phone</th>
-                          <th className="px-3 py-2">Department</th>
-                          <th className="px-3 py-2">Generated Email</th>
+                          <th className="px-2 py-2">Staff ID</th>
+                          <th className="px-2 py-2">Surname</th>
+                          <th className="px-2 py-2">First Name</th>
+                          <th className="px-2 py-2">Phone</th>
+                          <th className="px-2 py-2">Department</th>
+                          <th className="px-2 py-2">Position</th>
+                          <th className="px-2 py-2 text-primary">Generated Email</th>
+                          <th className="px-2 py-2"></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {onboardingParsed.slice(0, 10).map((row, i) => {
-                          const firstName = (row['First Name'] || row['FIRST NAME'] || row['first name'] || '').trim();
-                          const surname = (row['Surname'] || row['SURNAME'] || row['surname'] || '').trim();
-                          const phone = (row['Phone'] || row['PHONE NUMBER'] || row['phone'] || '').trim();
-                          const dept = (row['Department'] || row['DEPARTMENT'] || row['dept'] || '').trim();
-                          const fn = firstName.split(' ')[0].toLowerCase().replace(/[^a-z]/g, '');
-                          const sn = surname.toLowerCase().replace(/[^a-z]/g, '');
-                          const email = fn && sn ? `${fn}.${sn}@cssgroup.com.ng` : '—';
+                        {onboardingParsed.map((row, i) => {
+                          const updateRow = (field, val) => setOnboardingParsed(prev => {
+                            const next = [...prev];
+                            const updated = { ...next[i], [field]: val };
+                            const fn = updated.firstName.split(' ')[0].toLowerCase().replace(/[^a-z]/g, '');
+                            const sn = updated.surname.toLowerCase().replace(/[^a-z]/g, '');
+                            updated.email = fn && sn ? `${fn}.${sn}@cssgroup.com.ng` : '';
+                            next[i] = updated;
+                            return next;
+                          });
+                          const c = 'w-full bg-transparent border border-transparent hover:border-border/50 focus:border-primary/50 focus:bg-white rounded px-1.5 py-1 outline-none text-[11px] min-w-[70px]';
                           return (
-                            <tr key={i} className="border-t border-border/10">
-                              <td className="px-3 py-2 font-bold">{firstName} {surname}</td>
-                              <td className="px-3 py-2 text-muted-foreground">{phone}</td>
-                              <td className="px-3 py-2 text-muted-foreground">{dept}</td>
-                              <td className="px-3 py-2 text-primary font-mono text-[10px]">{email}</td>
+                            <tr key={i} className="border-t border-border/10 hover:bg-muted/20">
+                              <td className="px-1 py-1"><input className={c} value={row.staffId} onChange={e => updateRow('staffId', e.target.value)} /></td>
+                              <td className="px-1 py-1"><input className={c + ' font-bold'} value={row.surname} onChange={e => updateRow('surname', e.target.value)} /></td>
+                              <td className="px-1 py-1"><input className={c + ' font-bold'} value={row.firstName} onChange={e => updateRow('firstName', e.target.value)} /></td>
+                              <td className="px-1 py-1"><input className={c} value={row.phone} onChange={e => updateRow('phone', e.target.value)} /></td>
+                              <td className="px-1 py-1"><input className={c} value={row.dept} onChange={e => updateRow('dept', e.target.value)} /></td>
+                              <td className="px-1 py-1"><input className={c} value={row.position} onChange={e => updateRow('position', e.target.value)} /></td>
+                              <td className="px-2 py-1 font-mono text-[10px] text-primary whitespace-nowrap">{row.email || <span className="text-red-400 italic">incomplete</span>}</td>
+                              <td className="px-1 py-1"><button onClick={() => setOnboardingParsed(prev => prev.filter((_, idx) => idx !== i))} className="text-muted-foreground/40 hover:text-red-500 transition-colors px-1">✕</button></td>
                             </tr>
                           );
                         })}
-                        {onboardingParsed.length > 10 && (
-                          <tr><td colSpan={4} className="px-3 py-2 text-[10px] text-muted-foreground italic">...and {onboardingParsed.length - 10} more</td></tr>
-                        )}
                       </tbody>
                     </table>
                   </div>
                   <button
                     disabled={onboardingSending}
                     onClick={async () => {
-                      if (!onboardingFile) return;
                       setOnboardingSending(true);
                       setOnboardingResults(null);
                       try {
-                        const fd = new FormData();
-                        fd.append('file', onboardingFile);
-                        const res = await fetch('/api/onboarding/bulk-sms', { method: 'POST', body: fd });
+                        const res = await fetch('/api/onboarding/bulk-sms-send', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ rows: onboardingParsed }),
+                        });
                         const data = await res.json();
                         setOnboardingResults(data);
                         if (data.sent > 0) toast.success(`${data.sent} SMS sent successfully`);
@@ -2363,9 +2375,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   >
                     {onboardingSending ? (
                       <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />Sending SMS...</>
-                    ) : (
-                      <>Send SMS to All {onboardingParsed.length} Staff</>
-                    )}
+                    ) : <>Send SMS to All {onboardingParsed.length} Staff</>}
                   </button>
                 </div>
               )}

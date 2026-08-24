@@ -9315,6 +9315,64 @@ app.post('/api/onboarding/bulk-sms', authenticateToken, requireRoles(['global_ad
   }
 });
 
+// ── Onboarding Bulk SMS from edited JSON rows ─────────────────────────────────
+app.post('/api/onboarding/bulk-sms-send', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'No rows provided.' });
+
+    const normalizePhone = (p) => {
+      const n = String(p).replace(/\D/g, '');
+      if (n.startsWith('234')) return '0' + n.slice(3);
+      if (n.length === 10 && !n.startsWith('0')) return '0' + n;
+      return n;
+    };
+
+    const generateEmail = (firstName, surname) => {
+      const fn = String(firstName).split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
+      const sn = String(surname).toLowerCase().replace(/[^a-z]/g, '');
+      return fn && sn ? `${fn}.${sn}@cssgroup.com.ng` : '';
+    };
+
+    const defaultPwd = process.env.ONBOARDING_DEFAULT_PASSWORD || 'CssPWorD1';
+    const results = [];
+
+    for (const row of rows) {
+      const firstName = String(row.firstName || '').trim();
+      const surname   = String(row.surname || '').trim();
+      const phone     = normalizePhone(row.phone || '');
+      const dept      = String(row.dept || '').trim();
+      const position  = String(row.position || '').trim();
+      const staffId   = String(row.staffId || '').trim();
+      const email     = row.email || generateEmail(firstName, surname);
+
+      if (!phone || !firstName || !surname) {
+        results.push({ name: `${firstName} ${surname}`.trim() || 'Unknown', phone, status: 'skipped', reason: 'Missing name or phone' });
+        continue;
+      }
+
+      const displayName = firstName.split(' ')[0];
+      const message = `Dear ${displayName}, welcome to CSS Group! Your official email is: ${email}. Default password: ${defaultPwd}. Login at webmail.cssgroup.com.ng and change your password immediately after first login.${dept ? ` Department: ${dept}.` : ''}${position ? ` Role: ${position}.` : ''} - CSS ICT Team`;
+
+      try {
+        await sendSms({ to: phone, message });
+        results.push({ name: `${firstName} ${surname}`, phone, email, staffId, dept, status: 'sent' });
+      } catch (e) {
+        results.push({ name: `${firstName} ${surname}`, phone, email, staffId, dept, status: 'failed', reason: e.message });
+      }
+    }
+
+    const sent = results.filter(r => r.status === 'sent').length;
+    const failed = results.filter(r => r.status === 'failed').length;
+    const skipped = results.filter(r => r.status === 'skipped').length;
+    logger.info(`[ONBOARDING-SMS-SEND] sent=${sent} failed=${failed} skipped=${skipped}`);
+    res.json({ sent, failed, skipped, total: results.length, results });
+  } catch (err) {
+    logger.error('[ONBOARDING-SMS-SEND]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Store Records ─────────────────────────────────────────────────────────────
 function isStoreDept(name) { return /\bstore\b/i.test(name || ''); }
 
