@@ -9289,7 +9289,7 @@ app.post('/api/onboarding/bulk-sms', authenticateToken, requireRoles(['global_ad
       const email = generateEmail(firstName, surname);
       const displayName = `${firstName.split(' ')[0]}`;
       const defaultPwd = process.env.ONBOARDING_DEFAULT_PASSWORD || 'CssPWorD1';
-      const message = `Dear ${displayName}, welcome to CSS Group! Your official email is: ${email}. Default password: ${defaultPwd}. Login at webmail.cssgroup.com.ng and change your password immediately after first login.${dept ? ` Department: ${dept}.` : ''}${position ? ` Role: ${position}.` : ''} - CSS Group Admin`;
+      const message = `Dear ${displayName}, welcome to CSS Group! Your official email is: ${email}. Default password: ${defaultPwd}. Login at webmail.cssgroup.com.ng and change your password immediately after first login.${dept ? ` Department: ${dept}.` : ''}${position ? ` Role: ${position}.` : ''} - CSS ICT Team`;
 
       try {
         await sendSms({ to: phone, message });
