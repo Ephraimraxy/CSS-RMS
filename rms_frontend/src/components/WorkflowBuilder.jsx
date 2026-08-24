@@ -856,6 +856,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
               { id: 'stages',   label: 'Workflow, Types & Ref Code' },
               { id: 'print',    label: 'Print, Stamp & Contact' },
               { id: 'images',   label: 'Images' },
+              { id: 'zkteco',   label: 'ZKTeco & Desktop Sync' },
               { id: 'bin',      label: 'Deleted Records & Danger Zone' },
             ].map(({ id, label }) => (
               <button
@@ -1019,215 +1020,6 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   )}
                 </div>
               ))}
-
-              {/* Desktop Client Sync — spans both columns. Controls the separate
-                  desktop attendance app (no RMS login of its own), which polls
-                  GET /api/sync/heartbeat to decide whether it stays active. */}
-              {syncLoaded && (
-                <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="space-y-0.5 min-w-0">
-                      <p className="text-sm font-black text-foreground">Desktop Client Sync</p>
-                      <p className="text-[11px] text-muted-foreground leading-relaxed">
-                        Controls whether the desktop attendance client stays active. Changes take
-                        effect the next time it checks in (usually within 20-30 seconds).
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setSyncSettings(s => ({ ...s, enabled: !s.enabled }))}
-                      className={`relative shrink-0 w-12 h-6 rounded-full transition-colors duration-300 focus:outline-none ${syncSettings.enabled ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-                    >
-                      <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-300 ${syncSettings.enabled ? 'translate-x-6' : 'translate-x-0'}`} />
-                    </button>
-                  </div>
-
-                  <div className="border-t border-border/30 pt-4 space-y-3">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                        Auto-Expire (optional)
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={syncSettings.expiresAt ? syncSettings.expiresAt.slice(0, 16) : ''}
-                        onChange={(e) => setSyncSettings(s => ({
-                          ...s,
-                          expiresAt: e.target.value ? new Date(e.target.value).toISOString() : '',
-                        }))}
-                        className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                        Message Shown When Inactive
-                      </label>
-                      <textarea
-                        value={syncSettings.message}
-                        onChange={(e) => setSyncSettings(s => ({ ...s, message: e.target.value }))}
-                        placeholder="e.g. This software is currently inactive. Contact your administrator."
-                        rows={2}
-                        className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="border-t border-border/30 pt-4 space-y-3">
-                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                      Update Notice (optional)
-                    </p>
-                    <p className="text-[11px] text-muted-foreground leading-relaxed -mt-2">
-                      When set, installs newer than this show a dismissible "Update available" banner
-                      with a Download link — never a forced or silent update. Leave Latest Version blank
-                      to turn this off.
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                          Latest Version
-                        </label>
-                        <input
-                          type="text"
-                          value={syncSettings.latestVersion}
-                          onChange={(e) => setSyncSettings(s => ({ ...s, latestVersion: e.target.value }))}
-                          placeholder="e.g. 1.1.0"
-                          className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                          Download URL
-                        </label>
-                        <input
-                          type="text"
-                          value={syncSettings.downloadUrl}
-                          onChange={(e) => setSyncSettings(s => ({ ...s, downloadUrl: e.target.value }))}
-                          placeholder="https://.../CSSQuickTimeSetup.exe"
-                          className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                        Release Notes
-                      </label>
-                      <textarea
-                        value={syncSettings.releaseNotes}
-                        onChange={(e) => setSyncSettings(s => ({ ...s, releaseNotes: e.target.value }))}
-                        placeholder="What changed in this version"
-                        rows={2}
-                        className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      />
-                    </div>
-                    <button
-                      onClick={saveSyncSettings}
-                      disabled={savingSync}
-                      className="px-5 py-2 text-xs font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground disabled:opacity-50 transition-all"
-                    >
-                      {savingSync ? 'Saving...' : 'Save'}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Manual Attendance Corrections — spans both columns. A separate
-                  concern from the sync on/off toggle above: entries here flow
-                  to the desktop client on its next heartbeat and are folded
-                  into that person's attendance the next time it runs an
-                  Extract, not applied instantly. */}
-              {correctionsLoaded && (
-                <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
-                  <div className="space-y-0.5">
-                    <p className="text-sm font-black text-foreground">Manual Attendance Corrections</p>
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      For staff who were genuinely present but have no device punch (e.g. enrolled a day
-                      after tracking started). The desktop app picks these up automatically and applies
-                      them the next time it runs an Extract — shows up as a normal Present day there,
-                      nothing special-cased in daily reports. This list is the audit trail.
-                    </p>
-                  </div>
-
-                  <div className="border-t border-border/30 pt-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_2fr_auto] gap-3 items-end">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Staff ID</label>
-                      <input
-                        type="text"
-                        value={newCorrection.staffId}
-                        onChange={(e) => setNewCorrection(c => ({ ...c, staffId: e.target.value }))}
-                        placeholder="e.g. 30225"
-                        className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Date</label>
-                      <input
-                        type="date"
-                        value={newCorrection.date}
-                        onChange={(e) => setNewCorrection(c => ({ ...c, date: e.target.value }))}
-                        className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Reason</label>
-                      <input
-                        type="text"
-                        value={newCorrection.reason}
-                        onChange={(e) => setNewCorrection(c => ({ ...c, reason: e.target.value }))}
-                        placeholder="e.g. Enrolled day 2, present day 1"
-                        className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      />
-                    </div>
-                    <button
-                      onClick={addCorrection}
-                      disabled={savingCorrection}
-                      className="px-5 py-2.5 text-xs font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground disabled:opacity-50 transition-all whitespace-nowrap"
-                    >
-                      {savingCorrection ? 'Adding...' : 'Add'}
-                    </button>
-                  </div>
-
-                  <div className="border-t border-border/30 pt-4">
-                    {corrections.length === 0 ? (
-                      <p className="text-[11px] text-muted-foreground italic">No corrections entered yet.</p>
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-[11px]">
-                          <thead>
-                            <tr className="text-left text-muted-foreground uppercase tracking-widest text-[9px] font-bold border-b border-border/30">
-                              <th className="py-2 pr-3">Staff ID</th>
-                              <th className="py-2 pr-3">Date</th>
-                              <th className="py-2 pr-3">Reason</th>
-                              <th className="py-2 pr-3">Status</th>
-                              <th className="py-2 pr-3">Applied At</th>
-                              <th className="py-2 pr-3">Added By</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {corrections.map(c => (
-                              <tr key={c.id} className="border-b border-border/10">
-                                <td className="py-2 pr-3 font-bold">{c.staffId}</td>
-                                <td className="py-2 pr-3">{c.date}</td>
-                                <td className="py-2 pr-3 text-muted-foreground">{c.reason || '—'}</td>
-                                <td className="py-2 pr-3">
-                                  <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
-                                    c.status === 'applied'
-                                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                                      : 'bg-amber-50 border-amber-200 text-amber-700'
-                                  }`}>
-                                    {c.status}
-                                  </span>
-                                </td>
-                                <td className="py-2 pr-3 text-muted-foreground">
-                                  {c.appliedAt ? new Date(c.appliedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
-                                </td>
-                                <td className="py-2 pr-3 text-muted-foreground">{c.createdBy || '—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
 
               {/* Login Screen Style — spans both columns */}
               <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
@@ -2265,6 +2057,164 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 </div>
               )}
             </div>
+          </div>
+        ) : activeTab === 'zkteco' ? (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+            <div className="space-y-2">
+              <h3 className="text-base font-black text-foreground">ZKTeco &amp; Desktop Sync</h3>
+              <p className="text-[12px] text-muted-foreground leading-relaxed">
+                Manage the ZKTeco desktop attendance client — control its activation, push updates, and record manual attendance corrections for staff who were present but have no device punch.
+              </p>
+            </div>
+
+            {/* Desktop Client Sync */}
+            {syncLoaded && (
+              <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-0.5 min-w-0">
+                    <p className="text-sm font-black text-foreground">Desktop Client Sync</p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Controls whether the desktop attendance client stays active. Changes take
+                      effect the next time it checks in (usually within 20-30 seconds).
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setSyncSettings(s => ({ ...s, enabled: !s.enabled }))}
+                    className={`relative shrink-0 w-12 h-6 rounded-full transition-colors duration-300 focus:outline-none ${syncSettings.enabled ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+                  >
+                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-300 ${syncSettings.enabled ? 'translate-x-6' : 'translate-x-0'}`} />
+                  </button>
+                </div>
+
+                <div className="border-t border-border/30 pt-4 space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Auto-Expire (optional)</label>
+                    <input
+                      type="datetime-local"
+                      value={syncSettings.expiresAt ? syncSettings.expiresAt.slice(0, 16) : ''}
+                      onChange={(e) => setSyncSettings(s => ({ ...s, expiresAt: e.target.value ? new Date(e.target.value).toISOString() : '' }))}
+                      className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Message Shown When Inactive</label>
+                    <textarea
+                      value={syncSettings.message}
+                      onChange={(e) => setSyncSettings(s => ({ ...s, message: e.target.value }))}
+                      placeholder="e.g. This software is currently inactive. Contact your administrator."
+                      rows={2}
+                      className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                </div>
+
+                <div className="border-t border-border/30 pt-4 space-y-3">
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Update Notice (optional)</p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed -mt-2">
+                    When set, installs newer than this show a dismissible "Update available" banner with a Download link — never a forced or silent update. Leave Latest Version blank to turn this off.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Latest Version</label>
+                      <input
+                        type="text"
+                        value={syncSettings.latestVersion}
+                        onChange={(e) => setSyncSettings(s => ({ ...s, latestVersion: e.target.value }))}
+                        placeholder="e.g. 1.1.0"
+                        className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Download URL</label>
+                      <input
+                        type="text"
+                        value={syncSettings.downloadUrl}
+                        onChange={(e) => setSyncSettings(s => ({ ...s, downloadUrl: e.target.value }))}
+                        placeholder="https://.../CSSQuickTimeSetup.exe"
+                        className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Release Notes</label>
+                    <textarea
+                      value={syncSettings.releaseNotes}
+                      onChange={(e) => setSyncSettings(s => ({ ...s, releaseNotes: e.target.value }))}
+                      placeholder="What changed in this version"
+                      rows={2}
+                      className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                  <button
+                    onClick={saveSyncSettings}
+                    disabled={savingSync}
+                    className="px-5 py-2 text-xs font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground disabled:opacity-50 transition-all"
+                  >
+                    {savingSync ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Manual Attendance Corrections */}
+            {correctionsLoaded && (
+              <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-black text-foreground">Manual Attendance Corrections</p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    For staff who were genuinely present but have no device punch (e.g. enrolled a day after tracking started). The desktop app picks these up automatically and applies them the next time it runs an Extract — shows up as a normal Present day there, nothing special-cased in daily reports. This list is the audit trail.
+                  </p>
+                </div>
+
+                <div className="border-t border-border/30 pt-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_2fr_auto] gap-3 items-end">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Staff ID</label>
+                    <input type="text" value={newCorrection.staffId} onChange={(e) => setNewCorrection(c => ({ ...c, staffId: e.target.value }))} placeholder="e.g. 30225" className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Date</label>
+                    <input type="date" value={newCorrection.date} onChange={(e) => setNewCorrection(c => ({ ...c, date: e.target.value }))} className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Reason</label>
+                    <input type="text" value={newCorrection.reason} onChange={(e) => setNewCorrection(c => ({ ...c, reason: e.target.value }))} placeholder="e.g. Enrolled day 2, present day 1" className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                  </div>
+                  <button onClick={addCorrection} disabled={savingCorrection} className="px-5 py-2.5 text-xs font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground disabled:opacity-50 transition-all whitespace-nowrap">
+                    {savingCorrection ? 'Adding...' : 'Add'}
+                  </button>
+                </div>
+
+                <div className="border-t border-border/30 pt-4">
+                  {corrections.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground italic">No corrections entered yet.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr className="text-left text-muted-foreground uppercase tracking-widest text-[9px] font-bold border-b border-border/30">
+                            <th className="py-2 pr-3">Staff ID</th><th className="py-2 pr-3">Date</th><th className="py-2 pr-3">Reason</th><th className="py-2 pr-3">Status</th><th className="py-2 pr-3">Applied At</th><th className="py-2 pr-3">Added By</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {corrections.map(c => (
+                            <tr key={c.id} className="border-b border-border/10">
+                              <td className="py-2 pr-3 font-bold">{c.staffId}</td>
+                              <td className="py-2 pr-3">{c.date}</td>
+                              <td className="py-2 pr-3 text-muted-foreground">{c.reason || '—'}</td>
+                              <td className="py-2 pr-3">
+                                <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${c.status === 'applied' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>{c.status}</span>
+                              </td>
+                              <td className="py-2 pr-3 text-muted-foreground">{c.appliedAt ? new Date(c.appliedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                              <td className="py-2 pr-3 text-muted-foreground">{c.createdBy || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         ) : activeTab === 'bin' ? (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">

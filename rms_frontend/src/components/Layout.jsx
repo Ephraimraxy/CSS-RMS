@@ -1024,6 +1024,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
   const [mobileHrOpen, setMobileHrOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [showAppModal, setShowAppModal] = useState(false);
+  const [apkDownloading, setApkDownloading] = useState(false);
 
   useEffect(() => {
     const handler = (e) => { e.preventDefault(); setDeferredPrompt(e); };
@@ -1403,19 +1404,38 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
                   </p>
                 </div>
               </button>
-              <a
-                href="/api/downloads/cssrms.apk"
-                download
-                className="w-full flex items-center gap-4 p-4 rounded-2xl bg-[#206e33] text-white hover:bg-[#1a5a2a] transition-all active:scale-[0.98] no-underline"
+              <button
+                disabled={apkDownloading}
+                onClick={() => {
+                  if (apkDownloading) return;
+                  setApkDownloading(true);
+                  const a = document.createElement('a');
+                  a.href = '/api/downloads/cssrms.apk';
+                  a.download = 'cssrms.apk';
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  setTimeout(() => setApkDownloading(false), 8000);
+                }}
+                className="w-full flex items-center gap-4 p-4 rounded-2xl bg-[#206e33] text-white hover:bg-[#1a5a2a] transition-all active:scale-[0.98] disabled:opacity-80 disabled:cursor-not-allowed text-left"
               >
                 <div className="p-2.5 rounded-xl bg-white/10 shrink-0">
                   <Download size={20} />
                 </div>
                 <div className="text-left">
-                  <p className="font-bold text-sm">Get APK for Android</p>
-                  <p className="text-xs text-white/60">Direct download for Android devices</p>
+                  {apkDownloading ? (
+                    <>
+                      <p className="font-bold text-sm">Download starting…</p>
+                      <p className="text-xs text-white/80">Please wait — don't tap again</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-bold text-sm">Get APK for Android</p>
+                      <p className="text-xs text-white/60">Direct download for Android devices</p>
+                    </>
+                  )}
                 </div>
-              </a>
+              </button>
               <div className="w-full flex items-center gap-4 p-4 rounded-2xl bg-[#f1f5f9] text-[#94a3b8] cursor-not-allowed">
                 <div className="p-2.5 rounded-xl bg-[#e2e8f0] shrink-0">
                   <Smartphone size={20} />
