@@ -1294,7 +1294,7 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
 
   // ── Not yet approved: checkbox-driven sign + vetting in one action ───────────
   const handleApprove = async () => {
-    if (!vetDeptId) { toast.error('Please select a vetting department before approving.'); return; }
+    if (!isMaterial && !vetDeptId) { toast.error('Please select a vetting department before approving.'); return; }
     setActing(true);
     try {
       const approveResult = await finalApproveRequisition(req.id, note);
@@ -1311,7 +1311,11 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
         }
       }
 
-      if (approveResult === null) {
+      if (isMaterial) {
+        // Material requests go directly to target dept — no vetting chain needed
+        if (approveResult === null) toast('Approval queued — will process when reconnected.');
+        else toast.success('Approved — target department can now issue the items.');
+      } else if (approveResult === null) {
         await sendToVettingRequisition(req.id, parseInt(vetDeptId));
         toast('Approval & vetting queued — will process when reconnected.');
       } else {
@@ -1408,24 +1412,30 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
             className="w-full bg-white border border-emerald-200 rounded-xl p-3 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-emerald-300 min-h-[60px] resize-none shadow-inner"
           />
 
-          {/* Required: select Account department for treatment */}
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">
-              Send to Account for Treatment — Required *
-            </label>
-            <select
-              value={vetDeptId}
-              onChange={e => setVetDeptId(e.target.value)}
-              className="w-full bg-white border border-emerald-300 rounded-xl p-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-300 appearance-none shadow-sm"
-            >
-              <option value="">— Select Account department —</option>
-              {vettingDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-              {vettingDepts.length === 0 && <option disabled>No Account department found</option>}
-            </select>
+          {/* Cash: select Account for treatment. Material: target dept acts directly */}
+          {isMaterial ? (
             <p className="text-[11px] font-semibold px-3 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
-              After approval, the request goes directly to Account for payment treatment.
+              After approval, the target department will be able to issue the items directly — no vetting step required.
             </p>
-          </div>
+          ) : (
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">
+                Send to Account for Treatment — Required *
+              </label>
+              <select
+                value={vetDeptId}
+                onChange={e => setVetDeptId(e.target.value)}
+                className="w-full bg-white border border-emerald-300 rounded-xl p-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-300 appearance-none shadow-sm"
+              >
+                <option value="">— Select Account department —</option>
+                {vettingDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                {vettingDepts.length === 0 && <option disabled>No Account department found</option>}
+              </select>
+              <p className="text-[11px] font-semibold px-3 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
+                After approval, the request goes directly to Account for payment treatment.
+              </p>
+            </div>
+          )}
 
           {/* Optional file attachment */}
           <div>
@@ -2196,12 +2206,17 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
       (_fas === 'approved' || _fas === 'vetting' || _fas === 'partial')) ||
     _accountHoldsMaterial ||
     _accountHoldsAuditReviewed ||
+    // Material request: any target dept can issue directly once approved (no vetting chain needed)
+    (_isMaterialReq && detail?.targetDepartmentId === user.deptId &&
+      (_fas === 'approved' || _fas === 'partial')) ||
     // Privileged Audit sub-account — parent dept is current vetter
     (_isAuditSub && currentVettingDeptId === _parentId) ||
     // Privileged Account sub-account — parent Account holds the request
     (_isAccountSub && detail?.targetDepartmentId === _parentId &&
       (_fas === 'approved' || _fas === 'vetting' || _fas === 'partial')) ||
-    (_isAccountSub && _isMaterialReq && detail?.targetDepartmentId === _parentId)
+    // Material: privileged sub of target dept can also issue
+    (_isMaterialReq && _privSub && detail?.targetDepartmentId === _parentId &&
+      (_fas === 'approved' || _fas === 'partial'))
   );
   const finalApprovalStatus    = detail?.finalApprovalStatus;
 
@@ -2215,7 +2230,7 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
   if (!isCurrentVetter) return null;
   // Allow Material/Audit-reviewed requests at Account through even when finalApprovalStatus is 'none'
   if (!_accountHoldsMaterial && !_accountHoldsAuditReviewed && (!finalApprovalStatus || finalApprovalStatus === 'none')) return null;
-  if (finalApprovalStatus === 'treated') return null;
+  if (finalApprovalStatus === 'treated' || finalApprovalStatus === 'closed') return null;
 
   // ── Re-approval gate ─────────────────────────────────────────────────────────
   // A later price revision pushed the effective amount past the original approver's
@@ -2263,7 +2278,7 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
   const _ceoBypassActive     = ceoIccBypass && !(ceoThreshEnabled && ceoThreshAmount != null && _effAmt > ceoThreshAmount);
   const _iccGateAppliesToAccount = isAccount && !_accountBypassActive;
   const _iccGateAppliesToChairman = isChairman && !_ceoBypassActive;
-  if ((_iccGateAppliesToAccount || _iccGateAppliesToChairman) && !_isMemoReqForGate && !detail?.iccVettingCleared) {
+  if ((_iccGateAppliesToAccount || _iccGateAppliesToChairman) && !_isMemoReqForGate && !_isMaterialReq && !detail?.iccVettingCleared) {
     return (
       <IccVetForwardGate
         req={req}
@@ -2278,8 +2293,9 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
     );
   }
 
-  // Account and Chairman always treat — they also have Forward + Return options
-  const canTreat = isAccount || isChairman;
+  // Account and Chairman always treat — for material, the target dept issues directly
+  const _isTargetDept = detail?.targetDepartmentId === user?.deptId;
+  const canTreat = isAccount || isChairman || (_isMaterialReq && _isTargetDept);
 
   // Disbursement calculations — use audit-verified amount if Audit has overridden the price
   const reqAmount        = (detail?.hasAuditOverride && detail?.auditAmount != null)
@@ -2333,9 +2349,9 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
     } finally { setKivActing(false); }
   };
 
-  // Account is the only post-approval vetter
-  const roleLabel      = isAccount ? 'Account' : isChairman ? 'Chairman / CEO Treatment' : 'Payment Treatment';
-  const primaryLabel   = 'Mark Treated';
+  // Material: target dept issues items; Cash: Account / Chairman disburses
+  const roleLabel    = _isMaterialReq ? 'Issue Items' : (isAccount ? 'Account' : isChairman ? 'Chairman / CEO Treatment' : 'Payment Treatment');
+  const primaryLabel = _isMaterialReq ? 'Issue Items' : 'Mark Treated';
   const primaryDisabled = false;
 
   // Account always returns to the approving authority (ICC/Audit no longer in post-approval chain)
@@ -2344,11 +2360,12 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
     : 'Approving Authority';
   const returnDestLabel = finalApproverDeptName;
 
-  // For Account: treatment gated by treatInitiated only; type is auto-resolved by backend from amount
+  // For Account: treatment gated by treatInitiated; material target dept: just needs confirm toggle
   const accountTreatCanAct = isAccount && treatInitiated && (!hasAmount || inputIsValid) && (!showManualMaterialAmount || manualChoiceReady);
+  const materialTargetCanAct = _isMaterialReq && _isTargetDept && treatInitiated;
   const canAct = isAccount
     ? accountTreatCanAct
-    : (comment.trim().length > 0
+    : materialTargetCanAct || (comment.trim().length > 0
         && (!canTreat || !hasAmount || inputIsValid)
         && !needsTreatChoice
         && !needsTreatReason);
@@ -2388,7 +2405,10 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
         if (result !== null) {
           // Determine what actually happened for the toast
           const wasFullyPaid = manualMaterial ? type === 'full' : (!hasAmount || (disbursed != null && disbursed >= balanceDue));
-          if (type === 'adjusted') toast.success(`Requisition treated with adjusted amount ₦${disbursed?.toLocaleString()}.`);
+          if (_isMaterialReq) {
+            if (wasFullyPaid || type === 'full') toast.success('Items issued — requisition closed.');
+            else toast.success('Partial items issued. Request stays open for remainder.');
+          } else if (type === 'adjusted') toast.success(`Requisition treated with adjusted amount ₦${disbursed?.toLocaleString()}.`);
           else if (wasFullyPaid) toast.success('Requisition fully treated!');
           else if (manualMaterial) toast.success(`Partial payment of ₦${disbursed?.toLocaleString()} recorded. Request stays open.`);
           else toast.success(`Partial payment of ₦${disbursed?.toLocaleString()} recorded. Balance pending.`);
@@ -5513,7 +5533,8 @@ const RequisitionsPage = ({ onViewChange, initialReqId, onDeepLinkConsumed }) =>
                                 if (norm.finalState === 'treated') {
                                   const tbId = r.treatedByDeptId ? parseInt(r.treatedByDeptId) : null;
                                   const tbName = tbId ? departments.find(d => d.id === tbId)?.name : null;
-                                  return { label: 'Treated', color: statusColors.treated, sub: tbName ? `by ${tbName}` : null };
+                                  const isMat = /^material/i.test(r.type || '');
+                                  return { label: isMat ? 'Issued' : 'Treated', color: statusColors.treated, sub: tbName ? `by ${tbName}` : null };
                                 }
                                 if (norm.finalState === 'vetting') {
                                   const cvId = r.currentVettingDeptId ? parseInt(r.currentVettingDeptId) : null;
@@ -5522,14 +5543,15 @@ const RequisitionsPage = ({ onViewChange, initialReqId, onDeepLinkConsumed }) =>
                                 }
                                 if (norm.finalState === 'approved' && norm.status === 'approved') return { label: 'Final Approved', color: statusColors.approved };
 
-                                // Finally approved but not yet routed to vetting
+                                // Finally approved but not yet routed to vetting / issuance
                                 if (norm.finalState === 'approved' && norm.status === 'pending') {
                                   const faId = r.finalApprovedByDeptId ? parseInt(r.finalApprovedByDeptId) : null;
                                   const faName = faId ? departments.find(d => d.id === faId)?.name : null;
+                                  const isMat = /^material/i.test(r.type || '');
                                   return {
                                     label: 'Approved',
                                     color: 'bg-emerald-50 border-emerald-300 text-emerald-700',
-                                    sub:   faName ? `by ${faName} — awaiting vetting` : 'Awaiting vetting'
+                                    sub:   faName ? `by ${faName} — ${isMat ? 'awaiting issuance' : 'awaiting vetting'}` : (isMat ? 'Awaiting issuance' : 'Awaiting vetting')
                                   };
                                 }
 

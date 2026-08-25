@@ -6398,7 +6398,7 @@ app.post('/api/requisitions/:id/vetting-action', authenticateToken, upload.singl
 
     // Allow: current vetting dept, final approving dept (Chairman), admin,
     // OR Account dept whenever they hold the request on an approved/vetting requisition,
-    // OR Account dept holding a Material request,
+    // OR ANY dept that is the target of an approved material request (target dept issues items),
     // OR privileged sub-account of current vetting dept (Audit/Account sub-accounts)
     const isMaterialReq = /^material/i.test(requisition.type || '');
     const canAct = isAdmin
@@ -6406,7 +6406,9 @@ app.post('/api/requisitions/:id/vetting-action', authenticateToken, upload.singl
       || (requisition.finalApprovedByDeptId === userDeptId)
       || (isAccountDept && requisition.targetDepartmentId === userDeptId
           && ['approved', 'vetting', 'partial'].includes(requisition.finalApprovalStatus))
-      || (isAccountDept && isMaterialReq && requisition.targetDepartmentId === userDeptId)
+      // Material requests: target dept (whoever request is addressed to) can issue directly
+      || (isMaterialReq && requisition.targetDepartmentId === userDeptId
+          && ['approved', 'partial'].includes(requisition.finalApprovalStatus))
       // Account holds a request Audit has already reviewed (override saved) — allow treatment
       // even when finalApprovalStatus is 'none' (Audit forwarded directly to Account)
       || (isAccountDept && requisition.hasAuditOverride && requisition.targetDepartmentId === userDeptId)
@@ -6416,7 +6418,9 @@ app.post('/api/requisitions/:id/vetting-action', authenticateToken, upload.singl
       || (isPrivilegedVettingSub && isParentAccountDept
           && requisition.targetDepartmentId === parentId
           && ['approved', 'vetting', 'partial'].includes(requisition.finalApprovalStatus))
-      || (isPrivilegedVettingSub && isParentAccountDept && isMaterialReq && requisition.targetDepartmentId === parentId)
+      // Material: privileged sub of target dept can also issue
+      || (isMaterialReq && isPrivilegedVettingSub && requisition.targetDepartmentId === parentId
+          && ['approved', 'partial'].includes(requisition.finalApprovalStatus))
       || (isPrivilegedVettingSub && isParentAccountDept && requisition.hasAuditOverride && requisition.targetDepartmentId === parentId);
 
     if (!canAct) {
@@ -6448,7 +6452,8 @@ app.post('/api/requisitions/:id/vetting-action', authenticateToken, upload.singl
     const isParentCeoDept = parentDeptRecord && /ceo|chairman/i.test(parentDeptRecord.name);
     const actorIsCeo = isCeoDept || (isPrivilegedVettingSub && isParentCeoDept);
 
-    if (action === 'treated' && !isMemoReq && (actorIsAccount || actorIsCeo) && !requisition.iccVettingCleared) {
+    // Material requests bypass the ICC vetting gate — they involve physical items, not cash movement
+    if (action === 'treated' && !isMemoReq && !isMaterialReq && (actorIsAccount || actorIsCeo) && !requisition.iccVettingCleared) {
       const [
         accountBypassSetting, ceoBypassSetting,
         accountThreshEnabledSetting, accountThreshAmountSetting,
