@@ -1044,8 +1044,8 @@ const Login = () => {
 
       {/* ── First-Time Activation Modal ── */}
       {activation && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md animate-in zoom-in-95 duration-200 relative my-4">
+        <div className="fixed inset-0 z-[300] flex items-start sm:items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md animate-in zoom-in-95 duration-200 relative my-4 mx-auto">
             {/* Top accent */}
             <div className="h-1.5 bg-gradient-to-r from-primary via-primary/70 to-primary/30 rounded-t-3xl"/>
             {/* Close / cancel button */}
@@ -1058,7 +1058,7 @@ const Login = () => {
             >
               <X size={17}/>
             </button>
-            <div className="p-8">
+            <div className="p-5 sm:p-8">
               {/* Header */}
               <div className="flex flex-col items-center text-center mb-7">
                 <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-4">
@@ -1131,7 +1131,7 @@ const Login = () => {
 
                 {/* Password row — only shown when profile is complete */}
                 {(activation.isSubAccount || (activation.headName?.trim() && activation.headEmail?.trim())) && (<>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-muted-foreground uppercase tracking-[0.12em]">
                       New Password <span className="text-destructive">*</span>
