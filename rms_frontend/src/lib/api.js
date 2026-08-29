@@ -242,8 +242,32 @@ export const attendanceCorrectionsAPI = {
   async list() {
     return api.get('/attendance-corrections');
   },
-  async add(staffId, date, reason) {
-    return api.post('/attendance-corrections', { staffId, date, reason });
+  async add(staffId, date, times) {
+    return api.post('/attendance-corrections', { staffId, date, times });
+  },
+};
+
+// Staff -> Department correlation for the desktop client — the ZKTeco
+// device itself never stores Department, only ID + Role, so this mapping
+// (typed in one at a time or bulk-imported) is the only source Department
+// ever comes from on the desktop side. See GET/PATCH/DELETE/import
+// /api/staff-departments in serve.js.
+export const staffDepartmentsAPI = {
+  async list() {
+    return api.get('/staff-departments');
+  },
+  async update(staffId, department) {
+    return api.patch(`/staff-departments/${encodeURIComponent(staffId)}`, { department });
+  },
+  async remove(staffId) {
+    return api.delete(`/staff-departments/${encodeURIComponent(staffId)}`);
+  },
+  async importFile(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/staff-departments/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
   },
 };
 

@@ -5078,10 +5078,19 @@ app.get('/api/sync/heartbeat', desktopSyncLimiter, async (req, res) => {
     try {
       await ensureCorrectionsTable();
       const pending = await prisma.$queryRaw`
-        SELECT "id", "staffId", "date", "reason" FROM "PendingAttendanceCorrection" WHERE "status" = 'pending'
+        SELECT "id", "staffId", "date", "times" FROM "PendingAttendanceCorrection" WHERE "status" = 'pending'
       `;
-      pendingCorrections = pending.map(p => ({ id: p.id, staffId: p.staffId, date: p.date, reason: p.reason }));
+      pendingCorrections = pending.map(p => ({ id: p.id, staffId: p.staffId, date: p.date, times: p.times }));
     } catch (e) { logger.error(`[heartbeat] pendingCorrections fetch failed: ${e.message}`); }
+
+    // Same isolated try/catch reasoning as pendingCorrections above — a
+    // problem here must never break activation checks for everyone.
+    let staffDepartments = [];
+    try {
+      await ensureStaffDepartmentsTable();
+      const mappings = await prisma.$queryRaw`SELECT "staffId", "department" FROM "StaffDepartmentMapping"`;
+      staffDepartments = mappings.map(m => ({ staffId: m.staffId, department: m.department }));
+    } catch (e) { logger.error(`[heartbeat] staffDepartments fetch failed: ${e.message}`); }
 
     res.json({
       enabled,
@@ -5098,6 +5107,10 @@ app.get('/api/sync/heartbeat', desktopSyncLimiter, async (req, res) => {
       // .get("pendingCorrections", []) on the desktop side, which treats a
       // missing field (an older backend) the same as an empty list.
       pendingCorrections,
+      // Same additive-field reasoning — app/licensing/client.py's
+      // .get("staffDepartments", []) treats a missing field the same as
+      // an empty list, so an older backend just means no correlation yet.
+      staffDepartments,
     });
   } catch (error) { sendError(res, 500, error.message); }
 });
@@ -5121,11 +5134,18 @@ async function ensureCorrectionsTable() {
       "staffId" TEXT NOT NULL,
       "date" TEXT NOT NULL,
       "reason" TEXT NOT NULL DEFAULT '',
+      "times" JSONB NOT NULL DEFAULT '[]',
       "status" TEXT NOT NULL DEFAULT 'pending',
       "createdBy" TEXT,
       "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
       "appliedAt" TIMESTAMPTZ
     )
+  `;
+  // Pre-existing deployments created this table before "times" existed —
+  // CREATE TABLE IF NOT EXISTS above is a no-op once the table already
+  // exists, so this is what actually adds the column for them.
+  await prisma.$executeRaw`
+    ALTER TABLE "PendingAttendanceCorrection" ADD COLUMN IF NOT EXISTS "times" JSONB NOT NULL DEFAULT '[]'
   `;
 }
 
@@ -5135,7 +5155,7 @@ app.get('/api/attendance-corrections', authenticateToken, async (req, res) => {
   try {
     await ensureCorrectionsTable();
     const rows = await prisma.$queryRaw`
-      SELECT "id", "staffId", "date", "reason", "status", "createdBy", "createdAt", "appliedAt"
+      SELECT "id", "staffId", "date", "times", "status", "createdBy", "createdAt", "appliedAt"
       FROM "PendingAttendanceCorrection" ORDER BY "createdAt" DESC
     `;
     res.json({ corrections: rows });
@@ -5143,9 +5163,13 @@ app.get('/api/attendance-corrections', authenticateToken, async (req, res) => {
 });
 
 // POST /api/attendance-corrections — Super Admin only. Body: either one
-// {staffId, date, reason} or {corrections: [{staffId, date, reason}, ...]}
-// for bulk entry. Rows missing staffId/date are silently skipped rather
-// than failing the whole batch, so one typo doesn't block the rest.
+// {staffId, date, times: string[]} or {corrections: [{staffId, date, times}, ...]}
+// for bulk entry. `times` is the actual punch time(s) for that staff/date —
+// e.g. ["07:02:00", "17:35:00"] for someone who punched in and out — not a
+// free-text reason: the desktop app injects these as real synthetic
+// punches, so they need to be real times, not prose. Rows missing
+// staffId/date/times are silently skipped rather than failing the whole
+// batch, so one typo doesn't block the rest.
 app.post('/api/attendance-corrections', authenticateToken, async (req, res) => {
   if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
   try {
@@ -5156,12 +5180,14 @@ app.post('/api/attendance-corrections', authenticateToken, async (req, res) => {
     for (const entry of entries) {
       const staffId = String(entry?.staffId || '').trim();
       const date = String(entry?.date || '').trim();
-      const reason = String(entry?.reason || '').trim();
-      if (!staffId || !date) continue;
+      const times = Array.isArray(entry?.times)
+        ? entry.times.map((t) => String(t || '').trim()).filter(Boolean)
+        : [];
+      if (!staffId || !date || times.length === 0) continue;
       const rows = await prisma.$queryRaw`
-        INSERT INTO "PendingAttendanceCorrection" ("staffId", "date", "reason", "createdBy")
-        VALUES (${staffId}, ${date}, ${reason}, ${createdBy})
-        RETURNING "id", "staffId", "date", "reason", "status", "createdBy", "createdAt", "appliedAt"
+        INSERT INTO "PendingAttendanceCorrection" ("staffId", "date", "times", "createdBy")
+        VALUES (${staffId}, ${date}, ${JSON.stringify(times)}::jsonb, ${createdBy})
+        RETURNING "id", "staffId", "date", "times", "status", "createdBy", "createdAt", "appliedAt"
       `;
       created.push(rows[0]);
     }
@@ -5193,6 +5219,114 @@ app.post('/api/sync/corrections-applied', desktopSyncLimiter, async (req, res) =
       `;
     }
     res.json({ ok: true, applied: ids.length });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// ── Staff Department Mapping (desktop sync) ───────────────────────────────────
+// The ZKTeco device itself only ever stores a staff ID and a device Role
+// (User/Admin/etc) — it has no concept of Department/Unit at all. Rather than
+// leaving that column permanently blank on the desktop app, a Super Admin
+// maintains the real staffId -> department mapping here (typed in one at a
+// time, or bulk-imported from HR's own CSV/Excel), and the desktop app pulls
+// the whole table down on every heartbeat, correlating purely by staff ID —
+// same shared-secret desktop-sync auth style as corrections above. This is
+// authoritative: the desktop overwrites its local Department for a staff ID
+// to match whatever's here, every time, so editing it here is always "as
+// supposed" to a keep the two in sync — it's not just a one-time gap-filler.
+async function ensureStaffDepartmentsTable() {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "StaffDepartmentMapping" (
+      "staffId" TEXT PRIMARY KEY,
+      "department" TEXT NOT NULL DEFAULT '',
+      "updatedBy" TEXT,
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+}
+
+// GET /api/staff-departments — Super Admin only: the full current mapping table
+app.get('/api/staff-departments', authenticateToken, async (req, res) => {
+  if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
+  try {
+    await ensureStaffDepartmentsTable();
+    const rows = await prisma.$queryRaw`
+      SELECT "staffId", "department", "updatedBy", "updatedAt" FROM "StaffDepartmentMapping" ORDER BY "staffId"
+    `;
+    res.json({ mappings: rows });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// PATCH /api/staff-departments/:staffId — Super Admin only: edit one mapping by hand
+app.patch('/api/staff-departments/:staffId', authenticateToken, async (req, res) => {
+  if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
+  try {
+    await ensureStaffDepartmentsTable();
+    const staffId = String(req.params.staffId || '').trim();
+    const department = String(req.body?.department || '').trim();
+    if (!staffId) return res.status(400).json({ error: 'Missing staff ID.' });
+    const updatedBy = req.user?.email || req.user?.name || 'admin';
+    const rows = await prisma.$queryRaw`
+      INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "updatedBy", "updatedAt")
+      VALUES (${staffId}, ${department}, ${updatedBy}, now())
+      ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
+      RETURNING "staffId", "department", "updatedBy", "updatedAt"
+    `;
+    res.json({ ok: true, mapping: rows[0] });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// DELETE /api/staff-departments/:staffId — Super Admin only: remove one mapping
+app.delete('/api/staff-departments/:staffId', authenticateToken, async (req, res) => {
+  if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
+  try {
+    await ensureStaffDepartmentsTable();
+    const staffId = String(req.params.staffId || '').trim();
+    await prisma.$executeRaw`DELETE FROM "StaffDepartmentMapping" WHERE "staffId" = ${staffId}`;
+    res.json({ ok: true });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// POST /api/staff-departments/import — Super Admin only. Bulk CSV/Excel
+// upload: one row per staff, matched by keyword so exact header spelling
+// isn't required (same flexible-column approach as /api/onboarding/bulk-sms
+// below). Every row needs a staff ID and a department — rows missing either
+// are skipped and reported back, never silently dropped without a trace.
+app.post('/api/staff-departments/import', authenticateToken, batchUpload.single('file'), async (req, res) => {
+  if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded. Please attach a .csv, .xlsx, or .xls file.' });
+    await ensureStaffDepartmentsTable();
+
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
+    if (!rows.length) return res.status(400).json({ error: 'File is empty or unreadable.' });
+
+    const findCol = (row, ...keywords) => {
+      const key = Object.keys(row).find(k => keywords.some(kw => k.toLowerCase().includes(kw.toLowerCase())));
+      return key ? String(row[key]).trim() : '';
+    };
+
+    const updatedBy = req.user?.email || req.user?.name || 'admin';
+    let imported = 0;
+    const skipped = [];
+    for (const row of rows) {
+      const staffId = findCol(row, 'staff id', 'staffid', 'id');
+      const department = findCol(row, 'department', 'dept', 'unit');
+      if (!staffId || !department) {
+        skipped.push({ staffId: staffId || '(missing)', reason: !staffId ? 'Missing Staff ID' : 'Missing Department' });
+        continue;
+      }
+      await prisma.$executeRaw`
+        INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "updatedBy", "updatedAt")
+        VALUES (${staffId}, ${department}, ${updatedBy}, now())
+        ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
+      `;
+      imported++;
+    }
+
+    logger.info(`[STAFF-DEPARTMENTS] imported=${imported} skipped=${skipped.length}`);
+    res.json({ ok: true, imported, skipped });
   } catch (error) { sendError(res, 500, error.message); }
 });
 

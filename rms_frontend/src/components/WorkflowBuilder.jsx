@@ -54,7 +54,7 @@ const WorkflowStage = ({ stage, onUpdate, onDelete, isFirst }) => {
 };
 
 import { getWorkflows, updateWorkflows, getRequisitionTypes, addRequisitionType, deleteRequisitionType } from '../lib/store';
-import { settingsAPI, adminAPI, attendanceCorrectionsAPI } from '../lib/api';
+import { settingsAPI, adminAPI, attendanceCorrectionsAPI, staffDepartmentsAPI } from '../lib/api';
 import { useAIFeatures } from '../context/AIFeaturesContext';
 import { toast } from 'react-hot-toast';
 import ConfirmModal from './ConfirmModal';
@@ -208,15 +208,18 @@ const WorkflowBuilder = ({ onViewChange }) => {
     } finally { setSavingSync(false); }
   };
 
-  // ── Manual attendance corrections — a staff ID + date the desktop client
-  // should count as Present despite having no real device punch (e.g.
-  // enrolled a day after tracking started). Delivered to the desktop app
-  // on its next heartbeat, actually applied there only on the next Extract
-  // run — this list is the audit trail: who entered what, when, and
-  // whether the desktop app has confirmed applying it yet.
+  // ── Manual attendance corrections — a staff ID + date + the actual punch
+  // time(s) for a day with no real device punch (e.g. enrolled a day after
+  // tracking started, or the device missed a punch). Delivered to the
+  // desktop app on its next heartbeat; it injects these as genuine
+  // synthetic punches the next time it runs an extraction (Extract or
+  // Daily Log) — this list is the audit trail: who entered what, when, and
+  // whether the desktop app has confirmed using it yet. No reason field —
+  // whoever has access to this Super-Admin-only page is trusted to know
+  // why they're entering it.
   const [corrections, setCorrections] = useState([]);
   const [correctionsLoaded, setCorrectionsLoaded] = useState(false);
-  const [newCorrection, setNewCorrection] = useState({ staffId: '', date: '', reason: '' });
+  const [newCorrection, setNewCorrection] = useState({ staffId: '', date: '', punchCount: 1, times: [''] });
   const [savingCorrection, setSavingCorrection] = useState(false);
 
   const loadCorrections = async () => {
@@ -227,22 +230,100 @@ const WorkflowBuilder = ({ onViewChange }) => {
     setCorrectionsLoaded(true);
   };
 
+  // Punches is just "how many time fields to show" — changing it grows or
+  // shrinks the `times` array in place, keeping whatever the admin already
+  // typed into the fields that still exist.
+  const setPunchCount = (count) => {
+    const n = Math.max(1, Math.min(6, Number(count) || 1));
+    setNewCorrection((c) => {
+      const times = Array.from({ length: n }, (_, i) => c.times[i] || '');
+      return { ...c, punchCount: n, times };
+    });
+  };
+
+  const setPunchTime = (index, value) => {
+    setNewCorrection((c) => {
+      const times = [...c.times];
+      times[index] = value;
+      return { ...c, times };
+    });
+  };
+
   const addCorrection = async () => {
     const staffId = newCorrection.staffId.trim();
     const date = newCorrection.date.trim();
+    const times = newCorrection.times.map((t) => t.trim()).filter(Boolean);
     if (!staffId || !date) {
       toast.error('Staff ID and date are both required.');
       return;
     }
+    if (times.length === 0) {
+      toast.error('Enter at least one punch time.');
+      return;
+    }
     setSavingCorrection(true);
     try {
-      await attendanceCorrectionsAPI.add(staffId, date, newCorrection.reason.trim());
+      await attendanceCorrectionsAPI.add(staffId, date, times);
       toast.success('Correction added — the desktop app will pick it up on its next check-in.');
-      setNewCorrection({ staffId: '', date: '', reason: '' });
+      setNewCorrection({ staffId: '', date: '', punchCount: 1, times: [''] });
       await loadCorrections();
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Could not add correction.');
     } finally { setSavingCorrection(false); }
+  };
+
+  // ── Staff Department Mapping — the device only ever reports ID + Role,
+  // never Department, so this staffId -> department table (typed in one at
+  // a time, or bulk-imported from HR's own CSV/Excel) is the only source
+  // the desktop app's Department column ever comes from. Delivered on
+  // every heartbeat and applied authoritatively (an edit here always wins
+  // on the desktop's next check-in, not just a one-time gap-filler).
+  const [deptMappings, setDeptMappings] = useState([]);
+  const [deptMappingsLoaded, setDeptMappingsLoaded] = useState(false);
+  const [deptImporting, setDeptImporting] = useState(false);
+  const [deptImportFileName, setDeptImportFileName] = useState('');
+  const [deptEditValues, setDeptEditValues] = useState({}); // staffId -> in-progress edited text
+
+  const loadDeptMappings = async () => {
+    try {
+      const res = await staffDepartmentsAPI.list();
+      setDeptMappings(Array.isArray(res?.mappings) ? res.mappings : []);
+    } catch {}
+    setDeptMappingsLoaded(true);
+  };
+
+  const importDeptFile = async (file) => {
+    if (!file) return;
+    setDeptImportFileName(file.name);
+    setDeptImporting(true);
+    try {
+      const res = await staffDepartmentsAPI.importFile(file);
+      const skippedCount = Array.isArray(res?.skipped) ? res.skipped.length : 0;
+      toast.success(`Imported ${res?.imported ?? 0} staff department(s)${skippedCount ? `, skipped ${skippedCount} row(s)` : ''}.`);
+      await loadDeptMappings();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not import file.');
+    } finally { setDeptImporting(false); }
+  };
+
+  const saveDeptEdit = async (staffId) => {
+    const department = (deptEditValues[staffId] ?? '').trim();
+    try {
+      await staffDepartmentsAPI.update(staffId, department);
+      setDeptMappings(rows => rows.map(r => r.staffId === staffId ? { ...r, department } : r));
+      toast.success(`Department updated for ${staffId}.`);
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not save.');
+    }
+  };
+
+  const removeDeptMapping = async (staffId) => {
+    try {
+      await staffDepartmentsAPI.remove(staffId);
+      setDeptMappings(rows => rows.filter(r => r.staffId !== staffId));
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not remove.');
+    }
   };
 
   // ── Feature flags ──────────────────────────────────────────────────────────
@@ -775,6 +856,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         loadDeletedRecords(),
         loadSyncSettings(),
         loadCorrections(),
+        loadDeptMappings(),
       ]);
       setSettingsReady(true);
     })();
@@ -2185,11 +2267,11 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 <div className="space-y-0.5">
                   <p className="text-sm font-black text-foreground">Manual Attendance Corrections</p>
                   <p className="text-[11px] text-muted-foreground leading-relaxed">
-                    For staff who were genuinely present but have no device punch (e.g. enrolled a day after tracking started). The desktop app picks these up automatically and applies them the next time it runs an Extract — shows up as a normal Present day there, nothing special-cased in daily reports. This list is the audit trail.
+                    For a staff/date with no device punch — enter the actual punch time(s) and the desktop app injects them as real punches (not a bare Present flag) the next time it runs an extraction. Set Punches to how many times they clocked that day, then fill in each time. This list is the audit trail.
                   </p>
                 </div>
 
-                <div className="border-t border-border/30 pt-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_2fr_auto] gap-3 items-end">
+                <div className="border-t border-border/30 pt-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-3 items-end">
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Staff ID</label>
                     <input type="text" value={newCorrection.staffId} onChange={(e) => setNewCorrection(c => ({ ...c, staffId: e.target.value }))} placeholder="e.g. 30225" className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
@@ -2199,13 +2281,23 @@ const WorkflowBuilder = ({ onViewChange }) => {
                     <input type="date" value={newCorrection.date} onChange={(e) => setNewCorrection(c => ({ ...c, date: e.target.value }))} className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Reason</label>
-                    <input type="text" value={newCorrection.reason} onChange={(e) => setNewCorrection(c => ({ ...c, reason: e.target.value }))} placeholder="e.g. Enrolled day 2, present day 1" className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Punches</label>
+                    <input type="number" min={1} max={6} value={newCorrection.punchCount} onChange={(e) => setPunchCount(e.target.value)} className="w-full sm:w-24 bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
                   </div>
-                  <button onClick={addCorrection} disabled={savingCorrection} className="px-5 py-2.5 text-xs font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground disabled:opacity-50 transition-all whitespace-nowrap">
-                    {savingCorrection ? 'Adding...' : 'Add'}
-                  </button>
                 </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+                  {newCorrection.times.map((t, i) => (
+                    <div key={i} className="space-y-1">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Time {i + 1}</label>
+                      <input type="time" step="1" value={t} onChange={(e) => setPunchTime(i, e.target.value)} className="w-full bg-muted/30 border border-border/50 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                    </div>
+                  ))}
+                </div>
+
+                <button onClick={addCorrection} disabled={savingCorrection} className="px-5 py-2.5 text-xs font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground disabled:opacity-50 transition-all whitespace-nowrap">
+                  {savingCorrection ? 'Adding...' : 'Add'}
+                </button>
 
                 <div className="border-t border-border/30 pt-4">
                   {corrections.length === 0 ? (
@@ -2215,7 +2307,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                       <table className="w-full text-[11px]">
                         <thead>
                           <tr className="text-left text-muted-foreground uppercase tracking-widest text-[9px] font-bold border-b border-border/30">
-                            <th className="py-2 pr-3">Staff ID</th><th className="py-2 pr-3">Date</th><th className="py-2 pr-3">Reason</th><th className="py-2 pr-3">Status</th><th className="py-2 pr-3">Applied At</th><th className="py-2 pr-3">Added By</th>
+                            <th className="py-2 pr-3">Staff ID</th><th className="py-2 pr-3">Date</th><th className="py-2 pr-3">Times</th><th className="py-2 pr-3">Status</th><th className="py-2 pr-3">Applied At</th><th className="py-2 pr-3">Added By</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2223,12 +2315,95 @@ const WorkflowBuilder = ({ onViewChange }) => {
                             <tr key={c.id} className="border-b border-border/10">
                               <td className="py-2 pr-3 font-bold">{c.staffId}</td>
                               <td className="py-2 pr-3">{c.date}</td>
-                              <td className="py-2 pr-3 text-muted-foreground">{c.reason || '—'}</td>
+                              <td className="py-2 pr-3 text-muted-foreground">{Array.isArray(c.times) && c.times.length > 0 ? c.times.join(', ') : '—'}</td>
                               <td className="py-2 pr-3">
                                 <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${c.status === 'applied' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>{c.status}</span>
                               </td>
                               <td className="py-2 pr-3 text-muted-foreground">{c.appliedAt ? new Date(c.appliedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
                               <td className="py-2 pr-3 text-muted-foreground">{c.createdBy || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Staff Department Mapping */}
+            {deptMappingsLoaded && (
+              <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-black text-foreground">Staff Department Mapping</p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    The ZKTeco device itself never stores Department — only a staff ID and Role. This table is the real source: import it once from HR's own list, and the desktop app correlates every staff ID to its department here on every check-in, so that column is never blank. Edit any row below any time — a change here always wins on the desktop's next check-in.
+                  </p>
+                </div>
+
+                <div className="border-t border-border/30 pt-4 space-y-2">
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Import from CSV or Excel</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="file"
+                      accept=".csv,.xlsx,.xls"
+                      disabled={deptImporting}
+                      onChange={(e) => { const file = e.target.files[0]; e.target.value = ''; if (file) importDeptFile(file); }}
+                      className="flex-1 text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-[11px] file:font-black file:uppercase file:tracking-widest file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 cursor-pointer disabled:opacity-50"
+                    />
+                    {deptImporting && <span className="text-[11px] text-muted-foreground">Importing {deptImportFileName}...</span>}
+                  </div>
+                  <div className="rounded-xl border border-border/30 bg-muted/20 p-3 space-y-1">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Supported File Format</p>
+                    <p className="text-[11px] text-muted-foreground">One row per staff, with a <span className="font-mono text-primary">Staff ID</span> column and a <span className="font-mono text-primary">Department</span> (or Unit) column — exact header spelling doesn't matter, just the words. Accepts <span className="font-mono">.csv</span>, <span className="font-mono">.xlsx</span>, or <span className="font-mono">.xls</span>.</p>
+                    <div className="overflow-x-auto pt-1">
+                      <table className="text-[11px]">
+                        <thead>
+                          <tr className="text-left text-muted-foreground uppercase tracking-widest text-[9px] font-bold border-b border-border/30">
+                            <th className="py-1 pr-6">Staff ID</th><th className="py-1 pr-6">Department</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-muted-foreground">
+                          <tr><td className="py-1 pr-6">30225</td><td className="py-1 pr-6">Finance</td></tr>
+                          <tr><td className="py-1 pr-6">10534</td><td className="py-1 pr-6">Monitoring &amp; Eval</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-border/30 pt-4">
+                  {deptMappings.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground italic">No department mappings yet — import a file above or none has been added.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr className="text-left text-muted-foreground uppercase tracking-widest text-[9px] font-bold border-b border-border/30">
+                            <th className="py-2 pr-3">Staff ID</th><th className="py-2 pr-3">Department</th><th className="py-2 pr-3">Updated By</th><th className="py-2 pr-3">Updated At</th><th className="py-2 pr-3"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {deptMappings.map(m => (
+                            <tr key={m.staffId} className="border-b border-border/10">
+                              <td className="py-2 pr-3 font-bold">{m.staffId}</td>
+                              <td className="py-2 pr-3">
+                                <input
+                                  type="text"
+                                  value={deptEditValues[m.staffId] ?? m.department}
+                                  onChange={(e) => setDeptEditValues(v => ({ ...v, [m.staffId]: e.target.value }))}
+                                  onBlur={() => { if ((deptEditValues[m.staffId] ?? m.department) !== m.department) saveDeptEdit(m.staffId); }}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                                  className="w-full bg-muted/30 border border-border/50 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                />
+                              </td>
+                              <td className="py-2 pr-3 text-muted-foreground">{m.updatedBy || '—'}</td>
+                              <td className="py-2 pr-3 text-muted-foreground">{m.updatedAt ? new Date(m.updatedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                              <td className="py-2 pr-3">
+                                <button onClick={() => removeDeptMapping(m.staffId)} className="text-muted-foreground hover:text-destructive transition-all" title="Remove">
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>

@@ -425,11 +425,17 @@ model SystemSetting {
 // actual table is self-provisioned via CREATE TABLE IF NOT EXISTS in
 // serve.js's ensureCorrectionsTable(), not via a migration against this
 // schema, so a fresh deploy never depends on `prisma migrate` having run.
+// `times`: the actual punch time(s) for this staff/date, e.g.
+// ["07:02:00", "17:35:00"] — the desktop app injects these as real
+// synthetic punches (see idle_watchdog.py), not a bare present/absent
+// flag. `reason` is kept for backward compatibility with rows created
+// before this field existed but is no longer collected by the form.
 model PendingAttendanceCorrection {
   id        Int       @id @default(autoincrement())
   staffId   String
   date      String
   reason    String    @default("")
+  times     Json      @default("[]")
   status    String    @default("pending") // "pending" | "applied"
   createdBy String?
   createdAt DateTime  @default(now())
