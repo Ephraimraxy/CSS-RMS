@@ -6862,6 +6862,93 @@ app.post('/api/requisitions/:id/vetting-action', authenticateToken, upload.singl
   } catch (error) { sendError(res, 500, error.message); }
 });
 
+// ── CONVERT MATERIAL REQUEST TO CASH PURCHASE ────────────────────────────────
+// When a material request is approved but items are not in stock, the target
+// department (or requester's dept, or admin) can convert it to a cash purchase.
+// The approval chain is fully reset so the request follows the normal cash flow.
+app.post('/api/requisitions/:id/convert-to-cash', authenticateToken, async (req, res) => {
+  try {
+    const reqId = parseInt(req.params.id);
+    const { amount, comment } = req.body;
+    const userDeptId = req.user.deptId ? parseInt(req.user.deptId) : null;
+    const isAdmin = normalizeRole(req.user.role) === 'global_admin';
+
+    const requisition = await prisma.requisition.findUnique({
+      where: { id: reqId },
+      select: { id: true, title: true, type: true, finalApprovalStatus: true,
+                targetDepartmentId: true, departmentId: true }
+    });
+
+    if (!requisition) return res.status(404).json({ error: 'Requisition not found.' });
+    if (!/^material/i.test(requisition.type || '')) {
+      return res.status(400).json({ error: 'Only material requests can be converted to a cash purchase.' });
+    }
+    if (['treated', 'published', 'closed'].includes(requisition.finalApprovalStatus)) {
+      return res.status(400).json({ error: 'This request has already been closed and cannot be converted.' });
+    }
+
+    const isTargetDept    = requisition.targetDepartmentId === userDeptId;
+    const isRequesterDept = requisition.departmentId === userDeptId;
+    if (!isAdmin && !isTargetDept && !isRequesterDept) {
+      return res.status(403).json({ error: 'Only the target department, the requesting department, or an admin can convert this request.' });
+    }
+
+    const parsedAmount = parseFloat(amount);
+    if (!parsedAmount || parsedAmount <= 0) {
+      return res.status(400).json({ error: 'A valid purchase amount (₦) is required to convert to a cash request.' });
+    }
+
+    const actingDept = userDeptId
+      ? await prisma.department.findUnique({ where: { id: userDeptId }, select: { name: true } })
+      : null;
+
+    await prisma.requisition.update({
+      where: { id: reqId },
+      data: {
+        type: 'Cash',
+        amount: parsedAmount,
+        finalApprovalStatus: 'none',
+        finalApprovedByDeptId: null,
+        currentVettingDeptId: null,
+        iccVettingCleared: false,
+        hasIccOverride: false,
+        iccOverrideAmount: null,
+        iccOverrideContent: null,
+        hasAuditOverride: false,
+        auditAmount: null,
+        auditContent: null,
+        amountDisbursed: 0,
+        treatedByDeptId: null,
+        reapprovalAuthority: null,
+        reapprovalReason: null,
+      }
+    });
+
+    const note = comment?.trim() || 'Converted to cash purchase — items not available in stock.';
+    await prisma.vettingEvent.create({
+      data: {
+        requisitionId: reqId,
+        deptId: userDeptId || 0,
+        deptName: actingDept?.name || 'Department',
+        action: 'converted_to_cash',
+        actorName: req.user?.name || actingDept?.name || 'Department',
+        comment: note,
+      }
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId: getNumericUserId(req.user) || null,
+        action: 'Converted to Cash',
+        details: `Req #${reqId} converted from material to cash purchase of ₦${parsedAmount.toLocaleString()} by ${actingDept?.name || 'Department'}.`
+      }
+    });
+
+    broadcastUpdate(reqId, { action: 'converted_to_cash' });
+    res.json({ success: true });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
 // ── AUDIT PRICE OVERRIDE ──────────────────────────────────────────────────────
 // Audit dept (pre-approval reviewer) can save a verified items table that
 // supersedes the creator's estimated prices for threshold & payment decisions.

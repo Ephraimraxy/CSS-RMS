@@ -383,6 +383,9 @@ export const vettingAPI = {
   async forwardForReapproval(reqId) {
     return api.post(`/requisitions/${reqId}/forward-for-reapproval`);
   },
+  convertToCash: (reqId, { amount, comment }) =>
+    api.post(`/requisitions/${reqId}/convert-to-cash`, { amount, comment }),
+
   async vettingAction(reqId, { action, comment, nextDeptId, file, vetted, amountDisbursed, treatmentType, treatmentReason }) {
     const formData = new FormData();
     formData.append('action', action);

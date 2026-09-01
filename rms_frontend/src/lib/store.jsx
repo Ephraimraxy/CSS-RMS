@@ -809,6 +809,9 @@ export async function vettingActionRequisition(reqId, { action, comment, nextDep
   }
 }
 
+export const convertRequisitionToCash = (reqId, { amount, comment }) =>
+  vettingAPI.convertToCash(reqId, { amount, comment });
+
 export const kivRequisition = (id, note) => kivAPI.kiv(id, note);
 export const unKivRequisition = (id) => kivAPI.unKiv(id);
 

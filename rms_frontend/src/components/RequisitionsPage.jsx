@@ -5,7 +5,7 @@ import ApprovalActionPanel from './ApprovalActionPanel';
 import ConfirmModal from './ConfirmModal';
 import VoiceDictation from './VoiceDictation';
 import { useAuth } from '../context/AuthContext';
-import { getOperationalRequisitions, getRequisitionDetail, updateRequisitionStatus, downloadSignedPdf, downloadDynamicPdf, getDepartments, forwardRequisition, finalApproveRequisition, sendToVettingRequisition, reapproveRequisition, forwardForReapproval, vettingActionRequisition, uploadAttachments, isMemoRecord, kivRequisition, unKivRequisition, saveAuditOverride, clearAuditOverride, iccComment, iccFreeze, iccUnfreeze, iccVetForward, iccVetReturn } from '../lib/store'; // kivRequisition/unKivRequisition reused in IccObserverPanel
+import { getOperationalRequisitions, getRequisitionDetail, updateRequisitionStatus, downloadSignedPdf, downloadDynamicPdf, getDepartments, forwardRequisition, finalApproveRequisition, sendToVettingRequisition, reapproveRequisition, forwardForReapproval, vettingActionRequisition, uploadAttachments, isMemoRecord, kivRequisition, unKivRequisition, saveAuditOverride, clearAuditOverride, iccComment, iccFreeze, iccUnfreeze, iccVetForward, iccVetReturn, convertRequisitionToCash } from '../lib/store'; // kivRequisition/unKivRequisition reused in IccObserverPanel
 import { aiAPI, settingsAPI, printSettingsAPI } from '../lib/api';
 import { loadCachedFlag } from '../lib/featureFlag';
 import { getEffectiveAmount, getLiveTrailDepartment, normalizeReq } from '../lib/requisitionDisplay';
@@ -2144,6 +2144,11 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
   const [paymentType, setPaymentType]       = useState(''); // 'full' | 'partial'
   const [kivActing, setKivActing]           = useState(false);
   const [forwardingForReapproval, setForwardingForReapproval] = useState(false);
+  // Convert material → cash
+  const [showConvert, setShowConvert] = useState(false);
+  const [convertAmount, setConvertAmount] = useState('');
+  const [convertComment, setConvertComment] = useState('');
+  const [convertActing, setConvertActing] = useState(false);
   // ICC Vets Protocol bypass flags — default null/false (gate applies) until confirmed,
   // since the safe default is to keep the ICC gate enforced.
   const [accountIccBypass, setAccountIccBypass] = useState(null);
@@ -2347,6 +2352,19 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Could not remove hold.');
     } finally { setKivActing(false); }
+  };
+
+  const handleConvertToCash = async () => {
+    const parsed = parseFloat(convertAmount);
+    if (!parsed || parsed <= 0) { toast.error('Enter a valid purchase amount.'); return; }
+    setConvertActing(true);
+    try {
+      await convertRequisitionToCash(req.id, { amount: parsed, comment: convertComment.trim() || undefined });
+      toast.success('Converted to cash purchase — request is back in pending for approval.');
+      onDone();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Conversion failed.');
+    } finally { setConvertActing(false); }
   };
 
   // Material: target dept issues items; Cash: Account / Chairman disburses
@@ -2831,7 +2849,58 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
       )}
     </>
   )}
+
+      {/* Convert Material → Cash — visible to target dept when items can't be fulfilled from stock */}
+      {_isMaterialReq && _isTargetDept && (
+        <div className="mt-3 border-t border-orange-200 pt-3">
+          {!showConvert ? (
+            <button
+              onClick={() => setShowConvert(true)}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-orange-300 bg-orange-50 hover:bg-orange-100 text-orange-700 text-[11px] font-black transition-all"
+            >
+              <ArrowRight size={12} className="shrink-0" />
+              Items not in stock — Convert to Cash Purchase
+            </button>
+          ) : (
+            <div className="space-y-2 p-3 bg-orange-50 border border-orange-300 rounded-xl">
+              <p className="text-[10px] font-black text-orange-800 uppercase tracking-widest">Convert to Cash Purchase</p>
+              <p className="text-[10px] text-orange-700 leading-snug">
+                This will reset the approval chain. The request will go back to <strong>Pending</strong> and follow the normal cash approval flow based on the amount you enter.
+              </p>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-black text-muted-foreground">₦</span>
+                <input
+                  type="number" min="1" step="0.01"
+                  value={convertAmount}
+                  onChange={e => setConvertAmount(e.target.value)}
+                  placeholder="Estimated purchase amount…"
+                  className="w-full bg-white border border-orange-300 rounded-xl pl-7 pr-3 py-2 text-sm font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-orange-300"
+                />
+              </div>
+              <textarea
+                value={convertComment}
+                onChange={e => setConvertComment(e.target.value)}
+                placeholder="Reason (optional — e.g. out of stock, needs external procurement)…"
+                rows={2}
+                className="w-full bg-white border border-orange-200 rounded-xl px-3 py-2 text-xs text-foreground placeholder-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-orange-300 resize-none"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => { setShowConvert(false); setConvertAmount(''); setConvertComment(''); }}
+                  className="py-2 rounded-xl border border-orange-200 bg-white hover:bg-orange-50 text-orange-700 text-[11px] font-bold transition-all">
+                  Cancel
+                </button>
+                <button onClick={handleConvertToCash} disabled={convertActing || !convertAmount.trim() || parseFloat(convertAmount) <= 0}
+                  className="flex items-center justify-center gap-1.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-[11px] font-black transition-all disabled:opacity-40">
+                  {convertActing ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
+                  Confirm Convert
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
+
     {localPreview && (
       <FilePreviewModal
         attachment={{ filename: localPreview.filename }}
