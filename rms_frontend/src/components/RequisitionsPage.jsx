@@ -20,7 +20,7 @@ import {
   CheckCircle2, Award, ChevronDown, ChevronUp, Gavel, Zap, Trash, BookMarked, Users,
   Lock, Unlock, ShieldAlert, MessageCircle, Check, Shield
 } from 'lucide-react';
-import { reqAPI, forwardAPI } from '../lib/api';
+import { reqAPI, forwardAPI, discountAPI } from '../lib/api';
 
 // Highlights the first occurrence of `query` inside `text` with a yellow mark
 const Highlight = ({ text, query }) => {
@@ -2126,6 +2126,79 @@ const IccVetForwardGate = ({ req, detail, departments, returnDestLabel, holderLa
   );
 };
 
+// ── Discount Verify Panel — shown to the configured verifier dept when a discount is pending ──
+const DiscountVerifyPanel = ({ req, detail, onDone }) => {
+  const [rejectReason, setRejectReason] = useState('');
+  const [acting, setActing]     = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [showReject, setShowReject] = useState(false);
+
+  const handleAccept = async () => {
+    setActing(true);
+    try {
+      await discountAPI.accept(req.id);
+      toast.success('Discount accepted — request closed as fully treated.');
+      onDone();
+    } catch (err) { toast.error(err?.response?.data?.error || 'Could not accept.'); }
+    finally { setActing(false); }
+  };
+
+  const handleReject = async () => {
+    if (!rejectReason.trim()) { toast.error('Enter a reason for rejecting.'); return; }
+    setRejecting(true);
+    try {
+      await discountAPI.reject(req.id, rejectReason.trim());
+      toast.success('Discount rejected — Account has been notified.');
+      onDone();
+    } catch (err) { toast.error(err?.response?.data?.error || 'Could not reject.'); }
+    finally { setRejecting(false); }
+  };
+
+  return (
+    <div className="space-y-3 border border-orange-200 rounded-2xl p-4 bg-orange-50/60 shadow-sm relative overflow-hidden animate-in fade-in slide-in-from-bottom-5 duration-500">
+      <div className="absolute top-0 left-0 w-1 h-full bg-orange-500" />
+      <div className="flex items-center gap-2 pl-1">
+        <Zap size={14} className="text-orange-600" />
+        <p className="text-[10px] font-black text-orange-800 uppercase tracking-widest">Discount Verification Required</p>
+        <span className="ml-auto px-2 py-0.5 rounded-full bg-orange-100 border border-orange-300 text-[9px] font-black text-orange-700 uppercase">Awaiting Your Decision</span>
+      </div>
+      <div className="pl-1 space-y-1">
+        <p className="text-[11px] text-orange-900 leading-relaxed">
+          Account has filed a discount of <span className="font-black">₦{Number(detail?.discountAmount || 0).toLocaleString()}</span> on this partial-payment request. Please review the reason below and confirm or reject.
+        </p>
+        <div className="bg-white/80 border border-orange-200 rounded-xl px-3 py-2 mt-1">
+          <p className="text-[10px] font-bold text-orange-700 uppercase tracking-widest mb-0.5">Discount Reason</p>
+          <p className="text-[11px] text-foreground leading-relaxed">{detail?.discountReason || '—'}</p>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2 pl-1">
+        <button onClick={handleAccept} disabled={acting || rejecting} className="flex items-center gap-2 px-5 py-2.5 text-sm font-black rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition-all disabled:opacity-50 shadow-sm">
+          {acting ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+          Accept Discount — Close Request
+        </button>
+        <button onClick={() => setShowReject(v => !v)} disabled={acting || rejecting} className="flex items-center gap-2 px-4 py-2.5 text-sm font-black rounded-xl bg-red-100 text-red-700 border border-red-300 hover:bg-red-200 transition-all disabled:opacity-50">
+          Reject
+        </button>
+      </div>
+      {showReject && (
+        <div className="space-y-2 pl-1">
+          <textarea
+            rows={2}
+            value={rejectReason}
+            onChange={e => setRejectReason(e.target.value)}
+            placeholder="Reason for rejection (required)…"
+            className="w-full bg-white border border-red-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 resize-none"
+          />
+          <button onClick={handleReject} disabled={acting || rejecting} className="flex items-center gap-2 px-4 py-2.5 text-sm font-black rounded-xl bg-red-600 text-white hover:bg-red-700 transition-all disabled:opacity-50 shadow-sm">
+            {rejecting ? <Loader2 size={14} className="animate-spin" /> : null}
+            Confirm Rejection
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── Vetting Panel (ICC / Audit / Account — role-specific auto-routing) ─────────
 const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated }) => {
   const [comment, setComment]       = useState('');
@@ -2145,6 +2218,13 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
   const [treatInitiated, setTreatInitiated] = useState(false);
   const [paymentType, setPaymentType]       = useState(''); // 'full' | 'partial'
   const [kivActing, setKivActing]           = useState(false);
+  // Part-payment discount state
+  const [showDiscountForm, setShowDiscountForm] = useState(false);
+  const [discountAmount, setDiscountAmount] = useState('');
+  const [discountReason, setDiscountReason] = useState('');
+  const [discountActing, setDiscountActing] = useState(false);
+  const [discountRejectReason, setDiscountRejectReason] = useState('');
+  const [discountRejectActing, setDiscountRejectActing] = useState(false);
   const [forwardingForReapproval, setForwardingForReapproval] = useState(false);
   // Convert material → cash
   const [showConvert, setShowConvert] = useState(false);
@@ -2349,6 +2429,47 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
     } finally { setKivActing(false); }
   };
 
+  const handleFileDiscount = async () => {
+    const amt = parseFloat(discountAmount);
+    if (!amt || amt <= 0) { toast.error('Enter a valid discount amount.'); return; }
+    if (!discountReason.trim()) { toast.error('A reason for the discount is required.'); return; }
+    setDiscountActing(true);
+    try {
+      await discountAPI.file(req.id, { discountAmount: amt, discountReason: discountReason.trim() });
+      toast.success('Discount filed — the verifier department has been notified.');
+      setShowDiscountForm(false);
+      setDiscountAmount('');
+      setDiscountReason('');
+      onDone();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not file discount.');
+    } finally { setDiscountActing(false); }
+  };
+
+  const handleAcceptDiscount = async () => {
+    setDiscountActing(true);
+    try {
+      await discountAPI.accept(req.id);
+      toast.success('Discount accepted — request is now fully treated.');
+      onDone();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not accept discount.');
+    } finally { setDiscountActing(false); }
+  };
+
+  const handleRejectDiscount = async () => {
+    if (!discountRejectReason.trim()) { toast.error('Please provide a reason for rejecting the discount.'); return; }
+    setDiscountRejectActing(true);
+    try {
+      await discountAPI.reject(req.id, discountRejectReason.trim());
+      toast.success('Discount rejected — Account has been notified.');
+      setDiscountRejectReason('');
+      onDone();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not reject discount.');
+    } finally { setDiscountRejectActing(false); }
+  };
+
   const handleUnKiv = async () => {
     setKivActing(true);
     try {
@@ -2495,6 +2616,79 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
                   ) : (
                     <>Partial payment on record — ₦{(lastPaymentAmt ?? alreadyDisbursed).toLocaleString()} paid. Total paid so far — <span className="font-black">₦{alreadyDisbursed.toLocaleString()}</span></>
                   )}
+                </div>
+              )}
+
+              {/* Discount option — only visible in partial-payment mode, not yet filed */}
+              {isPartialMode && !detail?.discountStatus && (
+                <div className="border border-orange-200 rounded-xl bg-orange-50/60 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => { setShowDiscountForm(v => !v); if (!showDiscountForm && hasAmount) setDiscountAmount(String(balanceDue)); }}
+                    className="w-full flex items-center justify-between px-4 py-3 text-[11px] font-black text-orange-800 uppercase tracking-widest hover:bg-orange-100/50 transition-all"
+                  >
+                    <span>Apply Discount / Deduction to Close</span>
+                    <span className="text-[10px] text-orange-500">{showDiscountForm ? '▲ Hide' : '▼ Show'}</span>
+                  </button>
+                  {showDiscountForm && (
+                    <div className="px-4 pb-4 space-y-3 border-t border-orange-200 pt-3">
+                      <p className="text-[10px] text-orange-700 leading-relaxed">
+                        Use this when the remaining balance has been settled outside the system (e.g. transport cash handed directly to the initiator). The configured verifier department must confirm before the request closes.
+                      </p>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-orange-800 uppercase tracking-widest">Discount Amount (₦)</label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-black text-muted-foreground">₦</span>
+                          <input
+                            type="number" min="0.01" step="0.01"
+                            value={discountAmount}
+                            onChange={e => setDiscountAmount(e.target.value)}
+                            placeholder={hasAmount ? balanceDue.toLocaleString() : '0.00'}
+                            className="w-full bg-white border border-orange-300 rounded-xl pl-7 pr-3 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-300"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-orange-800 uppercase tracking-widest">Reason for Discount</label>
+                        <textarea
+                          rows={3}
+                          value={discountReason}
+                          onChange={e => setDiscountReason(e.target.value)}
+                          placeholder="e.g. Transport cash of ₦5,000 was given directly to the initiator at the time of payment"
+                          className="w-full bg-white border border-orange-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 resize-none"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleFileDiscount}
+                        disabled={discountActing}
+                        className="px-5 py-2.5 text-[11px] font-black uppercase tracking-widest rounded-xl bg-orange-600 text-white disabled:opacity-50 hover:bg-orange-700 transition-all"
+                      >
+                        {discountActing ? 'Submitting...' : 'Submit Discount for Verification'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Discount already filed — show status to Account */}
+              {isPartialMode && detail?.discountStatus === 'pending_verification' && (
+                <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-800">
+                  <AlertTriangle size={13} className="shrink-0 mt-0.5 text-amber-600" />
+                  <div className="space-y-0.5">
+                    <p className="text-[11px] font-black uppercase tracking-widest">Discount Pending Verification</p>
+                    <p className="text-[10px]">A discount of <span className="font-bold">₦{Number(detail.discountAmount || 0).toLocaleString()}</span> is awaiting confirmation from the verifier department.</p>
+                    <p className="text-[10px] text-amber-700/80">Reason: {detail.discountReason || '—'}</p>
+                  </div>
+                </div>
+              )}
+              {isPartialMode && detail?.discountStatus === 'rejected' && (
+                <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-red-50 border border-red-300 text-red-800">
+                  <AlertTriangle size={13} className="shrink-0 mt-0.5 text-red-500" />
+                  <div className="space-y-0.5">
+                    <p className="text-[11px] font-black uppercase tracking-widest">Discount Rejected</p>
+                    <p className="text-[10px]">The discount of ₦{Number(detail.discountAmount || 0).toLocaleString()} was rejected. You may complete the full balance or re-apply a discount.</p>
+                  </div>
                 </div>
               )}
 
@@ -3946,6 +4140,29 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                 </div>
               )}
 
+              {/* Discount status banners — visible to all */}
+              {detail?.discountStatus === 'pending_verification' && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-orange-50 border border-orange-300 text-orange-800">
+                  <Zap size={12} className="shrink-0 text-orange-500" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest">Discount Pending Verification</p>
+                  <p className="text-[10px] text-orange-700/80 ml-auto">₦{Number(detail.discountAmount || 0).toLocaleString()} discount awaiting verifier confirmation</p>
+                </div>
+              )}
+              {detail?.discountStatus === 'accepted' && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-teal-50 border border-teal-200 text-teal-800">
+                  <CheckCircle2 size={12} className="shrink-0 text-teal-500" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest">Closed via Discount</p>
+                  <p className="text-[10px] text-teal-700/70 ml-auto">₦{Number(detail.discountAmount || 0).toLocaleString()} discount verified — fully treated</p>
+                </div>
+              )}
+              {detail?.discountStatus === 'rejected' && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-red-800">
+                  <AlertTriangle size={12} className="shrink-0 text-red-500" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest">Discount Rejected</p>
+                  <p className="text-[10px] text-red-700/70 ml-auto">Balance must be paid or a new discount filed</p>
+                </div>
+              )}
+
               {/* Self-approved badge — shows when a dept self-approved (no HR/GM/CEO sign-off needed) */}
               {detail?.isSelfApproved && !detail?.needsReapproval && (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-50 border border-green-200 text-green-800">
@@ -4104,6 +4321,16 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                     }}
                   />
                 </div>
+              )}
+
+              {/* Discount Verification Panel — shown to the configured verifier dept when a discount is pending */}
+              {user?.role === 'department' && detail?.discountStatus === 'pending_verification' &&
+               detail?.discountVerifierDeptId && parseInt(detail.discountVerifierDeptId) === parseInt(user?.deptId) && (
+                <DiscountVerifyPanel
+                  req={req}
+                  detail={detail}
+                  onDone={() => { getRequisitionDetail(req.id).then(d => setDetail(d)); onAction(); }}
+                />
               )}
 
               {/* ICC Vets Protocol — ICC's vetting panel, shown only while ICC currently holds the request */}

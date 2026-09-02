@@ -70,6 +70,7 @@ model Department {
   treatedRequisitions       Requisition[] @relation("TreatedBy")
   currentVettingRequisitions Requisition[] @relation("CurrentVetting")
   reapprovedRequisitions     Requisition[] @relation("Reapprover")
+  discountVerifierRequisitions Requisition[] @relation("DiscountVerifier")
   canPrint             Boolean          @default(true)
   subVisibilities      RequisitionSubVisibility[] @relation("SubVisibility")
   storeRecords         StoreRecord[]
@@ -155,6 +156,18 @@ model Requisition {
   amountDisbursed       Float?
   treatmentType         String?
   treatmentReason       String?
+
+  // Part-payment discount — when Account makes a partial payment and the remaining balance
+  // is legitimately waived (e.g. transport cash handed directly to initiator), Account can
+  // file a discount with a reason. A configured verifier dept must confirm before the
+  // request is closed. discountStatus: null | 'pending_verification' | 'accepted' | 'rejected'
+  discountAmount        Float?
+  discountReason        String?   @db.Text
+  discountStatus        String?
+  discountVerifierDeptId Int?
+  discountVerifierDept  Department? @relation("DiscountVerifier", fields: [discountVerifierDeptId], references: [id])
+  discountRequestedAt   DateTime?
+  discountVerifiedAt    DateTime?
 
   // Re-approval escalation — a later price revision (Audit or ICC override) can push the
   // effective amount past the band of whoever already gave final approval. Rather than

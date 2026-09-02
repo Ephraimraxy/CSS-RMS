@@ -7103,6 +7103,151 @@ app.post('/api/requisitions/:id/vetting-action', authenticateToken, upload.singl
   } catch (error) { sendError(res, 500, error.message); }
 });
 
+// ── PART-PAYMENT DISCOUNT ─────────────────────────────────────────────────────
+// When Account makes a partial payment and the remaining balance is legitimately
+// waived (e.g. transport cash handed to initiator directly), Account files a
+// discount with a reason. The configured verifier department confirms it, which
+// closes the request as fully treated instead of leaving it in 'partial' forever.
+
+// POST /api/requisitions/:id/discount — Account submits a discount request
+app.post('/api/requisitions/:id/discount', authenticateToken, async (req, res) => {
+  try {
+    const reqId = parseInt(req.params.id);
+    const userDeptId = parseInt(req.user?.deptId);
+    const actingDeptRecord = userDeptId ? await prisma.department.findUnique({ where: { id: userDeptId }, select: { name: true } }) : null;
+    const isAccountDept = actingDeptRecord && /\baccount\b/i.test(actingDeptRecord.name);
+    if (!isAccountDept) return res.status(403).json({ error: 'Only Account can file a discount.' });
+
+    const requisition = await prisma.requisition.findUnique({ where: { id: reqId } });
+    if (!requisition) return res.status(404).json({ error: 'Requisition not found.' });
+    if (requisition.finalApprovalStatus !== 'partial') return res.status(400).json({ error: 'Discount can only be filed on a partial-payment request.' });
+    if (requisition.discountStatus === 'pending_verification') return res.status(400).json({ error: 'A discount is already pending verification.' });
+
+    const discountAmount = parseFloat(req.body?.discountAmount);
+    const discountReason = String(req.body?.discountReason || '').trim();
+    if (!discountReason) return res.status(400).json({ error: 'A reason for the discount is required.' });
+    if (isNaN(discountAmount) || discountAmount <= 0) return res.status(400).json({ error: 'A valid discount amount is required.' });
+
+    // Look up the configured verifier department
+    const verifierSetting = await prisma.systemSetting.findUnique({ where: { key: 'discount_verifier_dept_id' } });
+    const verifierDeptId = verifierSetting?.value ? parseInt(verifierSetting.value) : null;
+    if (!verifierDeptId) return res.status(400).json({ error: 'No discount verifier department is configured. Ask the Super Admin to set one in Workflow Builder.' });
+
+    await prisma.requisition.update({
+      where: { id: reqId },
+      data: {
+        discountAmount,
+        discountReason,
+        discountStatus: 'pending_verification',
+        discountVerifierDeptId: verifierDeptId,
+        discountRequestedAt: new Date(),
+        discountVerifiedAt: null,
+      }
+    });
+
+    notifyDepartmentHead({
+      departmentId: verifierDeptId,
+      requisition: { id: reqId, title: requisition.title || `Requisition #${reqId}` },
+      subject: `💸 Discount Verification Required — Req #${reqId}`,
+      lines: [
+        `Account has filed a discount of ₦${discountAmount.toLocaleString()} on a partial-payment requisition.`,
+        `Reason: ${discountReason}`,
+        `Please review and confirm (or reject) this discount so the request can be closed.`,
+      ]
+    }).catch(() => {});
+
+    res.json({ ok: true });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// POST /api/requisitions/:id/discount/accept — Verifier dept confirms discount → closes request
+app.post('/api/requisitions/:id/discount/accept', authenticateToken, async (req, res) => {
+  try {
+    const reqId = parseInt(req.params.id);
+    const userDeptId = parseInt(req.user?.deptId);
+
+    const requisition = await prisma.requisition.findUnique({ where: { id: reqId } });
+    if (!requisition) return res.status(404).json({ error: 'Requisition not found.' });
+    if (requisition.discountStatus !== 'pending_verification') return res.status(400).json({ error: 'No pending discount to accept.' });
+    if (requisition.discountVerifierDeptId !== userDeptId) return res.status(403).json({ error: 'Your department is not the configured discount verifier.' });
+
+    await prisma.requisition.update({
+      where: { id: reqId },
+      data: {
+        discountStatus: 'accepted',
+        discountVerifiedAt: new Date(),
+        finalApprovalStatus: 'treated',
+        treatedByDeptId: requisition.treatedByDeptId || userDeptId,
+        treatedAt: new Date(),
+        currentVettingDeptId: null,
+      }
+    });
+
+    // Notify Account and the originating department
+    const accountDept = await prisma.department.findFirst({ where: { name: { contains: 'account', mode: 'insensitive' } } });
+    if (accountDept) {
+      notifyDepartmentHead({
+        departmentId: accountDept.id,
+        requisition: { id: reqId, title: requisition.title || `Requisition #${reqId}` },
+        subject: `✅ Discount Accepted — Req #${reqId} Closed`,
+        lines: [`The discount of ₦${(requisition.discountAmount || 0).toLocaleString()} has been accepted and the request is now fully treated.`]
+      }).catch(() => {});
+    }
+    if (requisition.departmentId) {
+      notifyDepartmentHead({
+        departmentId: requisition.departmentId,
+        requisition: { id: reqId, title: requisition.title || `Requisition #${reqId}` },
+        subject: `✅ Requisition Fully Treated — Req #${reqId}`,
+        lines: [
+          `Your requisition has been fully closed. A discount of ₦${(requisition.discountAmount || 0).toLocaleString()} was applied and verified.`,
+          `Discount reason: ${requisition.discountReason || '—'}`,
+        ]
+      }).catch(() => {});
+    }
+
+    res.json({ ok: true });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// POST /api/requisitions/:id/discount/reject — Verifier dept rejects discount
+app.post('/api/requisitions/:id/discount/reject', authenticateToken, async (req, res) => {
+  try {
+    const reqId = parseInt(req.params.id);
+    const userDeptId = parseInt(req.user?.deptId);
+    const rejectReason = String(req.body?.reason || '').trim();
+
+    const requisition = await prisma.requisition.findUnique({ where: { id: reqId } });
+    if (!requisition) return res.status(404).json({ error: 'Requisition not found.' });
+    if (requisition.discountStatus !== 'pending_verification') return res.status(400).json({ error: 'No pending discount to reject.' });
+    if (requisition.discountVerifierDeptId !== userDeptId) return res.status(403).json({ error: 'Your department is not the configured discount verifier.' });
+
+    await prisma.requisition.update({
+      where: { id: reqId },
+      data: {
+        discountStatus: 'rejected',
+        discountVerifiedAt: new Date(),
+      }
+    });
+
+    // Notify Account that discount was rejected
+    const accountDept = await prisma.department.findFirst({ where: { name: { contains: 'account', mode: 'insensitive' } } });
+    if (accountDept) {
+      notifyDepartmentHead({
+        departmentId: accountDept.id,
+        requisition: { id: reqId, title: requisition.title || `Requisition #${reqId}` },
+        subject: `❌ Discount Rejected — Req #${reqId}`,
+        lines: [
+          `The discount of ₦${(requisition.discountAmount || 0).toLocaleString()} was rejected.`,
+          rejectReason ? `Reason: ${rejectReason}` : null,
+          `The request remains in partial-payment status. Please complete the balance or re-file a discount.`,
+        ].filter(Boolean)
+      }).catch(() => {});
+    }
+
+    res.json({ ok: true });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
 // ── CONVERT MATERIAL REQUEST TO CASH PURCHASE ────────────────────────────────
 // When a material request is approved but items are not in stock, the target
 // department (or requester's dept, or admin) can convert it to a cash purchase.

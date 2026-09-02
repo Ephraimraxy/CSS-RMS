@@ -443,6 +443,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [priorityLimitUrgent, setPriorityLimitUrgent]             = useState('');
   const [priorityLimitNormal, setPriorityLimitNormal]             = useState('');
   const [priorityEscalationDeptIds, setPriorityEscalationDeptIds] = useState([]);
+  // Part-payment discount verifier dept
+  const [discountVerifierDeptId, setDiscountVerifierDeptId]       = useState('');
   const [adminCreateFundEnabled, setAdminCreateFundEnabled]       = useState(false);
   const [adminCreateMaterialEnabled, setAdminCreateMaterialEnabled] = useState(false);
   const [adminCreateMemoEnabled, setAdminCreateMemoEnabled]       = useState(false);
@@ -612,6 +614,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         adminCreateFundRes, adminCreateMaterialRes, adminCreateMemoRes,
         deptSelfApprovalEnabledRes, deptSelfApprovalLimitRes,
         priorityCriticalRes, priorityUrgentRes, priorityNormalRes, priorityEscDeptIdsRes,
+        discountVerifierDeptIdRes,
       ] = await Promise.allSettled([
         settingsAPI.get('document_studio_enabled'),
         settingsAPI.get('hr_portal_enabled'),
@@ -634,6 +637,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.get('priority_time_limit_urgent'),
         settingsAPI.get('priority_time_limit_normal'),
         settingsAPI.get('priority_escalation_dept_ids'),
+        settingsAPI.get('discount_verifier_dept_id'),
       ]);
       if (studioRes.status === 'fulfilled' && studioRes.value?.value !== undefined)
         setStudioEnabled(studioRes.value.value !== 'false');
@@ -690,6 +694,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
       if (priorityEscDeptIdsRes.status === 'fulfilled' && priorityEscDeptIdsRes.value?.value) {
         try { setPriorityEscalationDeptIds(JSON.parse(priorityEscDeptIdsRes.value.value).map(Number)); } catch { setPriorityEscalationDeptIds([]); }
       }
+      if (discountVerifierDeptIdRes.status === 'fulfilled' && discountVerifierDeptIdRes.value?.value)
+        setDiscountVerifierDeptId(discountVerifierDeptIdRes.value.value);
     } catch {}
 
     // Load Turnstile required depts separately (JSON array)
@@ -778,6 +784,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.set('priority_time_limit_urgent',   priorityLimitUrgent   !== '' ? String(parseFloat(priorityLimitUrgent))   : '0'),
         settingsAPI.set('priority_time_limit_normal',   priorityLimitNormal   !== '' ? String(parseFloat(priorityLimitNormal))   : '0'),
         settingsAPI.set('priority_escalation_dept_ids', JSON.stringify(priorityEscalationDeptIds)),
+        settingsAPI.set('discount_verifier_dept_id', discountVerifierDeptId ? String(discountVerifierDeptId) : ''),
       ]);
       toast.success('Feature settings saved.');
       window.dispatchEvent(new CustomEvent('rms:flags:updated'));
@@ -1385,6 +1392,37 @@ const WorkflowBuilder = ({ onViewChange }) => {
                     </p>
                   )}
                   <p className="text-[10px] text-muted-foreground">Super Admin always receives alerts — you cannot remove them. The department currently holding the request also gets a reminder automatically.</p>
+                </div>
+              </div>
+
+              {/* Part-Payment Discount Verifier Department */}
+              <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-orange-200 bg-orange-50/40 space-y-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-black text-foreground flex items-center gap-2">
+                    <Zap size={15} className="text-orange-600 shrink-0" />
+                    Part-Payment Discount Verifier
+                  </p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed max-w-2xl">
+                    When Account makes a partial payment and the remaining balance is legitimately waived (e.g. transport cash handed directly to the initiator), Account can file a <strong>discount</strong> with a reason. The department selected here must confirm the discount before the request closes as fully treated. Leave blank to disable the discount feature.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Verifier Department</label>
+                  <select
+                    value={discountVerifierDeptId}
+                    onChange={e => setDiscountVerifierDeptId(e.target.value)}
+                    className="w-full sm:w-80 bg-white border border-orange-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400/40"
+                  >
+                    <option value="">— Disabled (no discount feature) —</option>
+                    {allDepts.filter(d => !d.isSubAccount).map(dept => (
+                      <option key={dept.id} value={String(dept.id)}>{dept.name}</option>
+                    ))}
+                  </select>
+                  {discountVerifierDeptId && (
+                    <p className="text-[11px] text-orange-800 font-semibold">
+                      {allDepts.find(d => String(d.id) === String(discountVerifierDeptId))?.name || '—'} will receive discount verification requests and must confirm before a partially-paid request can close.
+                    </p>
+                  )}
                 </div>
               </div>
 

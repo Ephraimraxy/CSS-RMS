@@ -436,6 +436,15 @@ export const kivAPI = {
   unKiv: (id) => api.post(`/requisitions/${id}/un-kiv`),
 };
 
+export const discountAPI = {
+  file: (reqId, { discountAmount, discountReason }) =>
+    api.post(`/requisitions/${reqId}/discount`, { discountAmount, discountReason }),
+  accept: (reqId) =>
+    api.post(`/requisitions/${reqId}/discount/accept`),
+  reject: (reqId, reason) =>
+    api.post(`/requisitions/${reqId}/discount/reject`, { reason }),
+};
+
 export const printSettingsAPI = {
   getAccess: () => api.get('/settings/print-access'),
 };
