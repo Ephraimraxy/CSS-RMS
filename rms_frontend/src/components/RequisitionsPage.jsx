@@ -1142,8 +1142,10 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
   }, []);
 
   const deptName = user?.name || '';
-  // Effective amount — uses audit-overridden value if present
-  const effectiveAmount = (detail?.hasAuditOverride && detail?.auditAmount != null)
+  // Effective amount — ICC override takes priority over Audit override (ICC acts post-approval)
+  const effectiveAmount = (detail?.hasIccOverride && detail?.iccOverrideAmount != null)
+    ? parseFloat(detail.iccOverrideAmount)
+    : (detail?.hasAuditOverride && detail?.auditAmount != null)
     ? parseFloat(detail.auditAmount)
     : parseFloat(req.amount || 0);
   const amount = effectiveAmount;
@@ -2179,7 +2181,9 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
   // Privileged sub-account of Audit or Account — uses approvalLimit for handling authority
   const _privSub = user?.isSubAccount && user?.parentDeptId && user?.approvalLimit != null;
   const _privLimit = _privSub ? parseFloat(user.approvalLimit) : null;
-  const _effAmt = (detail?.hasAuditOverride && detail?.auditAmount != null)
+  const _effAmt = (detail?.hasIccOverride && detail?.iccOverrideAmount != null)
+    ? parseFloat(detail.iccOverrideAmount)
+    : (detail?.hasAuditOverride && detail?.auditAmount != null)
     ? parseFloat(detail.auditAmount) : parseFloat(req?.amount || 0);
   const _privCovers = _privSub && _privLimit != null && _effAmt <= _privLimit;
   const _parentId = _privSub ? parseInt(user.parentDeptId) : null;
@@ -2302,8 +2306,10 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
   const _isTargetDept = detail?.targetDepartmentId === user?.deptId;
   const canTreat = isAccount || isChairman || (_isMaterialReq && _isTargetDept);
 
-  // Disbursement calculations — use audit-verified amount if Audit has overridden the price
-  const reqAmount        = (detail?.hasAuditOverride && detail?.auditAmount != null)
+  // Disbursement calculations — ICC override takes priority over Audit (ICC acts post-approval)
+  const reqAmount        = (detail?.hasIccOverride && detail?.iccOverrideAmount != null)
+    ? parseFloat(detail.iccOverrideAmount)
+    : (detail?.hasAuditOverride && detail?.auditAmount != null)
     ? parseFloat(detail.auditAmount)
     : parseFloat(detail?.amount || req.amount || 0);
   const alreadyDisbursed = parseFloat(detail?.amountDisbursed || 0);
@@ -4443,11 +4449,11 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                          </button>
                        </div>
                        {detail.amount > 0 ? (() => {
-                         const effAmt = (detail.hasAuditOverride && detail.auditAmount != null) ? Number(detail.auditAmount) : Number(detail.amount);
+                         const effAmt = (detail.hasIccOverride && detail.iccOverrideAmount != null) ? Number(detail.iccOverrideAmount) : (detail.hasAuditOverride && detail.auditAmount != null) ? Number(detail.auditAmount) : Number(detail.amount);
                          const paid = Number(detail.amountDisbursed || 0);
                          return (
                            <div className="text-[10px] text-orange-700/80 font-semibold pl-6">
-                             Paid: ₦{paid.toLocaleString()} of ₦{effAmt.toLocaleString()} {detail.hasAuditOverride ? 'verified' : 'requested'}
+                             Paid: ₦{paid.toLocaleString()} of ₦{effAmt.toLocaleString()} {(detail.hasIccOverride || detail.hasAuditOverride) ? 'verified' : 'requested'}
                              {' — '}Balance: ₦{(effAmt - paid).toLocaleString()}
                            </div>
                          );
@@ -4466,7 +4472,7 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                          </span>
                        </div>
                        {detail.amount > 0 && detail.amountDisbursed != null && (() => {
-                         const effAmt = (detail.hasAuditOverride && detail.auditAmount != null) ? Number(detail.auditAmount) : Number(detail.amount);
+                         const effAmt = (detail.hasIccOverride && detail.iccOverrideAmount != null) ? Number(detail.iccOverrideAmount) : (detail.hasAuditOverride && detail.auditAmount != null) ? Number(detail.auditAmount) : Number(detail.amount);
                          return (
                            <div className="text-[10px] text-teal-700/80 font-semibold pl-6">
                              Total Disbursed: ₦{Number(detail.amountDisbursed).toLocaleString()}
