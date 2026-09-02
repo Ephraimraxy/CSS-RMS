@@ -106,6 +106,12 @@ These are the key toggles and amounts you can configure:
 - Leave the field blank to keep the default: ICC is always required at every amount
 - ICC review never applies to Material Requests or Memos — only Cash
 
+**Part-Payment Discount Verifier**
+- When Account makes a partial payment and the remaining balance is legitimately waived (e.g. ₦5,000 transport cash was handed directly to the initiator), Account can file a **discount** instead of leaving the request permanently "pending"
+- Select the department that will verify and confirm discounts before a request can close
+- Workflow: Account files discount + reason → verifier dept sees a panel → clicks Accept → request closes as fully treated; or clicks Reject → Account must pay the balance or re-file
+- Leave blank to disable the discount feature entirely (partial-payment requests must always be paid in full)
+
 **Priority Escalation Alerts**
 - Set a maximum waiting time (in minutes) per priority level: Critical, Urgent, Normal
 - If a Cash or Material request sits at any stage without action for longer than the limit, the system automatically sends an alert to the Super Admin and any departments you select
