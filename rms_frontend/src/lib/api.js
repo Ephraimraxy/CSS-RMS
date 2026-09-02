@@ -245,6 +245,12 @@ export const attendanceCorrectionsAPI = {
   async add(staffId, date, times) {
     return api.post('/attendance-corrections', { staffId, date, times });
   },
+  async update(id, { staffId, date, times }) {
+    return api.patch(`/attendance-corrections/${id}`, { staffId, date, times });
+  },
+  async remove(id) {
+    return api.delete(`/attendance-corrections/${id}`);
+  },
 };
 
 // Staff -> Department correlation for the desktop client — the ZKTeco
@@ -256,11 +262,17 @@ export const staffDepartmentsAPI = {
   async list() {
     return api.get('/staff-departments');
   },
+  async create(staffId, department) {
+    return api.post('/staff-departments', { staffId, department });
+  },
   async update(staffId, department) {
     return api.patch(`/staff-departments/${encodeURIComponent(staffId)}`, { department });
   },
   async remove(staffId) {
     return api.delete(`/staff-departments/${encodeURIComponent(staffId)}`);
+  },
+  async bulkRemove(staffIds) {
+    return api.delete('/staff-departments', { data: { staffIds } });
   },
   async importFile(file) {
     const formData = new FormData();

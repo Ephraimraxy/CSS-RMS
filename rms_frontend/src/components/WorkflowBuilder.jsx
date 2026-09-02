@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Trash2, Shield, ArrowDown, Settings2, Info, FileText, ChevronRight, Save, Loader2, Monitor, Hash, ShieldCheck, Sparkles, Printer, Award, Phone, Send, CheckCircle2, Wifi, WifiOff, AlertCircle, RotateCcw, Mail, Eye, X, AlertTriangle, Zap, BadgeCheck, ArrowRight, Clock, PenTool, MessageSquare, Image, Upload } from 'lucide-react';
+import { Plus, Trash2, Shield, ArrowDown, Settings2, Info, FileText, ChevronRight, Save, Loader2, Monitor, Hash, ShieldCheck, Sparkles, Printer, Award, Phone, Send, CheckCircle2, Wifi, WifiOff, AlertCircle, RotateCcw, Mail, Eye, X, AlertTriangle, Zap, BadgeCheck, ArrowRight, Clock, PenTool, Pencil, MessageSquare, Image, Upload } from 'lucide-react';
 
 const WorkflowStage = ({ stage, onUpdate, onDelete, isFirst }) => {
   return (
@@ -221,6 +221,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [correctionsLoaded, setCorrectionsLoaded] = useState(false);
   const [newCorrection, setNewCorrection] = useState({ staffId: '', date: '', punchCount: 1, times: [''] });
   const [savingCorrection, setSavingCorrection] = useState(false);
+  const [editingCorrId, setEditingCorrId] = useState(null);
+  const [editCorrData, setEditCorrData] = useState({ staffId: '', date: '', punchCount: 1, times: [''] });
 
   const loadCorrections = async () => {
     try {
@@ -272,6 +274,45 @@ const WorkflowBuilder = ({ onViewChange }) => {
     } finally { setSavingCorrection(false); }
   };
 
+  const deleteCorrection = async (id) => {
+    try {
+      await attendanceCorrectionsAPI.remove(id);
+      setCorrections(rows => rows.filter(r => r.id !== id));
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not delete.');
+    }
+  };
+
+  const startEditCorrection = (c) => {
+    const times = Array.isArray(c.times) && c.times.length > 0 ? c.times : [''];
+    setEditCorrData({ staffId: c.staffId, date: c.date, punchCount: times.length, times });
+    setEditingCorrId(c.id);
+  };
+
+  const saveEditCorrection = async () => {
+    const staffId = editCorrData.staffId.trim();
+    const date = editCorrData.date.trim();
+    const times = editCorrData.times.map(t => t.trim()).filter(Boolean);
+    if (!staffId || !date || times.length === 0) { toast.error('Staff ID, date, and at least one time are required.'); return; }
+    try {
+      const res = await attendanceCorrectionsAPI.update(editingCorrId, { staffId, date, times });
+      setCorrections(rows => rows.map(r => r.id === editingCorrId ? { ...r, ...res.correction, times } : r));
+      setEditingCorrId(null);
+      toast.success('Correction updated.');
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not update.');
+    }
+  };
+
+  const setEditCorrPunchCount = (count) => {
+    const n = Math.max(1, Math.min(6, Number(count) || 1));
+    setEditCorrData(c => ({ ...c, punchCount: n, times: Array.from({ length: n }, (_, i) => c.times[i] || '') }));
+  };
+
+  const setEditCorrTime = (index, value) => {
+    setEditCorrData(c => { const times = [...c.times]; times[index] = value; return { ...c, times }; });
+  };
+
   // ── Staff Department Mapping — the device only ever reports ID + Role,
   // never Department, so this staffId -> department table (typed in one at
   // a time, or bulk-imported from HR's own CSV/Excel) is the only source
@@ -282,7 +323,11 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [deptMappingsLoaded, setDeptMappingsLoaded] = useState(false);
   const [deptImporting, setDeptImporting] = useState(false);
   const [deptImportFileName, setDeptImportFileName] = useState('');
-  const [deptEditValues, setDeptEditValues] = useState({}); // staffId -> in-progress edited text
+  const [deptEditValues, setDeptEditValues] = useState({}); // staffId -> dept text being edited
+  const [deptStaffIdEdits, setDeptStaffIdEdits] = useState({}); // staffId -> new staffId being typed
+  const [deptSelectedIds, setDeptSelectedIds] = useState(new Set());
+  const [newDeptRow, setNewDeptRow] = useState({ staffId: '', department: '' });
+  const [savingNewDeptRow, setSavingNewDeptRow] = useState(false);
 
   const loadDeptMappings = async () => {
     try {
@@ -321,9 +366,58 @@ const WorkflowBuilder = ({ onViewChange }) => {
     try {
       await staffDepartmentsAPI.remove(staffId);
       setDeptMappings(rows => rows.filter(r => r.staffId !== staffId));
+      setDeptSelectedIds(prev => { const n = new Set(prev); n.delete(staffId); return n; });
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Could not remove.');
     }
+  };
+
+  const bulkDeleteDeptMappings = async () => {
+    const ids = [...deptSelectedIds];
+    if (!ids.length) return;
+    try {
+      await staffDepartmentsAPI.bulkRemove(ids);
+      setDeptMappings(rows => rows.filter(r => !deptSelectedIds.has(r.staffId)));
+      setDeptSelectedIds(new Set());
+      toast.success(`Deleted ${ids.length} mapping(s).`);
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not delete selected.');
+    }
+  };
+
+  const saveDeptStaffIdEdit = async (oldStaffId) => {
+    const newStaffId = (deptStaffIdEdits[oldStaffId] ?? oldStaffId).trim();
+    if (!newStaffId || newStaffId === oldStaffId) { setDeptStaffIdEdits(v => { const n = { ...v }; delete n[oldStaffId]; return n; }); return; }
+    const row = deptMappings.find(r => r.staffId === oldStaffId);
+    if (!row) return;
+    try {
+      await staffDepartmentsAPI.remove(oldStaffId);
+      const res = await staffDepartmentsAPI.create(newStaffId, row.department);
+      setDeptMappings(rows => rows.map(r => r.staffId === oldStaffId ? { ...r, ...res.mapping, staffId: newStaffId } : r));
+      setDeptStaffIdEdits(v => { const n = { ...v }; delete n[oldStaffId]; return n; });
+      toast.success(`Staff ID updated to ${newStaffId}.`);
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not rename staff ID.');
+    }
+  };
+
+  const addDeptRow = async () => {
+    const staffId = newDeptRow.staffId.trim();
+    const department = newDeptRow.department.trim();
+    if (!staffId) { toast.error('Staff ID is required.'); return; }
+    setSavingNewDeptRow(true);
+    try {
+      const res = await staffDepartmentsAPI.create(staffId, department);
+      setDeptMappings(rows => {
+        const existing = rows.find(r => r.staffId === staffId);
+        if (existing) return rows.map(r => r.staffId === staffId ? { ...r, ...res.mapping } : r);
+        return [...rows, res.mapping].sort((a, b) => a.staffId.localeCompare(b.staffId));
+      });
+      setNewDeptRow({ staffId: '', department: '' });
+      toast.success(`Mapping saved for ${staffId}.`);
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not add mapping.');
+    } finally { setSavingNewDeptRow(false); }
   };
 
   // ── Feature flags ──────────────────────────────────────────────────────────
@@ -2467,22 +2561,55 @@ const WorkflowBuilder = ({ onViewChange }) => {
                       <table className="w-full text-[11px]">
                         <thead>
                           <tr className="text-left text-muted-foreground uppercase tracking-widest text-[9px] font-bold border-b border-border/30">
-                            <th className="py-2 pr-3">Staff ID</th><th className="py-2 pr-3">Date</th><th className="py-2 pr-3">Times</th><th className="py-2 pr-3">Status</th><th className="py-2 pr-3">Applied At</th><th className="py-2 pr-3">Added By</th>
+                            <th className="py-2 pr-3">Staff ID</th><th className="py-2 pr-3">Date</th><th className="py-2 pr-3">Times</th><th className="py-2 pr-3">Status</th><th className="py-2 pr-3">Applied At</th><th className="py-2 pr-3">Added By</th><th className="py-2 pr-3"></th>
                           </tr>
                         </thead>
                         <tbody>
-                          {corrections.map(c => (
-                            <tr key={c.id} className="border-b border-border/10">
-                              <td className="py-2 pr-3 font-bold">{c.staffId}</td>
-                              <td className="py-2 pr-3">{c.date}</td>
-                              <td className="py-2 pr-3 text-muted-foreground">{Array.isArray(c.times) && c.times.length > 0 ? c.times.join(', ') : '—'}</td>
-                              <td className="py-2 pr-3">
-                                <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${c.status === 'applied' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>{c.status}</span>
-                              </td>
-                              <td className="py-2 pr-3 text-muted-foreground">{c.appliedAt ? new Date(c.appliedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
-                              <td className="py-2 pr-3 text-muted-foreground">{c.createdBy || '—'}</td>
-                            </tr>
-                          ))}
+                          {corrections.map(c => {
+                            const isEditing = editingCorrId === c.id;
+                            return (
+                              <tr key={c.id} className={`border-b border-border/10 ${isEditing ? 'bg-primary/5' : ''}`}>
+                                {isEditing ? (
+                                  <>
+                                    <td className="py-1.5 pr-2"><input type="text" value={editCorrData.staffId} onChange={e => setEditCorrData(d => ({ ...d, staffId: e.target.value }))} className="w-20 bg-white border border-primary/40 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary/40" /></td>
+                                    <td className="py-1.5 pr-2"><input type="date" value={editCorrData.date} onChange={e => setEditCorrData(d => ({ ...d, date: e.target.value }))} className="bg-white border border-primary/40 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary/40" /></td>
+                                    <td className="py-1.5 pr-2">
+                                      <div className="flex items-center gap-1 flex-wrap">
+                                        <input type="number" min={1} max={6} value={editCorrData.punchCount} onChange={e => setEditCorrPunchCount(e.target.value)} className="w-10 bg-white border border-primary/40 rounded-lg px-1 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary/40" title="Punch count" />
+                                        {editCorrData.times.map((t, i) => (
+                                          <input key={i} type="time" step="1" value={t} onChange={e => setEditCorrTime(i, e.target.value)} className="bg-white border border-primary/40 rounded-lg px-1 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                                        ))}
+                                      </div>
+                                    </td>
+                                    <td className="py-1.5 pr-2 text-muted-foreground">—</td>
+                                    <td className="py-1.5 pr-2 text-muted-foreground">—</td>
+                                    <td className="py-1.5 pr-2 text-muted-foreground">{c.createdBy || '—'}</td>
+                                    <td className="py-1.5 pr-2 whitespace-nowrap">
+                                      <button onClick={saveEditCorrection} className="mr-2 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg bg-primary text-primary-foreground">Save</button>
+                                      <button onClick={() => setEditingCorrId(null)} className="text-[10px] text-muted-foreground hover:text-foreground">Cancel</button>
+                                    </td>
+                                  </>
+                                ) : (
+                                  <>
+                                    <td className="py-2 pr-3 font-bold">{c.staffId}</td>
+                                    <td className="py-2 pr-3">{c.date}</td>
+                                    <td className="py-2 pr-3 text-muted-foreground">{Array.isArray(c.times) && c.times.length > 0 ? c.times.join(', ') : '—'}</td>
+                                    <td className="py-2 pr-3">
+                                      <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${c.status === 'applied' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>{c.status}</span>
+                                    </td>
+                                    <td className="py-2 pr-3 text-muted-foreground">{c.appliedAt ? new Date(c.appliedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                                    <td className="py-2 pr-3 text-muted-foreground">{c.createdBy || '—'}</td>
+                                    <td className="py-2 pr-3 whitespace-nowrap">
+                                      {c.status === 'pending' && (
+                                        <button onClick={() => startEditCorrection(c)} className="mr-2 text-muted-foreground hover:text-primary transition-all" title="Edit"><Pencil size={12} /></button>
+                                      )}
+                                      <button onClick={() => deleteCorrection(c.id)} className="text-muted-foreground hover:text-destructive transition-all" title="Delete"><Trash2 size={12} /></button>
+                                    </td>
+                                  </>
+                                )}
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -2532,42 +2659,93 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   </div>
                 </div>
 
+                {/* Add a single row manually */}
+                <div className="border-t border-border/30 pt-4 space-y-2">
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Add a single record</p>
+                  <div className="flex flex-wrap gap-2 items-end">
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Staff ID</label>
+                      <input type="text" value={newDeptRow.staffId} onChange={e => setNewDeptRow(r => ({ ...r, staffId: e.target.value }))} placeholder="e.g. 30225" className="bg-muted/30 border border-border/50 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 w-36" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Department</label>
+                      <input type="text" value={newDeptRow.department} onChange={e => setNewDeptRow(r => ({ ...r, department: e.target.value }))} placeholder="e.g. Finance" className="bg-muted/30 border border-border/50 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 w-48" />
+                    </div>
+                    <button onClick={addDeptRow} disabled={savingNewDeptRow} className="px-4 py-2 text-xs font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground disabled:opacity-50 transition-all">
+                      {savingNewDeptRow ? 'Saving...' : 'Add'}
+                    </button>
+                  </div>
+                </div>
+
                 <div className="border-t border-border/30 pt-4">
                   {deptMappings.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground italic">No department mappings yet — import a file above or none has been added.</p>
+                    <p className="text-[11px] text-muted-foreground italic">No department mappings yet — import a file above or add a record manually.</p>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-[11px]">
-                        <thead>
-                          <tr className="text-left text-muted-foreground uppercase tracking-widest text-[9px] font-bold border-b border-border/30">
-                            <th className="py-2 pr-3">Staff ID</th><th className="py-2 pr-3">Department</th><th className="py-2 pr-3">Updated By</th><th className="py-2 pr-3">Updated At</th><th className="py-2 pr-3"></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {deptMappings.map(m => (
-                            <tr key={m.staffId} className="border-b border-border/10">
-                              <td className="py-2 pr-3 font-bold">{m.staffId}</td>
-                              <td className="py-2 pr-3">
-                                <input
-                                  type="text"
-                                  value={deptEditValues[m.staffId] ?? m.department}
-                                  onChange={(e) => setDeptEditValues(v => ({ ...v, [m.staffId]: e.target.value }))}
-                                  onBlur={() => { if ((deptEditValues[m.staffId] ?? m.department) !== m.department) saveDeptEdit(m.staffId); }}
-                                  onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                                  className="w-full bg-muted/30 border border-border/50 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    <div className="space-y-2">
+                      {deptSelectedIds.size > 0 && (
+                        <div className="flex items-center gap-3">
+                          <span className="text-[11px] text-muted-foreground">{deptSelectedIds.size} selected</span>
+                          <button onClick={bulkDeleteDeptMappings} className="flex items-center gap-1 text-[11px] font-black uppercase tracking-widest text-destructive hover:text-destructive/80 transition-all">
+                            <Trash2 size={12} /> Delete Selected
+                          </button>
+                          <button onClick={() => setDeptSelectedIds(new Set())} className="text-[11px] text-muted-foreground hover:text-foreground transition-all">Clear</button>
+                        </div>
+                      )}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[11px]">
+                          <thead>
+                            <tr className="text-left text-muted-foreground uppercase tracking-widest text-[9px] font-bold border-b border-border/30">
+                              <th className="py-2 pr-2 w-6">
+                                <input type="checkbox"
+                                  checked={deptMappings.length > 0 && deptSelectedIds.size === deptMappings.length}
+                                  onChange={() => setDeptSelectedIds(deptSelectedIds.size === deptMappings.length ? new Set() : new Set(deptMappings.map(m => m.staffId)))}
+                                  className="rounded"
                                 />
-                              </td>
-                              <td className="py-2 pr-3 text-muted-foreground">{m.updatedBy || '—'}</td>
-                              <td className="py-2 pr-3 text-muted-foreground">{m.updatedAt ? new Date(m.updatedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
-                              <td className="py-2 pr-3">
-                                <button onClick={() => removeDeptMapping(m.staffId)} className="text-muted-foreground hover:text-destructive transition-all" title="Remove">
-                                  <Trash2 size={13} />
-                                </button>
-                              </td>
+                              </th>
+                              <th className="py-2 pr-3">Staff ID</th><th className="py-2 pr-3">Department</th><th className="py-2 pr-3">Updated By</th><th className="py-2 pr-3">Updated At</th><th className="py-2 pr-3"></th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {deptMappings.map(m => (
+                              <tr key={m.staffId} className={`border-b border-border/10 ${deptSelectedIds.has(m.staffId) ? 'bg-primary/5' : ''}`}>
+                                <td className="py-2 pr-2">
+                                  <input type="checkbox" checked={deptSelectedIds.has(m.staffId)}
+                                    onChange={() => setDeptSelectedIds(prev => { const n = new Set(prev); n.has(m.staffId) ? n.delete(m.staffId) : n.add(m.staffId); return n; })}
+                                    className="rounded"
+                                  />
+                                </td>
+                                <td className="py-2 pr-3 font-bold">
+                                  <input
+                                    type="text"
+                                    value={deptStaffIdEdits[m.staffId] ?? m.staffId}
+                                    onChange={e => setDeptStaffIdEdits(v => ({ ...v, [m.staffId]: e.target.value }))}
+                                    onBlur={() => saveDeptStaffIdEdit(m.staffId)}
+                                    onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                                    className="w-24 bg-muted/30 border border-border/50 rounded-lg px-2 py-1 text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                  />
+                                </td>
+                                <td className="py-2 pr-3">
+                                  <input
+                                    type="text"
+                                    value={deptEditValues[m.staffId] ?? m.department}
+                                    onChange={e => setDeptEditValues(v => ({ ...v, [m.staffId]: e.target.value }))}
+                                    onBlur={() => { if ((deptEditValues[m.staffId] ?? m.department) !== m.department) saveDeptEdit(m.staffId); }}
+                                    onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                                    className="w-full bg-muted/30 border border-border/50 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                  />
+                                </td>
+                                <td className="py-2 pr-3 text-muted-foreground">{m.updatedBy || '—'}</td>
+                                <td className="py-2 pr-3 text-muted-foreground">{m.updatedAt ? new Date(m.updatedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                                <td className="py-2 pr-3">
+                                  <button onClick={() => removeDeptMapping(m.staffId)} className="text-muted-foreground hover:text-destructive transition-all" title="Remove">
+                                    <Trash2 size={13} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </div>

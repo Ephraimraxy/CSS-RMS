@@ -5367,6 +5367,42 @@ app.post('/api/attendance-corrections', authenticateToken, async (req, res) => {
   } catch (error) { sendError(res, 500, error.message); }
 });
 
+// PATCH /api/attendance-corrections/:id — Super Admin only: edit a pending correction
+app.patch('/api/attendance-corrections/:id', authenticateToken, async (req, res) => {
+  if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
+  try {
+    await ensureCorrectionsTable();
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid ID.' });
+    const staffId = String(req.body?.staffId || '').trim();
+    const date = String(req.body?.date || '').trim();
+    const times = Array.isArray(req.body?.times)
+      ? req.body.times.map((t) => String(t || '').trim()).filter(Boolean)
+      : [];
+    if (!staffId || !date || times.length === 0) return res.status(400).json({ error: 'staffId, date, and at least one time are required.' });
+    const rows = await prisma.$queryRaw`
+      UPDATE "PendingAttendanceCorrection"
+      SET "staffId" = ${staffId}, "date" = ${date}, "times" = ${JSON.stringify(times)}::jsonb
+      WHERE "id" = ${id} AND "status" = 'pending'
+      RETURNING "id", "staffId", "date", "times", "status", "createdBy", "createdAt", "appliedAt"
+    `;
+    if (!rows.length) return res.status(404).json({ error: 'Correction not found or already applied.' });
+    res.json({ ok: true, correction: rows[0] });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// DELETE /api/attendance-corrections/:id — Super Admin only: remove one correction
+app.delete('/api/attendance-corrections/:id', authenticateToken, async (req, res) => {
+  if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
+  try {
+    await ensureCorrectionsTable();
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid ID.' });
+    await prisma.$executeRaw`DELETE FROM "PendingAttendanceCorrection" WHERE "id" = ${id}`;
+    res.json({ ok: true });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
 // POST /api/sync/corrections-applied — called by the desktop app itself once
 // it has actually folded a correction into a real Extract run locally, NOT
 // by a logged-in admin — same shared-secret auth as the heartbeat, matching
@@ -5455,6 +5491,39 @@ app.delete('/api/staff-departments/:staffId', authenticateToken, async (req, res
     const staffId = String(req.params.staffId || '').trim();
     await prisma.$executeRaw`DELETE FROM "StaffDepartmentMapping" WHERE "staffId" = ${staffId}`;
     res.json({ ok: true });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// POST /api/staff-departments — Super Admin only: upsert a single mapping (used for inline add / staffId rename)
+app.post('/api/staff-departments', authenticateToken, async (req, res) => {
+  if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
+  try {
+    await ensureStaffDepartmentsTable();
+    const staffId = String(req.body?.staffId || '').trim();
+    const department = String(req.body?.department || '').trim();
+    if (!staffId) return res.status(400).json({ error: 'staffId is required.' });
+    const updatedBy = req.user?.email || req.user?.name || 'admin';
+    const rows = await prisma.$queryRaw`
+      INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "updatedBy", "updatedAt")
+      VALUES (${staffId}, ${department}, ${updatedBy}, now())
+      ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
+      RETURNING "staffId", "department", "updatedBy", "updatedAt"
+    `;
+    res.json({ ok: true, mapping: rows[0] });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// DELETE /api/staff-departments — Super Admin only: bulk-delete by array of staffIds (body: {staffIds:[...]})
+app.delete('/api/staff-departments', authenticateToken, async (req, res) => {
+  if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
+  try {
+    await ensureStaffDepartmentsTable();
+    const ids = Array.isArray(req.body?.staffIds) ? req.body.staffIds.map((s) => String(s).trim()).filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ error: 'No staffIds provided.' });
+    for (const id of ids) {
+      await prisma.$executeRaw`DELETE FROM "StaffDepartmentMapping" WHERE "staffId" = ${id}`;
+    }
+    res.json({ ok: true, deleted: ids.length });
   } catch (error) { sendError(res, 500, error.message); }
 });
 
