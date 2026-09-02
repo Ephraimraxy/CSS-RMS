@@ -14,8 +14,12 @@
 - **Document Studio** — An in-browser Word/Excel/PowerPoint-equivalent for drafting memos and requisition content, with offline autosave and export to real Office file formats.
 - **HR Portal** — Employee directory, leave, attendance, payroll, recruitment (a largely separate module under the same login).
 - **Departments & Sub-Accounts** — Every login is a "Department" record (including the Super Admin, which is itself a Department row named "Super Admin" — see §6 gotcha). Departments can spawn Sub-Accounts (delegated sub-units with restricted privileges).
-- **ICC (Internal Control & Compliance) Oversight** — A department with special global-observer powers that can freeze/vet any requisition regardless of normal routing.
-- **Audit Override / Re-approval Escalation** — Audit or ICC can revise a requisition's price before approval; if the revision pushes the amount above the original approver's authority, the system force-routes it to a higher authority tier automatically.
+- **ICC (Internal Control & Compliance) Oversight** — A department with special global-observer powers that can freeze/vet any requisition regardless of normal routing. ICC review of cash payments is configurable: by default, ICC must clear every cash payment before Account can disburse; the Super Admin can set a per-actor direct-pay limit (Account, CEO/Chairman) so that payments below that threshold bypass ICC automatically.
+- **Audit Override / Re-approval Escalation** — Audit or ICC can revise a requisition's price before or after approval; if the revision pushes the amount above the original approver's authority, the system force-routes it to a higher authority tier automatically.
+- **Department Self-Approval** — An optional setting that lets small cash requests (below a configured limit) be auto-approved at department level, skipping the HR/GM/CEO chain entirely. Smart escalation applies: if Audit later raises the amount above the limit, the system automatically flags it and blocks treatment until the correct authority confirms.
+
+**How to classify this system:**
+CSS RMS is a **SaaS** (Software as a Service) application — hosted, browser-based, no installation needed. Within the enterprise software taxonomy it sits in the **Procure-to-Pay (P2P) / Expenditure Authorization** category: its job is managing *who can approve what spending, in what order*, not tracking physical stock. It is **not** an Inventory Management System — the "Material Request" module covers the approval workflow for requesting materials (who authorizes it, how much it costs), not tracking warehouse quantities or stock levels. An IMS sits downstream: after CSS RMS approves and pays for something, an IMS would track where those goods go.
 
 ---
 
@@ -118,8 +122,9 @@ A `Requisition` is Cash, Material, or (for the Memo subtype) just a routed docum
 | `targetDepartmentId` | Where the request was last **forwarded** through the normal approval chain |
 | `currentVettingDeptId` | Where the request **actually is right now** if it's gone through an ICC/Audit vetting detour. **This is different from `targetDepartmentId` and the two can disagree** — see the gotcha in §6. |
 | `hasAuditOverride` / `auditAmount` | Audit revised the amount pre-approval |
-| `hasIccOverride` / `iccOverrideAmount` | ICC revised the amount post-approval — **takes priority over Audit's figure when both exist**. On the **frontend**, this precedence is centralized in `rms_frontend/src/lib/requisitionDisplay.js`'s `getEffectiveAmount(req)` — every component that needs to show "what's the real amount" should call this, not re-derive it. On the **backend**, the equivalent logic still lives inline in the PDF generator in `serve.js` (not yet unified with the frontend helper — different runtime, can't literally share the JS module, but the *rule* must stay in sync if it ever changes). |
-| `needsReapproval` / `reapprovalAuthority` | Set when a price revision pushes the amount above the original approver's authority tier — blocks treatment until a higher authority confirms |
+| `hasIccOverride` / `iccOverrideAmount` | ICC revised the amount post-approval — **takes priority over Audit's figure when both exist**. On the **frontend**, this precedence is centralized in `rms_frontend/src/lib/requisitionDisplay.js`'s `getEffectiveAmount(req)` — every component that needs to show "what's the real amount" should call this, not re-derive it. On the **backend**, `getEffectiveReqAmount()` in `rms_backend/lib/businessRules.js` mirrors the same rule. If this priority ever changes, update both. |
+| `isSelfApproved` | `true` when the dept self-approval feature auto-approved the request — the requesting department bypassed HR/GM/CEO. The re-approval escalation logic uses this flag to check against the system's `dept_self_approval_limit` setting instead of normal authority bands. |
+| `needsReapproval` / `reapprovalAuthority` | Set when a price revision pushes the amount above the original approver's authority tier (or above the self-approval limit for self-approved requests) — blocks treatment until the correct tier confirms. The reason string is descriptive and appears verbatim in the UI. |
 | `treatedByDeptId` / `treatedAt` | Final disbursement/fulfillment recorded |
 
 **The vetting detour, explained simply:** normally a requisition flows Creator → Department A → Department B → ... → Final Approver → Treated. ICC (and Audit, for price checks) can intercept this at any point and pull the request into a side-loop for verification. While it's in that loop, `currentVettingDeptId` tracks its real location, but `targetDepartmentId` stays frozen at whatever it was before the detour started. **Any UI that shows "where is this request right now" must check `currentVettingDeptId` first and only fall back to `targetDepartmentId` if the request isn't currently in a vetting detour and hasn't been treated/published.** This exact bug (showing the frozen `targetDepartmentId` instead of the live location) was found and fixed independently in three different places before being unified — see `getLiveTrailDepartment(req, departments)` in `rms_frontend/src/lib/requisitionDisplay.js`, which is now the single source of truth for this on the frontend.
@@ -313,15 +318,61 @@ Chat messages are delivered in real-time over SSE (the same `/api/events` stream
 
 ---
 
-## 14. Workflow Builder
+## 14. Workflow Builder & System Feature Settings
 
-The approval chain is not hardcoded — it is configured by the Super Admin through the Workflow Builder. A "stage" is one step in the chain, referencing a department that must act (approve/forward/reject) before the request moves to the next stage.
+The Workflow Builder (`WorkflowBuilder.jsx`) is the Super Admin control panel for two things: (1) the approval stage chain, and (2) a broad set of system-wide feature flags stored in the `SystemSetting` table.
+
+### 14.1 Approval stages
+
+The approval chain is not hardcoded — it is configured by the Super Admin. A "stage" is one step in the chain, referencing a department that must act (approve/forward/reject) before the request moves to the next stage.
 
 - `/api/workflow-stages` (GET) — fetch the current ordered stage list
 - `/api/workflow-stages` (POST) — create or reorder stages (admin only)
 - `/api/requisition-types` — create/delete named requisition types (e.g. "Cash Advance", "Material Request") that appear in the "Type" dropdown when creating a requisition
 
 **Important:** the workflow is global — one chain for the entire system. There is no per-department or per-type routing yet. If this changes, the domain model in §4 will need to be re-read carefully because `targetDepartmentId` and `currentVettingDeptId` semantics are built around a single linear chain.
+
+### 14.2 Authority tiers (hardcoded in `rms_backend/lib/businessRules.js`)
+
+Cash requisition approval authority is tiered by amount. These thresholds are hardcoded (not DB-stored) in `checkFinalApproveAuthority()` and `requiredAuthorityTier()`:
+
+| Tier | Dept name pattern | Cash amount band |
+|---|---|---|
+| HR | `/\bhr\b|human\s*resource/i` | ≤ ₦50,000 |
+| GM | `/general\s*manager|\bgm\b/i` | ₦50,001 – ₦100,000 |
+| CEO/Chairman | `/ceo|chairman/i` | Any amount (full authority) |
+
+Material requests have no cash threshold — any tier can approve regardless of amount.
+
+**Dept self-approval (configurable):** An optional tier below the authority chain. When enabled via System Settings, cash requests at or below the configured limit are auto-approved by the requesting department itself — `finalApprovalStatus` is set to `'approved'` and `isSelfApproved` to `true` at submission time. The request then flows directly to Audit → ICC → Account. Smart escalation: if Audit raises the amount above the limit, `needsReapproval` is set automatically and treatment is blocked until the correct tier (HR/GM/CEO) re-approves. Logic lives in `checkAndApplyReapprovalEscalation()` in `serve.js`.
+
+### 14.3 System Settings (feature flags)
+
+All stored as key/value rows in `SystemSetting`. Managed via `settingsAPI.get/set`. Key settings:
+
+| Setting key | What it controls |
+|---|---|
+| `dept_self_approval_enabled` | `'true'` / `'false'` — enables the department self-approval feature |
+| `dept_self_approval_limit` | The ₦ ceiling for self-approval (e.g. `'20000'`). Only applies when enabled. |
+| `icc_bypass_account_enabled` | Whether Account can pay without ICC for small amounts |
+| `icc_bypass_account_threshold_amount` | ₦ limit for Account's ICC bypass (Account pays directly up to this amount) |
+| `icc_bypass_ceo_enabled` | Whether CEO/Chairman can pay without ICC for small amounts |
+| `icc_bypass_ceo_threshold_amount` | ₦ limit for CEO's ICC bypass |
+| `document_studio_enabled` | Show/hide Document Studio for all users |
+| `hr_portal_enabled` | Show/hide HR Portal for department users |
+| `hr_portal_admin_enabled` | Show/hide HR Portal for the Super Admin |
+| `store_records_enabled` | Enable the Store Records module |
+| `heads_can_manage_subaccounts` | Let department heads manage their own sub-accounts |
+| `heads_can_set_subaccount_privileges` | Let heads set privileges on their sub-accounts |
+| `icc_oversight_enabled` | Global ICC observer mode |
+| `oversight_departments` | JSON array of dept IDs with oversight access |
+| `dept_creation_head_details_enabled` | Whether creating a department prompts for head details |
+| `admin_create_fund_enabled` | Allow Super Admin to submit fund requests directly |
+| `admin_create_material_enabled` | Allow Super Admin to submit material requests directly |
+| `admin_create_memo_enabled` | Allow Super Admin to submit memos directly |
+| `login_style` | `'standard'` or `'premium'` login page style |
+
+**ICC gate for cash payments (how it works):** ICC review applies only to cash requests, never memos or material requests. By default ICC must clear every cash payment before Account or CEO/Chairman can disburse. The `icc_bypass_*` settings allow bypassing ICC up to a threshold — below the threshold the actor pays directly; above it ICC is still required. If both `icc_bypass_account_enabled` and `icc_bypass_account_threshold_amount` are set with a positive value, Account can pay directly for any request whose effective amount is at or below that threshold.
 
 ---
 
