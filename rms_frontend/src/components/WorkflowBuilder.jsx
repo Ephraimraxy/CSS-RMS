@@ -1268,7 +1268,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 <div className="space-y-2">
                   <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Also alert these departments (in addition to Super Admin):</p>
                   <div className="flex flex-wrap gap-2">
-                    {departments.filter(d => !d.isSubAccount).map(dept => {
+                    {allDepts.filter(d => !d.isSubAccount).map(dept => {
                       const selected = priorityEscalationDeptIds.includes(dept.id);
                       return (
                         <button
