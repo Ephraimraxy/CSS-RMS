@@ -341,6 +341,9 @@ const WorkflowBuilder = ({ onViewChange }) => {
   // empty/blank means ICC is ALWAYS required for every cash payment.
   const [accountDirectPayLimit, setAccountDirectPayLimit]         = useState('');
   const [ceoDirectPayLimit, setCeoDirectPayLimit]                 = useState('');
+  // Dept self-approval: when enabled + limit set, cash requests ≤ limit skip HR/GM/CEO approval
+  const [deptSelfApprovalEnabled, setDeptSelfApprovalEnabled]     = useState(false);
+  const [deptSelfApprovalLimit, setDeptSelfApprovalLimit]         = useState('');
   const [adminCreateFundEnabled, setAdminCreateFundEnabled]       = useState(false);
   const [adminCreateMaterialEnabled, setAdminCreateMaterialEnabled] = useState(false);
   const [adminCreateMemoEnabled, setAdminCreateMemoEnabled]       = useState(false);
@@ -508,6 +511,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         studioRes, hrRes, hrAdminRes, loginRes, storeRes, headsManageRes, headsPrivRes, iccOversightRes, oversightDeptsRes, deptHeadDetailsRes,
         accountThreshAmountRes, ceoThreshAmountRes,
         adminCreateFundRes, adminCreateMaterialRes, adminCreateMemoRes,
+        deptSelfApprovalEnabledRes, deptSelfApprovalLimitRes,
       ] = await Promise.allSettled([
         settingsAPI.get('document_studio_enabled'),
         settingsAPI.get('hr_portal_enabled'),
@@ -524,6 +528,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.get('admin_create_fund_enabled'),
         settingsAPI.get('admin_create_material_enabled'),
         settingsAPI.get('admin_create_memo_enabled'),
+        settingsAPI.get('dept_self_approval_enabled'),
+        settingsAPI.get('dept_self_approval_limit'),
       ]);
       if (studioRes.status === 'fulfilled' && studioRes.value?.value !== undefined)
         setStudioEnabled(studioRes.value.value !== 'false');
@@ -562,6 +568,12 @@ const WorkflowBuilder = ({ onViewChange }) => {
         setAdminCreateMaterialEnabled(adminCreateMaterialRes.value.value === 'true');
       if (adminCreateMemoRes.status === 'fulfilled' && adminCreateMemoRes.value?.value !== undefined)
         setAdminCreateMemoEnabled(adminCreateMemoRes.value.value === 'true');
+      if (deptSelfApprovalEnabledRes.status === 'fulfilled' && deptSelfApprovalEnabledRes.value?.value !== undefined)
+        setDeptSelfApprovalEnabled(deptSelfApprovalEnabledRes.value.value === 'true');
+      if (deptSelfApprovalLimitRes.status === 'fulfilled') {
+        const v = parseFloat(deptSelfApprovalLimitRes.value?.value);
+        setDeptSelfApprovalLimit(!isNaN(v) && v > 0 ? String(v) : '');
+      }
     } catch {}
 
     // Load Turnstile required depts separately (JSON array)
@@ -616,6 +628,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
       toast.error('CEO/Chairman direct-pay limit must be a valid amount greater than ₦0, or leave it blank to always require ICC.');
       return;
     }
+    if (deptSelfApprovalEnabled && (deptSelfApprovalLimit === '' || isNaN(parseFloat(deptSelfApprovalLimit)) || parseFloat(deptSelfApprovalLimit) <= 0)) {
+      toast.error('Please enter a valid self-approval limit greater than ₦0, or turn the setting off.');
+      return;
+    }
     setSavingFeatures(true);
     try {
       await Promise.all([
@@ -640,6 +656,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.set('admin_create_fund_enabled', String(adminCreateFundEnabled)),
         settingsAPI.set('admin_create_material_enabled', String(adminCreateMaterialEnabled)),
         settingsAPI.set('admin_create_memo_enabled', String(adminCreateMemoEnabled)),
+        settingsAPI.set('dept_self_approval_enabled', String(deptSelfApprovalEnabled)),
+        settingsAPI.set('dept_self_approval_limit', deptSelfApprovalEnabled && deptSelfApprovalLimit !== '' ? String(parseFloat(deptSelfApprovalLimit)) : '0'),
       ]);
       toast.success('Feature settings saved.');
       window.dispatchEvent(new CustomEvent('rms:flags:updated'));
@@ -1107,6 +1125,70 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 </div>
               </div>
 
+              {/* Department Self-Approval Limit */}
+              <div className={`lg:col-span-2 p-5 rounded-2xl border-2 transition-all space-y-5 ${deptSelfApprovalEnabled ? 'border-green-300 bg-green-50/50' : 'border-border/50 bg-white/80'}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <p className="text-sm font-black text-foreground flex items-center gap-2">
+                      <CheckCircle2 size={15} className={deptSelfApprovalEnabled ? 'text-green-600 shrink-0' : 'text-muted-foreground shrink-0'} />
+                      Department Self-Approval Limit
+                    </p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed max-w-2xl">
+                      When turned ON, cash fund requests <strong>at or below the set amount</strong> are automatically approved by the requesting department — no HR, GM, or CEO/Chairman sign-off required.
+                      The request goes straight to <strong>Audit → ICC → Account</strong> for processing.
+                    </p>
+                    <p className="text-[11px] font-semibold text-amber-700 leading-relaxed max-w-2xl">
+                      ⚠ Smart escalation: if Audit revises the amount above this limit, the system will automatically flag it and route it to the correct authority (HR / GM / CEO) for re-approval before Account can treat it.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDeptSelfApprovalEnabled(v => !v)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${deptSelfApprovalEnabled ? 'bg-green-500' : 'bg-muted'}`}
+                  >
+                    <span className={`inline-block h-5 w-5 rounded-full bg-white shadow-md transform transition-transform ${deptSelfApprovalEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </button>
+                </div>
+
+                {deptSelfApprovalEnabled && (
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                        Maximum amount a department can self-approve (cash requests only):
+                      </label>
+                      <div className="relative max-w-xs">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-muted-foreground">₦</span>
+                        <input
+                          type="number" min="1" step="1"
+                          value={deptSelfApprovalLimit}
+                          onChange={e => setDeptSelfApprovalLimit(e.target.value)}
+                          placeholder="e.g. 20000"
+                          className="w-full bg-white border-2 border-green-300 rounded-xl pl-8 pr-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-300 placeholder:text-[11px] placeholder:text-muted-foreground/60"
+                        />
+                      </div>
+                    </div>
+                    {(() => {
+                      const parsed = parseFloat(deptSelfApprovalLimit);
+                      const hasLimit = deptSelfApprovalLimit !== '' && !isNaN(parsed) && parsed > 0;
+                      return (
+                        <div className={`rounded-xl p-3 text-[10px] leading-relaxed space-y-1 ${hasLimit ? 'bg-green-100 border border-green-200 text-green-900' : 'bg-amber-50 border border-amber-200 text-amber-800'}`}>
+                          {hasLimit ? (
+                            <>
+                              <p className="font-bold">✓ With this limit active:</p>
+                              <p>· Cash requests <strong>≤ ₦{parsed.toLocaleString()}</strong> → dept self-approved instantly, skip HR/GM/CEO, go to Audit → ICC → Account</p>
+                              <p>· Cash requests <strong>&gt; ₦{parsed.toLocaleString()}</strong> → follow the normal approval chain (HR / GM / CEO)</p>
+                              <p>· If Audit raises a self-approved amount above ₦{parsed.toLocaleString()} → system flags it and routes to the correct authority for re-approval</p>
+                            </>
+                          ) : (
+                            <p className="font-semibold">Enter an amount above to define the self-approval ceiling.</p>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+
               {/* Login Screen Style — spans both columns */}
               <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
                 <div className="flex items-center gap-3">
@@ -1155,6 +1237,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 { label: 'Dept Creation Includes Head Details', value: deptCreationHeadDetailsEnabled },
                 { label: 'Account ICC Bypass', value: accountDirectPayLimit !== '' && parseFloat(accountDirectPayLimit) > 0, customLabel: accountDirectPayLimit !== '' && parseFloat(accountDirectPayLimit) > 0 ? `Up to ₦${Number(accountDirectPayLimit).toLocaleString()}` : 'Always required' },
                 { label: 'CEO/Chairman ICC Bypass', value: ceoDirectPayLimit !== '' && parseFloat(ceoDirectPayLimit) > 0, customLabel: ceoDirectPayLimit !== '' && parseFloat(ceoDirectPayLimit) > 0 ? `Up to ₦${Number(ceoDirectPayLimit).toLocaleString()}` : 'Always required' },
+                { label: 'Dept Self-Approval', value: deptSelfApprovalEnabled && parseFloat(deptSelfApprovalLimit) > 0, customLabel: deptSelfApprovalEnabled && parseFloat(deptSelfApprovalLimit) > 0 ? `Up to ₦${Number(deptSelfApprovalLimit).toLocaleString()}` : 'Off' },
                 { label: 'Admin Create Fund', value: adminCreateFundEnabled },
                 { label: 'Admin Create Material', value: adminCreateMaterialEnabled },
                 { label: 'Admin Create Memo', value: adminCreateMemoEnabled },

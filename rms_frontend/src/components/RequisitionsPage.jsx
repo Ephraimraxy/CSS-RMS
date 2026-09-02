@@ -3946,6 +3946,15 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                 </div>
               )}
 
+              {/* Self-approved badge — shows when a dept self-approved (no HR/GM/CEO sign-off needed) */}
+              {detail?.isSelfApproved && !detail?.needsReapproval && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-50 border border-green-200 text-green-800">
+                  <span className="text-[10px]">✓</span>
+                  <p className="text-[10px] font-bold uppercase tracking-widest">Dept Self-Approved</p>
+                  <p className="text-[10px] text-green-700/70 ml-auto">No HR/GM/CEO sign-off required for this amount</p>
+                </div>
+              )}
+
               {/* Re-approval required — a later price revision pushed the effective amount past
                   the band of whoever already gave final approval. Blocks treatment server-side
                   regardless of this banner; the button only appears for whoever can clear it. */}

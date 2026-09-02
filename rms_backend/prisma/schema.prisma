@@ -161,6 +161,7 @@ model Requisition {
   // silently letting Account treat an amount nobody at the right authority signed off on,
   // the request gets flagged here and treatment is blocked until the correct tier confirms.
   needsReapproval      Boolean   @default(false)
+  isSelfApproved       Boolean   @default(false)  // dept self-approved (skipped HR/GM/CEO chain)
   reapprovalAuthority  String?   // 'gm' | 'chairman' — tier required to clear the flag
   reapprovalReason     String?   @db.Text
   reapprovedAt         DateTime?

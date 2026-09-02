@@ -161,6 +161,28 @@ async function checkAndApplyReapprovalEscalation(requisitionId, newAmount, isMat
   // revision (a different amount) should trigger a fresh escalation.
   if (requisition.reapprovedAt && requisition.reapprovedAmount === newAmount) return null;
 
+  // Self-approved requests: compare against the dept self-approval limit, not authority bands
+  if (requisition.isSelfApproved) {
+    const selfLimitSetting = await prisma.systemSetting.findUnique({ where: { key: 'dept_self_approval_limit' } });
+    const selfLimit = parseFloat(selfLimitSetting?.value || '0') || 0;
+    if (newAmount <= selfLimit) {
+      if (requisition.needsReapproval) {
+        await prisma.requisition.update({
+          where: { id: requisitionId },
+          data: { needsReapproval: false, reapprovalAuthority: null, reapprovalReason: null }
+        });
+      }
+      return null;
+    }
+    const requiredTier = requiredAuthorityTier(newAmount, isMaterial);
+    const reason = `Department self-approved at ₦${Number(requisition.amount).toLocaleString()}, but ${triggeredByLabel} revised the amount to ₦${Number(newAmount).toLocaleString()} — this now exceeds the ₦${selfLimit.toLocaleString()} self-approval limit and requires ${requiredTier.toUpperCase()} re-approval before treatment.`;
+    await prisma.requisition.update({
+      where: { id: requisitionId },
+      data: { needsReapproval: true, reapprovalAuthority: requiredTier, reapprovalReason: reason }
+    });
+    return { requiredTier, reason };
+  }
+
   const stillAuthorized = checkFinalApproveAuthority(requisition.finalApprovedByDept.name, newAmount, isMaterial);
   if (stillAuthorized) {
     if (requisition.needsReapproval) {
@@ -4494,6 +4516,33 @@ app.post('/api/requisitions', authenticateToken, generalLimiter, async (req, res
       }
 
       createdRecords.push(created);
+
+      // ── Dept self-approval: auto-approve cash requests at or below the configured limit ──
+      if (!isDraft && isCashPayload && amount > 0) {
+        try {
+          const [selfEnabledSetting, selfLimitSetting] = await Promise.all([
+            prisma.systemSetting.findUnique({ where: { key: 'dept_self_approval_enabled' } }),
+            prisma.systemSetting.findUnique({ where: { key: 'dept_self_approval_limit' } }),
+          ]);
+          if (selfEnabledSetting?.value === 'true') {
+            const selfLimit = parseFloat(selfLimitSetting?.value || '0') || 0;
+            if (selfLimit > 0 && amount <= selfLimit) {
+              const selfApproved = await prisma.requisition.update({
+                where: { id: created.id },
+                data: {
+                  finalApprovalStatus: 'approved',
+                  finalApprovedByDeptId: originDeptId,
+                  finalApprovedAt: new Date(),
+                  isSelfApproved: true,
+                  finalApprovedNote: `Auto self-approved by department — within ₦${selfLimit.toLocaleString()} self-approval limit`,
+                },
+              });
+              createdRecords[createdRecords.length - 1] = selfApproved;
+            }
+          }
+        } catch (selfErr) { logger.warn('[SELF-APPROVE] Auto self-approval failed:', selfErr.message); }
+      }
+      // ────────────────────────────────────────────────────────────────────────────────────
 
       // Fire post-creation notifications asynchronously — do NOT await before responding
       if (!isDraft) {
