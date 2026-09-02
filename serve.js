@@ -4924,6 +4924,18 @@ app.get('/api/admin/vps-guide', authenticateToken, requireRoles(['global_admin']
   }
 });
 
+app.get('/api/admin/operator-guide', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const docPath = path.join(__dirname, 'OPERATOR_GUIDE.md');
+    const content = fs.readFileSync(docPath, 'utf8');
+    const stats = fs.statSync(docPath);
+    res.json({ content, updatedAt: stats.mtime });
+  } catch (err) {
+    logger.error('[OPERATOR GUIDE GET]', err.message);
+    res.status(500).json({ error: 'Failed to load operator guide.' });
+  }
+});
+
 app.get('/api/admin/deploy-history', authenticateToken, requireRoles(['global_admin']), (req, res) => {
   const logPath = path.join(__dirname, 'deploy-history.log');
   try {
