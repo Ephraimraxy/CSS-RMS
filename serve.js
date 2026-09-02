@@ -203,6 +203,117 @@ async function checkAndApplyReapprovalEscalation(requisitionId, newAmount, isMat
   return { requiredTier, reason };
 }
 
+// ── Priority escalation checker ───────────────────────────────────────────────
+// Runs on a background interval. For every active cash/material request whose
+// urgency has a configured time limit, checks whether the request has been sitting
+// at its current stage longer than that limit. If so, sends an escalation alert
+// (in-app + email) to the Super Admin and any admin-selected departments.
+// Re-alerts on the same interval until someone takes action (lastActionAt advances).
+async function runPriorityEscalationCheck() {
+  try {
+    const [normalSetting, urgentSetting, criticalSetting, deptsSetting] = await Promise.all([
+      prisma.systemSetting.findUnique({ where: { key: 'priority_time_limit_normal' } }),
+      prisma.systemSetting.findUnique({ where: { key: 'priority_time_limit_urgent' } }),
+      prisma.systemSetting.findUnique({ where: { key: 'priority_time_limit_critical' } }),
+      prisma.systemSetting.findUnique({ where: { key: 'priority_escalation_dept_ids' } }),
+    ]);
+
+    const limits = {
+      normal:   parseFloat(normalSetting?.value   || '0') || 0,
+      urgent:   parseFloat(urgentSetting?.value   || '0') || 0,
+      critical: parseFloat(criticalSetting?.value || '0') || 0,
+    };
+
+    const activeUrgencies = Object.keys(limits).filter(k => limits[k] > 0);
+    if (activeUrgencies.length === 0) return; // No limits configured — nothing to do
+
+    let escalationDeptIds = [];
+    try { escalationDeptIds = JSON.parse(deptsSetting?.value || '[]').map(Number).filter(Boolean); } catch { escalationDeptIds = []; }
+
+    const now = new Date();
+
+    const activeReqs = await prisma.requisition.findMany({
+      where: {
+        status: { not: 'draft' },
+        finalApprovalStatus: { notIn: ['treated', 'published'] },
+        urgency: { in: activeUrgencies },
+      },
+      include: {
+        department: { select: { id: true, name: true } },
+        targetDepartment: { select: { id: true, name: true } },
+      },
+    });
+
+    for (const req of activeReqs) {
+      const limitMinutes = limits[req.urgency];
+      if (!limitMinutes) continue;
+
+      const lastAction = req.lastActionAt || req.createdAt || now;
+      const minutesSinceAction = (now - new Date(lastAction)) / 60000;
+      if (minutesSinceAction < limitMinutes) continue; // Not yet overdue
+
+      // Throttle: only re-alert after the same interval has passed again
+      const lastEscalated = req.priorityEscalatedAt ? new Date(req.priorityEscalatedAt) : null;
+      const minutesSinceAlert = lastEscalated ? (now - lastEscalated) / 60000 : Infinity;
+      if (minutesSinceAlert < limitMinutes) continue; // Too soon to repeat
+
+      const currentHolder = req.targetDepartment?.name || req.department?.name || 'Unknown Department';
+      const totalMins = Math.floor(minutesSinceAction);
+      const hrs = Math.floor(totalMins / 60);
+      const mins = totalMins % 60;
+      const waitStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins} minutes`;
+      const urgencyLabel = req.urgency.toUpperCase();
+
+      const subject = `⚠️ [${urgencyLabel}] Requisition Delayed ${waitStr} — Action Required`;
+      const lines = [
+        `Priority: ${urgencyLabel}`,
+        `Request: ${req.title || 'Untitled'}${req.refCode ? ` (Ref: ${req.refCode})` : ` (#${req.id})`}`,
+        `Type: ${req.type}`,
+        req.amount != null ? `Amount: ₦${Number(req.amount).toLocaleString()}` : null,
+        `Submitted by: ${req.department?.name || 'Unknown'}`,
+        `Currently held by: ${currentHolder}`,
+        `Waiting: ${waitStr} (allowed limit: ${limitMinutes} minutes)`,
+        ``,
+        `This ${urgencyLabel} request has exceeded its response time limit. Please take immediate action or escalate to the appropriate authority.`,
+      ].filter(l => l !== null);
+
+      // Notify Super Admin user(s) in-app
+      try {
+        const adminUsers = await prisma.user.findMany({ where: { role: 'global_admin' }, select: { id: true } });
+        await Promise.all(adminUsers.map(u =>
+          prisma.notification.create({ data: { userId: u.id, content: subject, link: `/requisitions/${req.id}` } }).catch(() => {})
+        ));
+      } catch (_) {}
+
+      // Notify each configured escalation department (in-app + email)
+      for (const deptId of escalationDeptIds) {
+        await notifyDepartmentHead({ departmentId: deptId, requisition: req, subject, lines });
+      }
+
+      // Also notify the department currently holding the request (reminder to act)
+      const holderDeptId = req.targetDepartment?.id || req.department?.id;
+      if (holderDeptId && !escalationDeptIds.includes(holderDeptId)) {
+        await notifyDepartmentHead({
+          departmentId: holderDeptId, requisition: req,
+          subject: `⚠️ Action Overdue: ${urgencyLabel} request "${req.title || req.refCode || req.id}" has been waiting ${waitStr}`,
+          lines: [
+            `Priority: ${urgencyLabel}`,
+            `This request has been waiting with your department for ${waitStr}.`,
+            `Allowed limit for ${urgencyLabel} requests: ${limitMinutes} minutes.`,
+            `Please review and take action immediately.`,
+          ],
+        });
+      }
+
+      // Record escalation time to throttle repeats
+      await prisma.requisition.update({ where: { id: req.id }, data: { priorityEscalatedAt: now } });
+      logger.info(`[PRIORITY ESC] Escalated ${urgencyLabel} req #${req.id} (${waitStr} overdue, held by ${currentHolder})`);
+    }
+  } catch (err) {
+    logger.error('[PRIORITY ESC] Checker failed:', err.message);
+  }
+}
+
 // ── Sub-account privilege helpers ─────────────────────────────────────────────
 // getEffectiveReqAmount now lives in rms_backend/lib/businessRules.js (required above).
 
@@ -10902,6 +11013,14 @@ const server = app.listen(PORT, async () => {
 
       isSystemReady = true;
       logger.info('✅ [SYSTEM READY] Requisition Management Service fully operational.');
+
+      // ── Priority escalation background job ──────────────────────────────────
+      // Runs every 60 seconds. Only fires alerts when the admin has configured
+      // a time limit for a priority level — silent otherwise (zero overhead).
+      setInterval(runPriorityEscalationCheck, 60_000);
+      // Run once immediately so the first check doesn't wait a full minute
+      runPriorityEscalationCheck().catch(() => {});
+      // ────────────────────────────────────────────────────────────────────────
     }
   } catch (err) {
     logger.error('[BOOT CRITICAL] Database sync failed:', err.message);

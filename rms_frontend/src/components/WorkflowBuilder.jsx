@@ -344,6 +344,11 @@ const WorkflowBuilder = ({ onViewChange }) => {
   // Dept self-approval: when enabled + limit set, cash requests ≤ limit skip HR/GM/CEO approval
   const [deptSelfApprovalEnabled, setDeptSelfApprovalEnabled]     = useState(false);
   const [deptSelfApprovalLimit, setDeptSelfApprovalLimit]         = useState('');
+  // Priority escalation alerts: time limits (in minutes) per urgency level; blank = off
+  const [priorityLimitCritical, setPriorityLimitCritical]         = useState('');
+  const [priorityLimitUrgent, setPriorityLimitUrgent]             = useState('');
+  const [priorityLimitNormal, setPriorityLimitNormal]             = useState('');
+  const [priorityEscalationDeptIds, setPriorityEscalationDeptIds] = useState([]);
   const [adminCreateFundEnabled, setAdminCreateFundEnabled]       = useState(false);
   const [adminCreateMaterialEnabled, setAdminCreateMaterialEnabled] = useState(false);
   const [adminCreateMemoEnabled, setAdminCreateMemoEnabled]       = useState(false);
@@ -512,6 +517,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         accountThreshAmountRes, ceoThreshAmountRes,
         adminCreateFundRes, adminCreateMaterialRes, adminCreateMemoRes,
         deptSelfApprovalEnabledRes, deptSelfApprovalLimitRes,
+        priorityCriticalRes, priorityUrgentRes, priorityNormalRes, priorityEscDeptIdsRes,
       ] = await Promise.allSettled([
         settingsAPI.get('document_studio_enabled'),
         settingsAPI.get('hr_portal_enabled'),
@@ -530,6 +536,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.get('admin_create_memo_enabled'),
         settingsAPI.get('dept_self_approval_enabled'),
         settingsAPI.get('dept_self_approval_limit'),
+        settingsAPI.get('priority_time_limit_critical'),
+        settingsAPI.get('priority_time_limit_urgent'),
+        settingsAPI.get('priority_time_limit_normal'),
+        settingsAPI.get('priority_escalation_dept_ids'),
       ]);
       if (studioRes.status === 'fulfilled' && studioRes.value?.value !== undefined)
         setStudioEnabled(studioRes.value.value !== 'false');
@@ -573,6 +583,18 @@ const WorkflowBuilder = ({ onViewChange }) => {
       if (deptSelfApprovalLimitRes.status === 'fulfilled') {
         const v = parseFloat(deptSelfApprovalLimitRes.value?.value);
         setDeptSelfApprovalLimit(!isNaN(v) && v > 0 ? String(v) : '');
+      }
+      if (priorityCriticalRes.status === 'fulfilled') {
+        const v = parseFloat(priorityCriticalRes.value?.value); setPriorityLimitCritical(!isNaN(v) && v > 0 ? String(v) : '');
+      }
+      if (priorityUrgentRes.status === 'fulfilled') {
+        const v = parseFloat(priorityUrgentRes.value?.value); setPriorityLimitUrgent(!isNaN(v) && v > 0 ? String(v) : '');
+      }
+      if (priorityNormalRes.status === 'fulfilled') {
+        const v = parseFloat(priorityNormalRes.value?.value); setPriorityLimitNormal(!isNaN(v) && v > 0 ? String(v) : '');
+      }
+      if (priorityEscDeptIdsRes.status === 'fulfilled' && priorityEscDeptIdsRes.value?.value) {
+        try { setPriorityEscalationDeptIds(JSON.parse(priorityEscDeptIdsRes.value.value).map(Number)); } catch { setPriorityEscalationDeptIds([]); }
       }
     } catch {}
 
@@ -658,6 +680,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.set('admin_create_memo_enabled', String(adminCreateMemoEnabled)),
         settingsAPI.set('dept_self_approval_enabled', String(deptSelfApprovalEnabled)),
         settingsAPI.set('dept_self_approval_limit', deptSelfApprovalEnabled && deptSelfApprovalLimit !== '' ? String(parseFloat(deptSelfApprovalLimit)) : '0'),
+        settingsAPI.set('priority_time_limit_critical', priorityLimitCritical !== '' ? String(parseFloat(priorityLimitCritical)) : '0'),
+        settingsAPI.set('priority_time_limit_urgent',   priorityLimitUrgent   !== '' ? String(parseFloat(priorityLimitUrgent))   : '0'),
+        settingsAPI.set('priority_time_limit_normal',   priorityLimitNormal   !== '' ? String(parseFloat(priorityLimitNormal))   : '0'),
+        settingsAPI.set('priority_escalation_dept_ids', JSON.stringify(priorityEscalationDeptIds)),
       ]);
       toast.success('Feature settings saved.');
       window.dispatchEvent(new CustomEvent('rms:flags:updated'));
@@ -1189,6 +1215,85 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 )}
               </div>
 
+              {/* Priority Escalation Alerts */}
+              <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-red-200 bg-red-50/40 space-y-5">
+                <div className="space-y-1">
+                  <p className="text-sm font-black text-foreground flex items-center gap-2">
+                    <AlertCircle size={15} className="text-red-600 shrink-0" />
+                    Priority Escalation Alerts
+                  </p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed max-w-2xl">
+                    Set a maximum waiting time (in minutes) for each priority level. If a Cash or Material request sits at any stage without action for longer than the limit, the system sends an automatic escalation alert to the Super Admin and any departments you select below.
+                  </p>
+                  <p className="text-[11px] text-amber-700 font-semibold leading-relaxed">
+                    The alert repeats on the same interval until the department acts. Leave a field blank to disable escalation for that priority level.
+                  </p>
+                </div>
+
+                {/* Time limits per priority */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {[
+                    { key: 'critical', label: 'Critical', color: 'red',    value: priorityLimitCritical, set: setPriorityLimitCritical,   placeholder: 'e.g. 30' },
+                    { key: 'urgent',   label: 'Urgent',   color: 'amber',  value: priorityLimitUrgent,   set: setPriorityLimitUrgent,     placeholder: 'e.g. 120' },
+                    { key: 'normal',   label: 'Normal',   color: 'slate',  value: priorityLimitNormal,   set: setPriorityLimitNormal,     placeholder: 'e.g. 1440' },
+                  ].map(({ key, label, color, value, set, placeholder }) => {
+                    const parsed = parseFloat(value);
+                    const active = value !== '' && !isNaN(parsed) && parsed > 0;
+                    const hrs = active ? (parsed >= 60 ? `${Math.floor(parsed/60)}h ${parsed%60 > 0 ? `${Math.round(parsed%60)}m` : ''}`.trim() : `${parsed}m`) : null;
+                    return (
+                      <div key={key} className={`p-4 rounded-xl border-2 space-y-2 transition-all bg-white ${active ? `border-${color}-300` : 'border-border/40'}`}>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${key === 'critical' ? 'bg-red-500 animate-pulse' : key === 'urgent' ? 'bg-amber-500' : 'bg-slate-400'}`} />
+                          <p className="text-xs font-black text-foreground uppercase tracking-widest">{label}</p>
+                        </div>
+                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Max wait (minutes)</label>
+                        <div className="relative">
+                          <input
+                            type="number" min="1" step="1"
+                            value={value}
+                            onChange={e => set(e.target.value)}
+                            placeholder={placeholder}
+                            className={`w-full bg-muted/20 border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 placeholder:text-[10px] placeholder:text-muted-foreground/50 ${active ? `border-${color}-300 focus:ring-${color}-200` : 'border-border/60 focus:ring-muted'}`}
+                          />
+                        </div>
+                        <p className={`text-[9px] leading-relaxed ${active ? `text-${color === 'red' ? 'red' : color === 'amber' ? 'amber' : 'slate'}-700 font-semibold` : 'text-muted-foreground'}`}>
+                          {active ? `Alert fires after ${hrs} of inactivity, repeats every ${hrs} until acted on` : 'Off — no escalation for this level'}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Escalation recipient departments */}
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Also alert these departments (in addition to Super Admin):</p>
+                  <div className="flex flex-wrap gap-2">
+                    {departments.filter(d => !d.isSubAccount).map(dept => {
+                      const selected = priorityEscalationDeptIds.includes(dept.id);
+                      return (
+                        <button
+                          key={dept.id}
+                          type="button"
+                          onClick={() => setPriorityEscalationDeptIds(prev =>
+                            selected ? prev.filter(id => id !== dept.id) : [...prev, dept.id]
+                          )}
+                          className={`px-3 py-1.5 rounded-xl border-2 text-[10px] font-bold transition-all ${selected ? 'border-red-400 bg-red-50 text-red-700' : 'border-border/40 bg-white text-muted-foreground hover:border-red-200'}`}
+                        >
+                          {selected ? '✓ ' : ''}{dept.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {priorityEscalationDeptIds.length > 0 && (
+                    <p className="text-[10px] text-red-700 font-semibold">
+                      {priorityEscalationDeptIds.length} department{priorityEscalationDeptIds.length !== 1 ? 's' : ''} selected to receive escalation alerts.
+                      <button type="button" className="ml-2 underline opacity-70 hover:opacity-100" onClick={() => setPriorityEscalationDeptIds([])}>Clear all</button>
+                    </p>
+                  )}
+                  <p className="text-[10px] text-muted-foreground">Super Admin always receives alerts — you cannot remove them. The department currently holding the request also gets a reminder automatically.</p>
+                </div>
+              </div>
+
               {/* Login Screen Style — spans both columns */}
               <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
                 <div className="flex items-center gap-3">
@@ -1238,6 +1343,9 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 { label: 'Account ICC Bypass', value: accountDirectPayLimit !== '' && parseFloat(accountDirectPayLimit) > 0, customLabel: accountDirectPayLimit !== '' && parseFloat(accountDirectPayLimit) > 0 ? `Up to ₦${Number(accountDirectPayLimit).toLocaleString()}` : 'Always required' },
                 { label: 'CEO/Chairman ICC Bypass', value: ceoDirectPayLimit !== '' && parseFloat(ceoDirectPayLimit) > 0, customLabel: ceoDirectPayLimit !== '' && parseFloat(ceoDirectPayLimit) > 0 ? `Up to ₦${Number(ceoDirectPayLimit).toLocaleString()}` : 'Always required' },
                 { label: 'Dept Self-Approval', value: deptSelfApprovalEnabled && parseFloat(deptSelfApprovalLimit) > 0, customLabel: deptSelfApprovalEnabled && parseFloat(deptSelfApprovalLimit) > 0 ? `Up to ₦${Number(deptSelfApprovalLimit).toLocaleString()}` : 'Off' },
+                { label: 'Escalation: Critical', value: parseFloat(priorityLimitCritical) > 0, customLabel: parseFloat(priorityLimitCritical) > 0 ? `${priorityLimitCritical}m` : 'Off' },
+                { label: 'Escalation: Urgent', value: parseFloat(priorityLimitUrgent) > 0, customLabel: parseFloat(priorityLimitUrgent) > 0 ? `${priorityLimitUrgent}m` : 'Off' },
+                { label: 'Escalation: Normal', value: parseFloat(priorityLimitNormal) > 0, customLabel: parseFloat(priorityLimitNormal) > 0 ? `${priorityLimitNormal}m` : 'Off' },
                 { label: 'Admin Create Fund', value: adminCreateFundEnabled },
                 { label: 'Admin Create Material', value: adminCreateMaterialEnabled },
                 { label: 'Admin Create Memo', value: adminCreateMemoEnabled },

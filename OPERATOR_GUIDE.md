@@ -106,6 +106,14 @@ These are the key toggles and amounts you can configure:
 - Leave the field blank to keep the default: ICC is always required at every amount
 - ICC review never applies to Material Requests or Memos — only Cash
 
+**Priority Escalation Alerts**
+- Set a maximum waiting time (in minutes) per priority level: Critical, Urgent, Normal
+- If a Cash or Material request sits at any stage without action for longer than the limit, the system automatically sends an alert to the Super Admin and any departments you select
+- The alert also notifies the department currently holding the request as a reminder
+- The alert repeats on the same interval until someone takes action on the request
+- Leave a field blank to disable escalation for that priority level entirely
+- Example setup: Critical = 30 min, Urgent = 2 hours (120 min), Normal = blank (off)
+
 **Other important toggles:**
 
 | Setting | What it controls |
@@ -245,6 +253,19 @@ The system has a priority order for amounts:
 3. **Original submitted amount** (if neither Audit nor ICC has overridden)
 
 The amount shown in the payment/treatment panel always reflects this priority. If it looks wrong, check the request's Timeline for any "Audit Override" or "ICC Override" events.
+
+### "I received a Priority Escalation Alert email/notification — what do I do?"
+
+This means a high-priority request has been sitting at a stage without any action for longer than your configured time limit.
+
+1. Open the notification and click the link to go directly to the request
+2. Check the **Timeline** to see which department has had it longest without acting
+3. Contact that department directly and tell them to take action
+4. The alert will keep repeating until the department acts (approves, forwards, rejects, or returns the request)
+5. If the department is unresponsive, you as Super Admin can intervene via the Requisitions admin view
+
+**How to adjust or turn off escalation alerts:**
+Go to Workflow Builder → Features → Priority Escalation Alerts → change or clear the time limit for the relevant priority level.
 
 ### "I need to delete a request that was submitted by mistake"
 
