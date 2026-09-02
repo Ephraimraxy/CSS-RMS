@@ -337,12 +337,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [iccOversightEnabled, setIccOversightEnabled]             = useState(true);
   const [oversightDeptIds, setOversightDeptIds]                   = useState([]);
   const [deptCreationHeadDetailsEnabled, setDeptCreationHeadDetailsEnabled] = useState(true);
-  const [accountIccBypassEnabled, setAccountIccBypassEnabled]     = useState(false);
-  const [ceoIccBypassEnabled, setCeoIccBypassEnabled]             = useState(false);
-  const [accountThreshEnabled, setAccountThreshEnabled]           = useState(false);
-  const [accountThreshAmount, setAccountThreshAmount]             = useState('');
-  const [ceoThreshEnabled, setCeoThreshEnabled]                   = useState(false);
-  const [ceoThreshAmount, setCeoThreshAmount]                     = useState('');
+  // ICC direct-pay limit: a ₦ amount means payments UP TO that amount skip ICC;
+  // empty/blank means ICC is ALWAYS required for every cash payment.
+  const [accountDirectPayLimit, setAccountDirectPayLimit]         = useState('');
+  const [ceoDirectPayLimit, setCeoDirectPayLimit]                 = useState('');
   const [adminCreateFundEnabled, setAdminCreateFundEnabled]       = useState(false);
   const [adminCreateMaterialEnabled, setAdminCreateMaterialEnabled] = useState(false);
   const [adminCreateMemoEnabled, setAdminCreateMemoEnabled]       = useState(false);
@@ -508,8 +506,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
     try {
       const [
         studioRes, hrRes, hrAdminRes, loginRes, storeRes, headsManageRes, headsPrivRes, iccOversightRes, oversightDeptsRes, deptHeadDetailsRes,
-        accountIccBypassRes, ceoIccBypassRes,
-        accountThreshEnabledRes, accountThreshAmountRes, ceoThreshEnabledRes, ceoThreshAmountRes,
+        accountThreshAmountRes, ceoThreshAmountRes,
         adminCreateFundRes, adminCreateMaterialRes, adminCreateMemoRes,
       ] = await Promise.allSettled([
         settingsAPI.get('document_studio_enabled'),
@@ -522,11 +519,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.get('icc_oversight_enabled'),
         settingsAPI.get('oversight_departments'),
         settingsAPI.get('dept_creation_head_details_enabled'),
-        settingsAPI.get('icc_bypass_account_enabled'),
-        settingsAPI.get('icc_bypass_ceo_enabled'),
-        settingsAPI.get('icc_bypass_account_threshold_enabled'),
         settingsAPI.get('icc_bypass_account_threshold_amount'),
-        settingsAPI.get('icc_bypass_ceo_threshold_enabled'),
         settingsAPI.get('icc_bypass_ceo_threshold_amount'),
         settingsAPI.get('admin_create_fund_enabled'),
         settingsAPI.get('admin_create_material_enabled'),
@@ -553,18 +546,16 @@ const WorkflowBuilder = ({ onViewChange }) => {
       }
       if (deptHeadDetailsRes.status === 'fulfilled' && deptHeadDetailsRes.value?.value !== undefined)
         setDeptCreationHeadDetailsEnabled(deptHeadDetailsRes.value.value !== 'false');
-      if (accountIccBypassRes.status === 'fulfilled' && accountIccBypassRes.value?.value !== undefined)
-        setAccountIccBypassEnabled(accountIccBypassRes.value.value === 'true');
-      if (ceoIccBypassRes.status === 'fulfilled' && ceoIccBypassRes.value?.value !== undefined)
-        setCeoIccBypassEnabled(ceoIccBypassRes.value.value === 'true');
-      if (accountThreshEnabledRes.status === 'fulfilled' && accountThreshEnabledRes.value?.value !== undefined)
-        setAccountThreshEnabled(accountThreshEnabledRes.value.value === 'true');
-      if (accountThreshAmountRes.status === 'fulfilled' && accountThreshAmountRes.value?.value !== undefined)
-        setAccountThreshAmount(accountThreshAmountRes.value.value);
-      if (ceoThreshEnabledRes.status === 'fulfilled' && ceoThreshEnabledRes.value?.value !== undefined)
-        setCeoThreshEnabled(ceoThreshEnabledRes.value.value === 'true');
-      if (ceoThreshAmountRes.status === 'fulfilled' && ceoThreshAmountRes.value?.value !== undefined)
-        setCeoThreshAmount(ceoThreshAmountRes.value.value);
+      // Load direct-pay limits — a positive value means that actor can skip ICC up to that amount;
+      // absent/zero means ICC is always required.
+      if (accountThreshAmountRes.status === 'fulfilled') {
+        const v = parseFloat(accountThreshAmountRes.value?.value);
+        setAccountDirectPayLimit(!isNaN(v) && v > 0 ? String(v) : '');
+      }
+      if (ceoThreshAmountRes.status === 'fulfilled') {
+        const v = parseFloat(ceoThreshAmountRes.value?.value);
+        setCeoDirectPayLimit(!isNaN(v) && v > 0 ? String(v) : '');
+      }
       if (adminCreateFundRes.status === 'fulfilled' && adminCreateFundRes.value?.value !== undefined)
         setAdminCreateFundEnabled(adminCreateFundRes.value.value === 'true');
       if (adminCreateMaterialRes.status === 'fulfilled' && adminCreateMaterialRes.value?.value !== undefined)
@@ -617,12 +608,12 @@ const WorkflowBuilder = ({ onViewChange }) => {
   };
 
   const saveFeatureFlags = async () => {
-    if (accountThreshEnabled && (accountThreshAmount === '' || isNaN(parseFloat(accountThreshAmount)))) {
-      toast.error('Enter a valid threshold amount for Account, or turn off its threshold limit.');
+    if (accountDirectPayLimit !== '' && (isNaN(parseFloat(accountDirectPayLimit)) || parseFloat(accountDirectPayLimit) <= 0)) {
+      toast.error('Account direct-pay limit must be a valid amount greater than ₦0, or leave it blank to always require ICC.');
       return;
     }
-    if (ceoThreshEnabled && (ceoThreshAmount === '' || isNaN(parseFloat(ceoThreshAmount)))) {
-      toast.error('Enter a valid threshold amount for CEO/Chairman, or turn off its threshold limit.');
+    if (ceoDirectPayLimit !== '' && (isNaN(parseFloat(ceoDirectPayLimit)) || parseFloat(ceoDirectPayLimit) <= 0)) {
+      toast.error('CEO/Chairman direct-pay limit must be a valid amount greater than ₦0, or leave it blank to always require ICC.');
       return;
     }
     setSavingFeatures(true);
@@ -638,12 +629,14 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.set('icc_oversight_enabled', String(iccOversightEnabled)),
         settingsAPI.set('oversight_departments', JSON.stringify(oversightDeptIds)),
         settingsAPI.set('dept_creation_head_details_enabled', String(deptCreationHeadDetailsEnabled)),
-        settingsAPI.set('icc_bypass_account_enabled', String(accountIccBypassEnabled)),
-        settingsAPI.set('icc_bypass_ceo_enabled', String(ceoIccBypassEnabled)),
-        settingsAPI.set('icc_bypass_account_threshold_enabled', String(accountThreshEnabled)),
-        settingsAPI.set('icc_bypass_account_threshold_amount', String(parseFloat(accountThreshAmount) || 0)),
-        settingsAPI.set('icc_bypass_ceo_threshold_enabled', String(ceoThreshEnabled)),
-        settingsAPI.set('icc_bypass_ceo_threshold_amount', String(parseFloat(ceoThreshAmount) || 0)),
+        // Encode the simplified model into the existing backend keys so serve.js needs no changes.
+        // A positive limit → bypass enabled with that threshold. Empty/0 → bypass off.
+        settingsAPI.set('icc_bypass_account_enabled', accountDirectPayLimit !== '' ? 'true' : 'false'),
+        settingsAPI.set('icc_bypass_account_threshold_enabled', accountDirectPayLimit !== '' ? 'true' : 'false'),
+        settingsAPI.set('icc_bypass_account_threshold_amount', accountDirectPayLimit !== '' ? String(parseFloat(accountDirectPayLimit)) : '0'),
+        settingsAPI.set('icc_bypass_ceo_enabled', ceoDirectPayLimit !== '' ? 'true' : 'false'),
+        settingsAPI.set('icc_bypass_ceo_threshold_enabled', ceoDirectPayLimit !== '' ? 'true' : 'false'),
+        settingsAPI.set('icc_bypass_ceo_threshold_amount', ceoDirectPayLimit !== '' ? String(parseFloat(ceoDirectPayLimit)) : '0'),
         settingsAPI.set('admin_create_fund_enabled', String(adminCreateFundEnabled)),
         settingsAPI.set('admin_create_material_enabled', String(adminCreateMaterialEnabled)),
         settingsAPI.set('admin_create_memo_enabled', String(adminCreateMemoEnabled)),
@@ -1058,73 +1051,61 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 )}
               </div>
 
-              {/* ICC Vets Protocol bypass cards — master toggle + optional amount threshold */}
-              {[
-                {
-                  key: 'account', label: 'Account Can Treat Without ICC Vetting',
-                  desc: 'ICC Vets Protocol: by default, Account must forward Cash/Material requests to ICC for vetting before they can treat (disburse).',
-                  bypassValue: accountIccBypassEnabled, setBypass: setAccountIccBypassEnabled,
-                  threshEnabled: accountThreshEnabled, setThreshEnabled: setAccountThreshEnabled,
-                  threshAmount: accountThreshAmount, setThreshAmount: setAccountThreshAmount,
-                },
-                {
-                  key: 'ceo', label: 'CEO/Chairman Can Treat Without ICC Vetting',
-                  desc: 'ICC Vets Protocol: by default, the CEO/Chairman department must wait for ICC to vet Cash/Material requests before treating them, same as Account.',
-                  bypassValue: ceoIccBypassEnabled, setBypass: setCeoIccBypassEnabled,
-                  threshEnabled: ceoThreshEnabled, setThreshEnabled: setCeoThreshEnabled,
-                  threshAmount: ceoThreshAmount, setThreshAmount: setCeoThreshAmount,
-                },
-              ].map(({ key, label, desc, bypassValue, setBypass, threshEnabled, setThreshEnabled, threshAmount, setThreshAmount }) => (
-                <div key={key} className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="space-y-0.5 min-w-0">
-                      <p className="text-sm font-black text-foreground">{label}</p>
-                      <p className="text-[11px] text-muted-foreground leading-relaxed">
-                        {desc} {bypassValue ? 'Currently free to treat without ICC.' : 'Enable to let them treat freely without waiting for ICC.'}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setBypass(v => !v)}
-                      className={`relative shrink-0 w-12 h-6 rounded-full transition-colors duration-300 focus:outline-none ${bypassValue ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-                    >
-                      <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-300 ${bypassValue ? 'translate-x-6' : 'translate-x-0'}`} />
-                    </button>
-                  </div>
-
-                  {bypassValue && (
-                    <div className="border-t border-border/30 pt-4 space-y-3">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="space-y-0.5 min-w-0">
-                          <p className="text-xs font-bold text-foreground">Limit Bypass to an Amount Threshold</p>
-                          <p className="text-[10px] text-muted-foreground leading-relaxed">
-                            {threshEnabled
-                              ? 'Only requests at or below the amount below skip ICC — anything above still goes through the full process, including ICC.'
-                              : 'Off — every amount is free to treat without ICC while the toggle above is on.'}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => setThreshEnabled(v => !v)}
-                          className={`relative shrink-0 w-10 h-5 rounded-full transition-colors duration-300 focus:outline-none ${threshEnabled ? 'bg-amber-500' : 'bg-muted-foreground/30'}`}
-                        >
-                          <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-300 ${threshEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
-                        </button>
-                      </div>
-                      {threshEnabled && (
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Max Amount Treatable Without ICC (₦)</label>
-                          <input
-                            type="number" min="0" step="0.01"
-                            value={threshAmount}
-                            onChange={e => setThreshAmount(e.target.value)}
-                            placeholder="e.g. 500000"
-                            className="w-full bg-muted/30 border border-border/50 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-300"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
+              {/* ICC Direct-Pay Limit — single clear amount per actor */}
+              <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-amber-200 bg-amber-50/60 space-y-5">
+                <div className="space-y-1">
+                  <p className="text-sm font-black text-foreground flex items-center gap-2">
+                    <Shield size={15} className="text-amber-600 shrink-0" />
+                    ICC Vetting Requirement for Cash Payments
+                  </p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed max-w-2xl">
+                    By default, <strong>ICC must review and clear every cash payment request</strong> before Account or CEO/Chairman can disburse — no exceptions.
+                    You can set an amount below which ICC review is skipped and payment goes through directly.
+                    <span className="block mt-1 text-amber-700 font-semibold">Leave the field blank to keep the default: ICC is always required, at every amount.</span>
+                  </p>
                 </div>
-              ))}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {[
+                    { key: 'account', label: 'Account Department', value: accountDirectPayLimit, set: setAccountDirectPayLimit },
+                    { key: 'ceo',     label: 'CEO / Chairman',     value: ceoDirectPayLimit,     set: setCeoDirectPayLimit },
+                  ].map(({ key, label, value, set }) => {
+                    const parsed = parseFloat(value);
+                    const hasLimit = value !== '' && !isNaN(parsed) && parsed > 0;
+                    return (
+                      <div key={key} className={`p-4 rounded-xl border-2 space-y-3 transition-all ${hasLimit ? 'border-amber-400 bg-white' : 'border-border/50 bg-white/70'}`}>
+                        <p className="text-xs font-black text-foreground">{label}</p>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                            Can pay directly (without ICC) for requests up to:
+                          </label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-muted-foreground">₦</span>
+                            <input
+                              type="number" min="1" step="1"
+                              value={value}
+                              onChange={e => set(e.target.value)}
+                              placeholder="Leave blank — ICC always required"
+                              className="w-full bg-muted/20 border border-border/60 rounded-xl pl-8 pr-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-300 placeholder:text-[11px] placeholder:text-muted-foreground/60"
+                            />
+                          </div>
+                        </div>
+                        <div className={`rounded-lg p-2.5 text-[10px] leading-relaxed space-y-0.5 ${hasLimit ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-muted/30 border border-border/30 text-muted-foreground'}`}>
+                          {hasLimit ? (
+                            <>
+                              <p className="font-bold">✓ With this limit set:</p>
+                              <p>· Requests <strong>up to ₦{parsed.toLocaleString()}</strong> → {label} pays directly, no ICC needed</p>
+                              <p>· Requests <strong>above ₦{parsed.toLocaleString()}</strong> → ICC must review and clear first</p>
+                            </>
+                          ) : (
+                            <p className="font-semibold">🔒 No limit set — ICC must review and clear every cash payment before {label} can disburse.</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
               {/* Login Screen Style — spans both columns */}
               <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
@@ -1172,8 +1153,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 { label: 'Heads Manage Sub-Accounts', value: headsCanManageSubaccounts },
                 { label: 'Heads Set Privileges', value: headsCanSetSubPrivileges },
                 { label: 'Dept Creation Includes Head Details', value: deptCreationHeadDetailsEnabled },
-                { label: 'Account ICC Bypass', value: accountIccBypassEnabled },
-                { label: 'CEO/Chairman ICC Bypass', value: ceoIccBypassEnabled },
+                { label: 'Account ICC Bypass', value: accountDirectPayLimit !== '' && parseFloat(accountDirectPayLimit) > 0, customLabel: accountDirectPayLimit !== '' && parseFloat(accountDirectPayLimit) > 0 ? `Up to ₦${Number(accountDirectPayLimit).toLocaleString()}` : 'Always required' },
+                { label: 'CEO/Chairman ICC Bypass', value: ceoDirectPayLimit !== '' && parseFloat(ceoDirectPayLimit) > 0, customLabel: ceoDirectPayLimit !== '' && parseFloat(ceoDirectPayLimit) > 0 ? `Up to ₦${Number(ceoDirectPayLimit).toLocaleString()}` : 'Always required' },
                 { label: 'Admin Create Fund', value: adminCreateFundEnabled },
                 { label: 'Admin Create Material', value: adminCreateMaterialEnabled },
                 { label: 'Admin Create Memo', value: adminCreateMemoEnabled },
@@ -1183,18 +1164,6 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   {label}: {customLabel ?? (value ? 'On' : 'Off')}
                 </span>
               ))}
-              {accountIccBypassEnabled && accountThreshEnabled && (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold border bg-amber-50 border-amber-200 text-amber-700">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                  Account Limit: ₦{Number(accountThreshAmount || 0).toLocaleString()}
-                </span>
-              )}
-              {ceoIccBypassEnabled && ceoThreshEnabled && (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold border bg-amber-50 border-amber-200 text-amber-700">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                  CEO/Chairman Limit: ₦{Number(ceoThreshAmount || 0).toLocaleString()}
-                </span>
-              )}
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold border bg-blue-50 border-blue-200 text-blue-700">
                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                 Login Screen: <span className="capitalize">{loginStyle}</span>
