@@ -4619,7 +4619,7 @@ app.post('/api/requisitions', authenticateToken, generalLimiter, async (req, res
               fromDeptId: originDeptId,
               toDeptId: targetDepartmentId,
               action: 'created',
-              note: data.description || null,
+              note: (() => { try { return JSON.parse(data.content || '{}').comment || null; } catch { return null; } })() || null,
               actorName: req.user?.name || 'System'
             }
           });

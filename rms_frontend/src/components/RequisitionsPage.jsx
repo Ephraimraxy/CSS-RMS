@@ -3662,7 +3662,7 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
   })();
   const _fmt = n => `₦${Number(n || 0).toLocaleString()}`;
 
-  const briefBlock = req.description ? (
+  const briefBlock = req.description && !_parsedContent?.itemized ? (
     <div className="space-y-2">
       <div className="flex items-center space-x-2">
         <FileText size={15} className="text-primary" />
@@ -3739,7 +3739,7 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
             {_renderItemsTable(
               _parsedContent.items,
               _parsedContent.total,
-              _parsedContent.comment,
+              req.description || null,
               (_hasAuditOverride || _hasIccOverride)
                 ? { headerBg: 'bg-muted/40', headerText: 'text-muted-foreground', footerBg: 'bg-muted/30', footerBorder: 'border-border/40', footerText: 'text-muted-foreground', borderColor: 'border-border/40' }
                 : {}
@@ -4925,8 +4925,8 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                           badgeColor = ev.vetted ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-600';
                           iconColor = ev.vetted ? 'bg-emerald-500' : 'bg-blue-500';
                           description = toLabel
-                            ? `${fromLabel} ${ev.vetted ? 'vetted and forwarded' : 'forwarded (without vetting)'} to ${toLabel}.${ev.comment ? ` Note: "${ev.comment}"` : ''}`
-                            : ev.comment || null;
+                            ? `${fromLabel} ${ev.vetted ? 'vetted and forwarded' : 'forwarded (without vetting)'} to ${toLabel}.`
+                            : null;
                         } else if (isReturn) {
                           fromLabel = ev.deptName;
                           const prevEvt = evts[origIdx - 1];
@@ -4940,8 +4940,8 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                           badgeColor = 'bg-amber-100 text-amber-700';
                           iconColor = 'bg-amber-500';
                           description = toLabel
-                            ? `${fromLabel} ${ev.vetted ? '(vetted)' : ''} returned the document to ${toLabel}.${ev.comment ? ` Reason: "${ev.comment}"` : ''}`
-                            : ev.comment || null;
+                            ? `${fromLabel} ${ev.vetted ? '(vetted)' : ''} returned the document to ${toLabel}.`
+                            : null;
                         } else if (isTreated) {
                           fromLabel = ev.deptName;
                           toLabel = null;
@@ -4970,7 +4970,6 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                             `${fromLabel} processed payment for this requisition.`,
                             amtLine,
                             reasonLine,
-                            ev.comment ? `Note: "${ev.comment}"` : null,
                           ].filter(Boolean).join(' ');
                         } else if (ev.action === 'icc_vet_forward') {
                           fromLabel = ev.deptName || 'Account';
@@ -4978,14 +4977,14 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                           badgeText = 'Forwarded to ICC';
                           badgeColor = 'bg-indigo-100 text-indigo-700';
                           iconColor = 'bg-indigo-500';
-                          description = `${fromLabel} forwarded this requisition to ICC for the ICC Vets Protocol review.${ev.comment ? ` Note: "${ev.comment}"` : ''}`;
+                          description = `${fromLabel} forwarded this requisition to ICC for the ICC Vets Protocol review.`;
                         } else if (ev.action === 'icc_vet_return') {
                           fromLabel = ev.deptName || 'ICC';
                           toLabel = 'Account';
                           badgeText = 'ICC Vetting Complete';
                           badgeColor = 'bg-emerald-100 text-emerald-700';
                           iconColor = 'bg-emerald-500';
-                          description = `${fromLabel} completed vetting and returned this requisition to Account for treatment.${ev.comment ? ` Note: "${ev.comment}"` : ''}`;
+                          description = `${fromLabel} completed vetting and returned this requisition to Account for treatment.`;
                         } else if (ev.action === 'icc_comment') {
                           fromLabel = ev.deptName || 'ICC';
                           toLabel = null;
@@ -5020,7 +5019,7 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                           badgeText = 'Re-Approved';
                           badgeColor = 'bg-emerald-100 text-emerald-700';
                           iconColor = 'bg-emerald-500';
-                          description = `${fromLabel} re-approved the revised amount — treatment can proceed.${ev.comment ? ` Note: "${ev.comment}"` : ''}`;
+                          description = `${fromLabel} re-approved the revised amount — treatment can proceed.`;
                         } else {
                           fromLabel = ev.deptName;
                           toLabel = null;
@@ -5053,6 +5052,12 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                               {/* Description */}
                               {description && (
                                 <p className="text-[10px] text-muted-foreground leading-relaxed">{description}</p>
+                              )}
+                              {ev.comment && ev.action !== 'icc_comment' && ev.action !== 'icc_freeze' && (
+                                <div className="flex items-start gap-1.5 mt-1.5 p-2 bg-muted/40 rounded-lg text-[11px] text-foreground/80 italic">
+                                  <MessageSquare size={10} className="mt-0.5 shrink-0 text-muted-foreground" />
+                                  <p className="leading-relaxed">{ev.comment}</p>
+                                </div>
                               )}
                               {ev.attachmentName && (() => {
                                 const matchedAtt = detail?.attachments?.find(a => a.filename === ev.attachmentName);
@@ -5134,7 +5139,14 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                         {forwardEvents.length}
                       </div>
                     </div>
-                    <ProcessingChain events={[...forwardEvents].reverse()} />
+                    <ProcessingChain events={[...forwardEvents].reverse().map(evt => {
+                      if (evt.action === 'created' && _parsedContent?.comment)
+                        return { ...evt, note: _parsedContent.comment };
+                      if (evt.action === 'returned' && !evt.note && _auditParsed?.comment &&
+                          detail?.auditDeptName && evt.fromDepartment?.name === detail.auditDeptName)
+                        return { ...evt, note: _auditParsed.comment };
+                      return evt;
+                    })} />
                   </>
                 ) : timeline.length > 0 ? (
                   <>
