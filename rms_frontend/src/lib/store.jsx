@@ -395,7 +395,7 @@ export async function getDashboardStats(user) {
 // Admin's login is backed by a real Department row, so gating on `!userDeptId` to detect
 // "is this admin" was wrong and silently fell through to the narrow per-department branch.
 export function computeDashboardStats(all, user) {
-  const emptyStats = { pending: 0, approved: 0, rejected: 0, totalSpent: 0, memos: 0, memoPending: 0, memoPublished: 0 };
+  const emptyStats = { pending: 0, approved: 0, rejected: 0, totalSpent: 0, memos: 0, memoPending: 0, memoPublished: 0, treated: 0, approvedByMe: 0 };
   if (!user) return emptyStats;
 
   const userDeptId = user.deptId ? Number(user.deptId) : null;
@@ -405,6 +405,7 @@ export function computeDashboardStats(all, user) {
   const isExecutive = isAdmin ||
     /ceo|chairman/i.test(userDeptName) ||
     /general\s*manager|\bgm\b/i.test(userDeptName);
+  const isAccountDept = /\baccount\b/i.test(userDeptName);
 
   const DONE_STATES = ['treated', 'published'];
   // "Pending" on dashboard means items still awaiting this dept's action
@@ -423,7 +424,10 @@ export function computeDashboardStats(all, user) {
       (!r.finalApprovalStatus || r.finalApprovalStatus === 'none');
     const needsFinal = isExecutive && r.status === 'approved' && (!r.finalApprovalStatus || r.finalApprovalStatus === 'none');
     const isVetting = Number(r.currentVettingDeptId) === userDeptId && r.finalApprovalStatus === 'vetting';
-    return isTargeted || needsFinal || isVetting;
+    // Partial payment: Account keeps the request open — must still show as pending for them
+    const isPartialBalance = isAccountDept && userDeptId && r.finalApprovalStatus === 'partial' &&
+      (Number(r.currentVettingDeptId) === userDeptId || Number(r.targetDepartmentId) === userDeptId);
+    return isTargeted || needsFinal || isVetting || isPartialBalance;
   });
 
   const operational = all.filter(isOperationalRequisition);
@@ -432,9 +436,30 @@ export function computeDashboardStats(all, user) {
   const rejected = operational.filter(r => r.status === 'rejected').length;
   const memoPending = memos.filter(r => r.status === 'pending' && r.finalApprovalStatus !== 'published').length;
   const memoPublished = memos.filter(r => r.finalApprovalStatus === 'published').length;
-  const totalSpent = operational
-    .filter(r => (r.status === 'approved' || r.finalApprovalStatus === 'treated') && r.amount)
-    .reduce((sum, r) => sum + r.amount, 0);
+
+  // Account totalSpent = actual disbursed amounts; others = approved/treated amounts
+  const totalSpent = isAccountDept && userDeptId
+    ? operational
+      .filter(r => !!r.amountDisbursed && (
+        (r.finalApprovalStatus === 'treated' && Number(r.treatedByDeptId) === userDeptId) ||
+        (r.finalApprovalStatus === 'partial' && Number(r.currentVettingDeptId) === userDeptId)
+      ))
+      .reduce((sum, r) => sum + parseFloat(r.amountDisbursed || 0), 0)
+    : operational
+      .filter(r => (r.status === 'approved' || r.finalApprovalStatus === 'treated') && r.amount)
+      .reduce((sum, r) => sum + r.amount, 0);
+
+  // How many requests has this dept treated (fully paid/issued)
+  const treated = userDeptId
+    ? operational.filter(r =>
+        r.finalApprovalStatus === 'treated' && Number(r.treatedByDeptId) === userDeptId
+      ).length
+    : 0;
+
+  // How many requests has this dept given final approval on
+  const approvedByMe = userDeptId
+    ? operational.filter(r => Number(r.finalApprovedByDeptId) === userDeptId).length
+    : 0;
 
   return {
     pending: pendingActions.length,
@@ -443,7 +468,9 @@ export function computeDashboardStats(all, user) {
     totalSpent,
     memos: memos.length,
     memoPending,
-    memoPublished
+    memoPublished,
+    treated,
+    approvedByMe,
   };
 }
 

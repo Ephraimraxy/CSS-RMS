@@ -62,11 +62,13 @@ const matchesTypeFilter = (record, filter) => {
 
 const Dashboard = ({ onViewChange }) => {
   const { user } = useAuth();
-  const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, totalSpent: 0, memos: 0, memoPending: 0, memoPublished: 0 });
+  const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, totalSpent: 0, memos: 0, memoPending: 0, memoPublished: 0, treated: 0, approvedByMe: 0 });
   const [partialReqs, setPartialReqs] = useState([]);
   const [recentPending, setRecentPending] = useState([]);
   const [ccReqs, setCcReqs] = useState([]);
   const [ccOpen, setCcOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyReqs, setHistoryReqs] = useState([]);
   const [typeFilter, setTypeFilter] = useState('All');
   const [myReqs, setMyReqs] = useState([]);
   const [myStats, setMyStats] = useState({ submitted: 0, requisitions: 0, memos: 0, inProgress: 0, approved: 0, treated: 0, rejected: 0 });
@@ -153,6 +155,17 @@ const Dashboard = ({ onViewChange }) => {
       });
       // Show last 10 sorted newest first (include drafts in the list for visibility)
       setMyReqs([...mine].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 10));
+
+      // Involvement history — all requests this dept has touched in any capacity
+      const hist = all.filter(r =>
+        Number(r.departmentId) === userDeptId ||
+        Number(r.creatorDeptId) === userDeptId ||
+        Number(r.finalApprovedByDeptId) === userDeptId ||
+        Number(r.treatedByDeptId) === userDeptId ||
+        Number(r.currentVettingDeptId) === userDeptId ||
+        Number(r.targetDepartmentId) === userDeptId
+      );
+      setHistoryReqs(hist.sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt)).slice(0, 50));
     }
   };
 
@@ -249,6 +262,18 @@ const Dashboard = ({ onViewChange }) => {
     return () => { es?.close(); clearTimeout(reconnectTimer); };
   }, []);
 
+  const _deptName = user?.departmentName || '';
+  const _isDept = user?.role === 'department';
+  const _isAccountDept = /\baccount\b/i.test(_deptName);
+  const _isCEOChairman = /ceo|chairman/i.test(_deptName);
+  const _isExecApprover = _isCEOChairman || /general\s*manager|\bgm\b/i.test(_deptName) || /^\s*hr\s*$|human.resource/i.test(_deptName);
+  const _showTreatedCard = _isDept && (_isAccountDept || _isCEOChairman);
+  const _showApprovalsCard = _isDept && _isExecApprover;
+  const _extraCards = (_showTreatedCard ? 1 : 0) + (_showApprovalsCard ? 1 : 0);
+  const _deptGridCols = _extraCards === 2 ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-8'
+    : _extraCards === 1 ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-7'
+    : 'grid-cols-2 lg:grid-cols-6';
+
   const formatCurrency = (val) => {
     if (val >= 1000000) return `₦${(val / 1000000).toFixed(1)}M`;
     if (val >= 1000) return `₦${(val / 1000).toFixed(0)}K`;
@@ -328,7 +353,7 @@ const Dashboard = ({ onViewChange }) => {
           </div>
         )}
 
-        <div className={`grid gap-3 sm:gap-6 ${normalizeRole(user?.role) === 'global_admin' ? 'grid-cols-2 lg:grid-cols-4 xl:grid-cols-8' : user?.role === 'department' ? 'grid-cols-2 lg:grid-cols-6' : 'grid-cols-2 lg:grid-cols-5'}`}>
+        <div className={`grid gap-3 sm:gap-6 ${normalizeRole(user?.role) === 'global_admin' ? 'grid-cols-2 lg:grid-cols-4 xl:grid-cols-8' : user?.role === 'department' ? _deptGridCols : 'grid-cols-2 lg:grid-cols-5'}`}>
           <StatCard label="Pending Actions" value={String(stats.pending).padStart(2, '0')} icon={Clock} color="orange" onClick={() => onViewChange('requisitions')} />
           <StatCard label="Approved Reqs" value={String(stats.approved).padStart(2, '0')} icon={CheckCircle2} color="emerald" onClick={() => onViewChange('requisitions')} />
           <StatCard label="Rejected Reqs" value={String(stats.rejected).padStart(2, '0')} icon={XCircle} color="red" onClick={() => onViewChange('requisitions')} />
@@ -381,6 +406,26 @@ const Dashboard = ({ onViewChange }) => {
               </>
             );
           })()}
+          {_showTreatedCard && (
+            <StatCard
+              label="Treated Reqs"
+              value={String(stats.treated).padStart(2, '0')}
+              icon={BadgeCheck}
+              color="teal"
+              onClick={() => onViewChange('requisitions')}
+              title="Requisitions your department has fully treated/paid"
+            />
+          )}
+          {_showApprovalsCard && (
+            <StatCard
+              label="My Approvals"
+              value={String(stats.approvedByMe).padStart(2, '0')}
+              icon={ShieldCheck}
+              color="indigo"
+              onClick={() => onViewChange('requisitions')}
+              title="Requisitions given final approval by your department"
+            />
+          )}
           {user?.role === 'department' && (
             <div
               onClick={() => setCcOpen(o => !o)}
@@ -886,6 +931,103 @@ const Dashboard = ({ onViewChange }) => {
               </div>
             )}
 
+            {/* ── Involvement History — all depts, record keeping ── */}
+            {_isDept && historyReqs.length > 0 && (
+              <div className="space-y-4 pt-6 border-t border-border/20">
+                <div
+                  className="flex items-center justify-between cursor-pointer"
+                  onClick={() => setHistoryOpen(o => !o)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-1.5 h-6 bg-violet-500 rounded-full" />
+                    <h3 className="text-xl font-bold text-foreground tracking-tight">Involvement History</h3>
+                    <span className="bg-violet-500/10 text-violet-600 border border-violet-500/20 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-[0.15em]">
+                      {historyReqs.length} records
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground/60 font-medium">All requisitions your department has been involved in</span>
+                    {historyOpen ? <ChevronUp size={16} className="text-muted-foreground" /> : <ChevronDown size={16} className="text-muted-foreground" />}
+                  </div>
+                </div>
+                {historyOpen && (
+                  <div className="overflow-x-auto custom-scrollbar animate-in fade-in slide-in-from-top-3 duration-300">
+                    <table className="w-full text-left border-separate border-spacing-y-2">
+                      <thead>
+                        <tr className="text-muted-foreground text-[10px] font-black uppercase tracking-[0.2em]">
+                          <th className="pb-3 px-4">Ref</th>
+                          <th className="pb-3 px-4">Title</th>
+                          <th className="pb-3 px-4">My Role</th>
+                          <th className="pb-3 px-4">Amount</th>
+                          <th className="pb-3 px-4">Status</th>
+                          <th className="pb-3 px-4 text-right">View</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {historyReqs.map(r => {
+                          const uid = Number(user.deptId);
+                          const myRole = (() => {
+                            if (Number(r.departmentId) === uid || Number(r.creatorDeptId) === uid)
+                              return { label: 'Originator', color: 'bg-blue-50 border-blue-200 text-blue-700' };
+                            if (Number(r.treatedByDeptId) === uid)
+                              return { label: 'Treated', color: 'bg-teal-50 border-teal-200 text-teal-700' };
+                            if (Number(r.finalApprovedByDeptId) === uid)
+                              return { label: 'Approver', color: 'bg-emerald-50 border-emerald-200 text-emerald-700' };
+                            if (Number(r.currentVettingDeptId) === uid)
+                              return { label: 'Processing', color: 'bg-amber-50 border-amber-200 text-amber-700' };
+                            if (Number(r.targetDepartmentId) === uid)
+                              return { label: 'Recipient', color: 'bg-violet-50 border-violet-200 text-violet-700' };
+                            return { label: 'Involved', color: 'bg-muted border-border text-muted-foreground' };
+                          })();
+                          const stateLabel = (() => {
+                            if (r.status === 'rejected') return { label: 'Rejected', color: statusColors.rejected };
+                            if (r.finalApprovalStatus === 'treated') return { label: 'Treated', color: statusColors.treated };
+                            if (r.finalApprovalStatus === 'published') return { label: 'Published', color: statusColors.published };
+                            if (r.finalApprovalStatus === 'partial') return { label: 'Partial Pay', color: 'bg-orange-50 border-orange-200 text-orange-700' };
+                            if (r.finalApprovalStatus === 'vetting') return { label: 'Vetting', color: statusColors.vetting };
+                            if (r.finalApprovalStatus === 'approved') return { label: 'Approved', color: statusColors.approved };
+                            if (r.status === 'approved') return { label: 'Approved', color: statusColors.approved };
+                            if (r.status === 'pending') return { label: 'Pending', color: statusColors.pending };
+                            return { label: r.status || '—', color: statusColors.pending };
+                          })();
+                          const isMoneyReq = r.type === 'Cash' || (r.amount && r.amount > 0);
+                          return (
+                            <tr key={r.id} onClick={() => isMemoRecord(r) ? onViewChange('memos') : onViewChange('requisitions', { reqId: r.id })} className="group cursor-pointer transition-all">
+                              <td className="py-3 px-4 bg-violet-50/30 border-y border-l border-violet-100/50 rounded-l-xl group-hover:bg-violet-50/60 transition-colors">
+                                <div className="flex flex-col">
+                                  <span className="text-[10px] font-black text-violet-600 tracking-widest">#{r.id}</span>
+                                  <span className="text-[9px] text-muted-foreground/50 font-mono italic">{new Date(r.createdAt).toLocaleDateString()}</span>
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors max-w-[200px]">
+                                <p className="text-[11px] font-bold text-foreground truncate">{r.title}</p>
+                                <p className="text-[9px] text-muted-foreground/60 uppercase tracking-widest">{r.type}</p>
+                              </td>
+                              <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors">
+                                <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase border tracking-widest ${myRole.color}`}>{myRole.label}</span>
+                              </td>
+                              <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors">
+                                {isMoneyReq
+                                  ? <span className="text-[11px] font-black font-mono text-foreground">₦{Number(r.amountDisbursed || r.amount || 0).toLocaleString()}</span>
+                                  : <span className="text-[9px] text-muted-foreground/50 italic">—</span>}
+                              </td>
+                              <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors">
+                                <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase border tracking-widest ${stateLabel.color}`}>{stateLabel.label}</span>
+                              </td>
+                              <td className="py-3 px-4 bg-violet-50/30 border-y border-r border-violet-100/50 rounded-r-xl group-hover:bg-violet-50/60 transition-colors text-right">
+                                <button onClick={e => { e.stopPropagation(); isMemoRecord(r) ? onViewChange('memos') : onViewChange('requisitions', { reqId: r.id }); }} className="p-2 bg-white hover:bg-violet-500 hover:text-white rounded-xl text-violet-500 transition-all border border-violet-200/60 shadow-sm active:scale-90">
+                                  <Eye size={15} />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
 
           </div>
         </div>
