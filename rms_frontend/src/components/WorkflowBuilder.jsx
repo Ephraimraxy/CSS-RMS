@@ -219,6 +219,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
   // why they're entering it.
   const [corrections, setCorrections] = useState([]);
   const [correctionsLoaded, setCorrectionsLoaded] = useState(false);
+  const [correctionsRefreshing, setCorrectionsRefreshing] = useState(false);
   const [newCorrection, setNewCorrection] = useState({ staffId: '', date: '', punchCount: 1, times: [''] });
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [editingCorrId, setEditingCorrId] = useState(null);
@@ -230,6 +231,15 @@ const WorkflowBuilder = ({ onViewChange }) => {
       setCorrections(Array.isArray(res?.corrections) ? res.corrections : []);
     } catch {}
     setCorrectionsLoaded(true);
+  };
+
+  // Manual "Refresh" button — same data loadCorrections() already
+  // fetches, just with a visible spinner so clicking it actually feels
+  // like it did something, on top of the background auto-poll below.
+  const refreshCorrections = async () => {
+    setCorrectionsRefreshing(true);
+    await loadCorrections();
+    setCorrectionsRefreshing(false);
   };
 
   // Punches is just "how many time fields to show" — changing it grows or
@@ -325,6 +335,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
   // in staff the desktop doesn't already have a real name for.
   const [deptMappings, setDeptMappings] = useState([]);
   const [deptMappingsLoaded, setDeptMappingsLoaded] = useState(false);
+  const [deptRefreshing, setDeptRefreshing] = useState(false);
   const [deptImporting, setDeptImporting] = useState(false);
   const [deptImportFileName, setDeptImportFileName] = useState('');
   const [deptEditValues, setDeptEditValues] = useState({}); // staffId -> dept text being edited
@@ -340,6 +351,15 @@ const WorkflowBuilder = ({ onViewChange }) => {
       setDeptMappings(Array.isArray(res?.mappings) ? res.mappings : []);
     } catch {}
     setDeptMappingsLoaded(true);
+  };
+
+  // Manual "Refresh" button — same data loadDeptMappings() already
+  // fetches, just with a visible spinner, on top of the background
+  // auto-poll below.
+  const refreshDeptMappings = async () => {
+    setDeptRefreshing(true);
+    await loadDeptMappings();
+    setDeptRefreshing(false);
   };
 
   const importDeptFile = async (file) => {
@@ -1019,6 +1039,20 @@ const WorkflowBuilder = ({ onViewChange }) => {
       ]);
       setSettingsReady(true);
     })();
+  }, []);
+
+  // Live sync, mirroring the desktop app's own 20-second heartbeat: the
+  // desktop reports "correction applied" and correlates staff Name/
+  // Department in the background continuously, but without this, seeing
+  // those changes here required a full browser refresh. Scoped to just
+  // these two lightweight lists (not the whole settings bundle above),
+  // which change far more often than the rest of this page.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadCorrections();
+      loadDeptMappings();
+    }, 20000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -2577,11 +2611,16 @@ const WorkflowBuilder = ({ onViewChange }) => {
             {/* Manual Attendance Corrections */}
             {correctionsLoaded && (
               <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
-                <div className="space-y-0.5">
-                  <p className="text-sm font-black text-foreground">Manual Attendance Corrections</p>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">
-                    For a staff/date with no device punch — enter the actual punch time(s) and the desktop app injects them as real punches (not a bare Present flag) the next time it runs an extraction. Set Punches to how many times they clocked that day, then fill in each time. This list is the audit trail.
-                  </p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-black text-foreground">Manual Attendance Corrections</p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      For a staff/date with no device punch — enter the actual punch time(s) and the desktop app injects them as real punches (not a bare Present flag) the next time it runs an extraction. Set Punches to how many times they clocked that day, then fill in each time. This list is the audit trail. Refreshes automatically every 20 seconds — the button forces it now.
+                    </p>
+                  </div>
+                  <button onClick={refreshCorrections} disabled={correctionsRefreshing} title="Refresh now" className="shrink-0 flex items-center gap-1 text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:text-primary transition-all disabled:opacity-50">
+                    <RotateCcw size={12} className={correctionsRefreshing ? 'animate-spin' : ''} /> Refresh
+                  </button>
                 </div>
 
                 <div className="border-t border-border/30 pt-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-3 items-end">
@@ -2680,11 +2719,16 @@ const WorkflowBuilder = ({ onViewChange }) => {
             {/* Staff Department Mapping */}
             {deptMappingsLoaded && (
               <div className="p-5 rounded-2xl border-2 border-border/50 bg-white/80 hover:border-primary/30 transition-all space-y-4">
-                <div className="space-y-0.5">
-                  <p className="text-sm font-black text-foreground">Staff Department Mapping</p>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">
-                    The ZKTeco device itself never stores Department — only a staff ID and Role — and a USB-exported .dat attendance log doesn't even have Role, just bare staff IDs. This table is the real source for both: import it once from HR's own list, and the desktop app correlates every staff ID to its department (and, when it doesn't already know one, its name) here on every check-in, so those columns are never blank. Edit any row below any time — Department always wins on the desktop's next check-in; Name only fills a gap, it never overwrites a name the desktop already has.
-                  </p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-black text-foreground">Staff Department Mapping</p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      The ZKTeco device itself never stores Department — only a staff ID and Role — and a USB-exported .dat attendance log doesn't even have Role, just bare staff IDs. This table is the real source for both: import it once from HR's own list, and the desktop app correlates every staff ID to its department (and, when it doesn't already know one, its name) here on every check-in, so those columns are never blank. Edit any row below any time — Department always wins on the desktop's next check-in; Name only fills a gap, it never overwrites a name the desktop already has. Refreshes automatically every 20 seconds — the button forces it now.
+                    </p>
+                  </div>
+                  <button onClick={refreshDeptMappings} disabled={deptRefreshing} title="Refresh now" className="shrink-0 flex items-center gap-1 text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:text-primary transition-all disabled:opacity-50">
+                    <RotateCcw size={12} className={deptRefreshing ? 'animate-spin' : ''} /> Refresh
+                  </button>
                 </div>
 
                 <div className="border-t border-border/30 pt-4 space-y-2">
