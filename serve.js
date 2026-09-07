@@ -5260,8 +5260,8 @@ app.get('/api/sync/heartbeat', desktopSyncLimiter, async (req, res) => {
     let staffDepartments = [];
     try {
       await ensureStaffDepartmentsTable();
-      const mappings = await prisma.$queryRaw`SELECT "staffId", "department" FROM "StaffDepartmentMapping"`;
-      staffDepartments = mappings.map(m => ({ staffId: m.staffId, department: m.department }));
+      const mappings = await prisma.$queryRaw`SELECT "staffId", "department", "name" FROM "StaffDepartmentMapping"`;
+      staffDepartments = mappings.map(m => ({ staffId: m.staffId, department: m.department, name: m.name }));
     } catch (e) { logger.error(`[heartbeat] staffDepartments fetch failed: ${e.message}`); }
 
     res.json({
@@ -5432,24 +5432,34 @@ app.post('/api/sync/corrections-applied', desktopSyncLimiter, async (req, res) =
 
 // ── Staff Department Mapping (desktop sync) ───────────────────────────────────
 // The ZKTeco device itself only ever stores a staff ID and a device Role
-// (User/Admin/etc) — it has no concept of Department/Unit at all. Rather than
-// leaving that column permanently blank on the desktop app, a Super Admin
-// maintains the real staffId -> department mapping here (typed in one at a
-// time, or bulk-imported from HR's own CSV/Excel), and the desktop app pulls
-// the whole table down on every heartbeat, correlating purely by staff ID —
-// same shared-secret desktop-sync auth style as corrections above. This is
-// authoritative: the desktop overwrites its local Department for a staff ID
-// to match whatever's here, every time, so editing it here is always "as
-// supposed" to a keep the two in sync — it's not just a one-time gap-filler.
+// (User/Admin/etc) — it has no concept of Department/Unit at all, and a
+// USB-exported .dat attendance log doesn't even carry a Role, just bare PINs.
+// Rather than leaving those columns permanently blank on the desktop app, a
+// Super Admin maintains the real staffId -> department/name mapping here
+// (typed in one at a time, or bulk-imported from HR's own CSV/Excel), and the
+// desktop app pulls the whole table down on every heartbeat, correlating
+// purely by staff ID — same shared-secret desktop-sync auth style as
+// corrections above. Department is authoritative: the desktop overwrites its
+// local Department for a staff ID to match whatever's here, every time, so
+// editing it here is always "as supposed" to keep the two in sync — it's not
+// just a one-time gap-filler. Name is different: the device (or a live
+// pull's own Name-pull) usually already knows real names, so this mapping's
+// Name only fills a GAP — the desktop never lets it overwrite a name it
+// already has (see the desktop's db_store.set_name()).
 async function ensureStaffDepartmentsTable() {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "StaffDepartmentMapping" (
       "staffId" TEXT PRIMARY KEY,
       "department" TEXT NOT NULL DEFAULT '',
+      "name" TEXT NOT NULL DEFAULT '',
       "updatedBy" TEXT,
       "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  // Added after the table already existed in production — IF NOT EXISTS
+  // makes this safe to run on every call, same pattern as the corrections
+  // table's "times" column above.
+  await prisma.$executeRaw`ALTER TABLE "StaffDepartmentMapping" ADD COLUMN IF NOT EXISTS "name" TEXT NOT NULL DEFAULT ''`;
 }
 
 // GET /api/staff-departments — Super Admin only: the full current mapping table
@@ -5458,7 +5468,7 @@ app.get('/api/staff-departments', authenticateToken, async (req, res) => {
   try {
     await ensureStaffDepartmentsTable();
     const rows = await prisma.$queryRaw`
-      SELECT "staffId", "department", "updatedBy", "updatedAt" FROM "StaffDepartmentMapping" ORDER BY "staffId"
+      SELECT "staffId", "department", "name", "updatedBy", "updatedAt" FROM "StaffDepartmentMapping" ORDER BY "staffId"
     `;
     res.json({ mappings: rows });
   } catch (error) { sendError(res, 500, error.message); }
@@ -5471,13 +5481,14 @@ app.patch('/api/staff-departments/:staffId', authenticateToken, async (req, res)
     await ensureStaffDepartmentsTable();
     const staffId = String(req.params.staffId || '').trim();
     const department = String(req.body?.department || '').trim();
+    const name = String(req.body?.name || '').trim();
     if (!staffId) return res.status(400).json({ error: 'Missing staff ID.' });
     const updatedBy = req.user?.email || req.user?.name || 'admin';
     const rows = await prisma.$queryRaw`
-      INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "updatedBy", "updatedAt")
-      VALUES (${staffId}, ${department}, ${updatedBy}, now())
-      ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
-      RETURNING "staffId", "department", "updatedBy", "updatedAt"
+      INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "name", "updatedBy", "updatedAt")
+      VALUES (${staffId}, ${department}, ${name}, ${updatedBy}, now())
+      ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "name" = ${name}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
+      RETURNING "staffId", "department", "name", "updatedBy", "updatedAt"
     `;
     res.json({ ok: true, mapping: rows[0] });
   } catch (error) { sendError(res, 500, error.message); }
@@ -5501,13 +5512,14 @@ app.post('/api/staff-departments', authenticateToken, async (req, res) => {
     await ensureStaffDepartmentsTable();
     const staffId = String(req.body?.staffId || '').trim();
     const department = String(req.body?.department || '').trim();
+    const name = String(req.body?.name || '').trim();
     if (!staffId) return res.status(400).json({ error: 'staffId is required.' });
     const updatedBy = req.user?.email || req.user?.name || 'admin';
     const rows = await prisma.$queryRaw`
-      INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "updatedBy", "updatedAt")
-      VALUES (${staffId}, ${department}, ${updatedBy}, now())
-      ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
-      RETURNING "staffId", "department", "updatedBy", "updatedAt"
+      INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "name", "updatedBy", "updatedAt")
+      VALUES (${staffId}, ${department}, ${name}, ${updatedBy}, now())
+      ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "name" = ${name}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
+      RETURNING "staffId", "department", "name", "updatedBy", "updatedAt"
     `;
     res.json({ ok: true, mapping: rows[0] });
   } catch (error) { sendError(res, 500, error.message); }
@@ -5530,8 +5542,13 @@ app.delete('/api/staff-departments', authenticateToken, async (req, res) => {
 // POST /api/staff-departments/import — Super Admin only. Bulk CSV/Excel
 // upload: one row per staff, matched by keyword so exact header spelling
 // isn't required (same flexible-column approach as /api/onboarding/bulk-sms
-// below). Every row needs a staff ID and a department — rows missing either
-// are skipped and reported back, never silently dropped without a trace.
+// below). Every row needs a staff ID plus at least a Name or a Department —
+// rows missing the staff ID, or missing both of the other two, are skipped
+// and reported back, never silently dropped without a trace. A row with a
+// name but no department (or vice versa) is still imported — this table
+// also carries Name now (see the desktop app's Extract tab "Upload
+// Extraction (.dat)" name-matching), and HR's own roster export doesn't
+// always have both columns.
 app.post('/api/staff-departments/import', authenticateToken, batchUpload.single('file'), async (req, res) => {
   if (normalizeRole(req.user?.role) !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
   try {
@@ -5554,14 +5571,24 @@ app.post('/api/staff-departments/import', authenticateToken, batchUpload.single(
     for (const row of rows) {
       const staffId = findCol(row, 'staff id', 'staffid', 'id');
       const department = findCol(row, 'department', 'dept', 'unit');
-      if (!staffId || !department) {
-        skipped.push({ staffId: staffId || '(missing)', reason: !staffId ? 'Missing Staff ID' : 'Missing Department' });
+      const name = findCol(row, 'name');
+      if (!staffId || (!department && !name)) {
+        skipped.push({
+          staffId: staffId || '(missing)',
+          reason: !staffId ? 'Missing Staff ID' : 'Missing both Name and Department',
+        });
         continue;
       }
+      // Existing name/department preserved when this row only supplies the
+      // other one — a name-only or department-only re-import must never
+      // blank out whatever the other column already holds.
+      const existing = await prisma.$queryRaw`SELECT "name", "department" FROM "StaffDepartmentMapping" WHERE "staffId" = ${staffId}`;
+      const finalName = name || existing[0]?.name || '';
+      const finalDept = department || existing[0]?.department || '';
       await prisma.$executeRaw`
-        INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "updatedBy", "updatedAt")
-        VALUES (${staffId}, ${department}, ${updatedBy}, now())
-        ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
+        INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "name", "updatedBy", "updatedAt")
+        VALUES (${staffId}, ${finalDept}, ${finalName}, ${updatedBy}, now())
+        ON CONFLICT ("staffId") DO UPDATE SET "department" = ${finalDept}, "name" = ${finalName}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
       `;
       imported++;
     }

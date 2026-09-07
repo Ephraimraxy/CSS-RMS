@@ -457,6 +457,20 @@ model PendingAttendanceCorrection {
   appliedAt DateTime?
 }
 
+// Documentation only, same reasoning as PendingAttendanceCorrection above —
+// this table is self-provisioned via CREATE TABLE/ALTER TABLE IF NOT EXISTS
+// in serve.js's ensureStaffDepartmentsTable(), not via a migration against
+// this schema. `department` is authoritative (the desktop always overwrites
+// its local value to match here); `name` is a gap-filler only (the desktop
+// never lets it overwrite a name it already has from the device itself).
+model StaffDepartmentMapping {
+  staffId   String   @id
+  department String  @default("")
+  name      String   @default("")
+  updatedBy String?
+  updatedAt DateTime @default(now())
+}
+
 model PushSubscription {
   id        Int      @id @default(autoincrement())
   endpoint  String   @unique
