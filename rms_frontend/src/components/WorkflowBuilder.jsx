@@ -519,7 +519,6 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [smsAlertEmails, setSmsAlertEmails]             = useState([]);
   const [smsAlertEmailInput, setSmsAlertEmailInput]     = useState('');
   const [smsAlertTermiiThreshold, setSmsAlertTermiiThreshold]       = useState('1000');
-  const [smsAlertTwilioThreshold, setSmsAlertTwilioThreshold]       = useState('5');
   const [smsAlertTextflowThreshold, setSmsAlertTextflowThreshold]   = useState('1000');
   const [savingSmsAlerts, setSavingSmsAlerts]           = useState(false);
 
@@ -761,11 +760,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
 
     // Load SMS alert settings
     try {
-      const [phoneRes, emailRes, tRes, wRes, tfRes] = await Promise.allSettled([
+      const [phoneRes, emailRes, tRes, tfRes] = await Promise.allSettled([
         settingsAPI.get('admin_alert_phone'),
         settingsAPI.get('admin_alert_emails'),
         settingsAPI.get('sms_alert_termii_threshold'),
-        settingsAPI.get('sms_alert_twilio_threshold'),
         settingsAPI.get('sms_alert_textflow_threshold'),
       ]);
       if (phoneRes.status === 'fulfilled' && phoneRes.value?.value) {
@@ -777,7 +775,6 @@ const WorkflowBuilder = ({ onViewChange }) => {
         catch {}
       }
       if (tRes.status === 'fulfilled' && tRes.value?.value) setSmsAlertTermiiThreshold(tRes.value.value);
-      if (wRes.status === 'fulfilled' && wRes.value?.value) setSmsAlertTwilioThreshold(wRes.value.value);
       if (tfRes.status === 'fulfilled' && tfRes.value?.value) setSmsAlertTextflowThreshold(tfRes.value.value);
     } catch {}
   };
@@ -893,7 +890,6 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.set('admin_alert_phone', JSON.stringify(smsAlertPhones)),
         settingsAPI.set('admin_alert_emails', JSON.stringify(smsAlertEmails)),
         settingsAPI.set('sms_alert_termii_threshold', smsAlertTermiiThreshold || '1000'),
-        settingsAPI.set('sms_alert_twilio_threshold', smsAlertTwilioThreshold || '5'),
         settingsAPI.set('sms_alert_textflow_threshold', smsAlertTextflowThreshold || '1000'),
       ]);
       toast.success('SMS alert settings saved.');
@@ -1834,16 +1830,6 @@ const WorkflowBuilder = ({ onViewChange }) => {
                     <p className="text-[9px] text-muted-foreground/50 pl-1">Alert when balance drops below this</p>
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[9px] font-black text-muted-foreground/60 uppercase tracking-[0.15em]">Twilio threshold ($)</label>
-                    <input
-                      type="number" min="0" step="0.01" placeholder="5"
-                      value={smsAlertTwilioThreshold}
-                      onChange={e => setSmsAlertTwilioThreshold(e.target.value)}
-                      className="w-full bg-white border border-border/50 rounded-xl px-3 py-2 text-sm font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-red-300 shadow-inner"
-                    />
-                    <p className="text-[9px] text-muted-foreground/50 pl-1">Alert when balance drops below this</p>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
                     <label className="text-[9px] font-black text-muted-foreground/60 uppercase tracking-[0.15em]">TextFlow threshold (₦)</label>
                     <input
                       type="number" min="0" placeholder="1000"
@@ -2398,7 +2384,6 @@ const WorkflowBuilder = ({ onViewChange }) => {
                     <option value="all">All Providers</option>
                     <option value="termii">Termii only</option>
                     <option value="textflow">TextFlow only</option>
-                    <option value="twilio">Twilio only</option>
                   </select>
                   <input
                     type="tel"

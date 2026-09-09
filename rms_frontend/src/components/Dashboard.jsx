@@ -186,7 +186,7 @@ const Dashboard = ({ onViewChange }) => {
   const [smsBalance, setSmsBalance] = useState(null);
   const [switchingProvider, setSwitchingProvider] = useState(false);
   const loadSmsBalance = () => {
-    adminAPI.getSmsBalance().then(setSmsBalance).catch(() => setSmsBalance({ termii: { error: 'Could not load.' }, twilio: { error: 'Could not load.' }, textflow: { error: 'Could not load.' } }));
+    adminAPI.getSmsBalance().then(setSmsBalance).catch(() => setSmsBalance({ termii: { error: 'Could not load.' }, textflow: { error: 'Could not load.' } }));
   };
   useEffect(() => {
     if (normalizeRole(user?.role) !== 'global_admin') return;
@@ -199,7 +199,7 @@ const Dashboard = ({ onViewChange }) => {
     try {
       await settingsAPI.set('sms_provider', provider);
       setSmsBalance(prev => ({ ...prev, provider }));
-      const label = provider === 'twilio' ? 'Twilio' : provider === 'textflow' ? 'TextFlow' : 'Termii';
+      const label = provider === 'textflow' ? 'TextFlow' : 'Termii';
       toast.success(`${label} is now the active SMS provider.`);
       loadSmsBalance();
     } catch {
@@ -379,18 +379,7 @@ const Dashboard = ({ onViewChange }) => {
                   activeLabel="Active"
                   danger={!!smsBalance?.termii?.belowThreshold}
                   onClick={() => switchSmsProvider('termii')}
-                  title={smsBalance?.termii?.belowThreshold ? `⚠️ Balance below ₦${smsBalance?.thresholds?.termii ?? 1000} threshold — top up now` : smsBalance?.termii?.error || (activeProvider === 'termii' ? 'Active — click Twilio to switch' : 'Click to activate Termii')}
-                />
-                <StatCard
-                  label="Twilio Balance"
-                  value={fmtProviderBalance(smsBalance?.twilio)}
-                  icon={MessageSquare}
-                  color="indigo"
-                  active={activeProvider === 'twilio'}
-                  activeLabel="Active"
-                  danger={!!smsBalance?.twilio?.belowThreshold}
-                  onClick={() => switchSmsProvider('twilio')}
-                  title={smsBalance?.twilio?.belowThreshold ? `⚠️ Balance below $${smsBalance?.thresholds?.twilio ?? 5} threshold — top up now` : smsBalance?.twilio?.error || (activeProvider === 'twilio' ? 'Active — click to switch' : 'Click to activate Twilio')}
+                  title={smsBalance?.termii?.belowThreshold ? `⚠️ Balance below ₦${smsBalance?.thresholds?.termii ?? 1000} threshold — top up now` : smsBalance?.termii?.error || (activeProvider === 'termii' ? 'Active — click TextFlow to switch' : 'Click to activate Termii')}
                 />
                 <StatCard
                   label="TextFlow Balance"

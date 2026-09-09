@@ -2330,43 +2330,6 @@ async function sendTermiiSms({ to, message }) {
   }
 }
 
-// Twilio requires full E.164 format (leading +). Reuses the same digit-cleanup as
-// Termii's normalizer, then re-adds the +.
-function normalizeE164Phone(raw) {
-  const digits = normalizeNgPhone(raw);
-  return digits ? `+${digits}` : null;
-}
-
-async function sendTwilioSms({ to, message }) {
-  const sid   = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  const from  = process.env.TWILIO_PHONE_NUMBER;
-  if (!sid || !token || !from || !to) {
-    logger.warn(`[SMS] Skipped — Twilio not fully configured or no phone number.`);
-    return { skipped: true };
-  }
-  const phone = normalizeE164Phone(to);
-  try {
-    const resp = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64'),
-      },
-      body: new URLSearchParams({ To: phone, From: from, Body: message }).toString(),
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      logger.warn('[SMS] Twilio send failed:', JSON.stringify(data));
-      return { error: data };
-    }
-    logger.info(`[SMS] Sent via Twilio to ${phone}`);
-    return data;
-  } catch (e) {
-    logger.warn('[SMS] Twilio request error:', e.message);
-    return { error: e.message };
-  }
-}
 
 // ── TextFlow SMS ─────────────────────────────────────────────────────────────
 async function sendTextflowSms({ to, message }) {
@@ -2429,7 +2392,6 @@ async function getSmsProvider() {
   try {
     const rows = await prisma.$queryRaw`SELECT "value" FROM "SystemSetting" WHERE "key" = 'sms_provider' LIMIT 1`;
     const v = rows?.[0]?.value;
-    if (v === 'twilio') return 'twilio';
     if (v === 'textflow') return 'textflow';
     return 'termii';
   } catch { return 'termii'; }
@@ -2440,9 +2402,8 @@ async function getSmsProvider() {
 async function sendSms({ to, message }) {
   const provider = await getSmsProvider();
   let result;
-  if (provider === 'twilio')    result = await sendTwilioSms({ to, message });
-  else if (provider === 'textflow') result = await sendTextflowSms({ to, message });
-  else                          result = await sendTermiiSms({ to, message });
+  if (provider === 'textflow') result = await sendTextflowSms({ to, message });
+  else                         result = await sendTermiiSms({ to, message });
   return { ...result, provider };
 }
 
@@ -5631,7 +5592,7 @@ app.patch('/api/settings/ref-pattern', authenticateToken, async (req, res) => {
   } catch (e) { sendError(res, 500, e.message); }
 });
 
-// ── SMS Provider Balances (Termii + Twilio + TextFlow) ───────────────────────
+// ── SMS Provider Balances (Termii + TextFlow) ────────────────────────────────
 async function getTermiiBalance() {
   const apiKey = process.env.TERMII_API_KEY || process.env.TERMII_SECRET_KEY;
   if (!apiKey) return { configured: false };
@@ -5648,23 +5609,6 @@ async function getTermiiBalance() {
   }
 }
 
-async function getTwilioBalance() {
-  const sid   = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  if (!sid || !token) return { configured: false };
-  try {
-    const resp = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Balance.json`, {
-      headers: { 'Authorization': 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64') },
-    });
-    const data = await resp.json().catch(() => ({}));
-    logger.info(`[SMS] Twilio balance check — status ${resp.status}, body: ${JSON.stringify(data)}`);
-    if (!resp.ok) return { configured: true, error: data?.message || `Twilio returned status ${resp.status}.` };
-    return { configured: true, balance: data.balance, currency: data.currency || 'USD' };
-  } catch (error) {
-    logger.warn('[SMS] Twilio balance check failed:', error.message);
-    return { configured: true, error: error.message };
-  }
-}
 
 async function getTextflowBalance() {
   const apiKey = process.env.TEXTFLOW_API_KEY;
@@ -5688,32 +5632,28 @@ async function getTextflowBalance() {
 app.get('/api/admin/sms-balance', authenticateToken, async (req, res) => {
   if (req.user?.role !== 'global_admin') return res.status(403).json({ error: 'Super Admin only' });
   try {
-    const [termii, twilio, textflow, provider, tThreshRow, wThreshRow, tfThreshRow] = await Promise.all([
+    const [termii, textflow, provider, tThreshRow, tfThreshRow] = await Promise.all([
       getTermiiBalance(),
-      getTwilioBalance(),
       getTextflowBalance(),
       getSmsProvider(),
       prisma.systemSetting.findFirst({ where: { key: 'sms_alert_termii_threshold' } }),
-      prisma.systemSetting.findFirst({ where: { key: 'sms_alert_twilio_threshold' } }),
       prisma.systemSetting.findFirst({ where: { key: 'sms_alert_textflow_threshold' } }),
     ]);
     const termiiThreshold    = parseFloat(tThreshRow?.value)  || 1000;
-    const twilioThreshold    = parseFloat(wThreshRow?.value)  || 5;
     const textflowThreshold  = parseFloat(tfThreshRow?.value) || 1000;
     if (termii.balance   !== undefined) termii.belowThreshold   = parseFloat(termii.balance)   < termiiThreshold;
-    if (twilio.balance   !== undefined) twilio.belowThreshold   = parseFloat(twilio.balance)   < twilioThreshold;
     if (textflow.balance !== undefined) textflow.belowThreshold = parseFloat(textflow.balance) < textflowThreshold;
-    res.json({ termii, twilio, textflow, provider, thresholds: { termii: termiiThreshold, twilio: twilioThreshold, textflow: textflowThreshold } });
+    res.json({ termii, textflow, provider, thresholds: { termii: termiiThreshold, textflow: textflowThreshold } });
   } catch (error) {
     sendError(res, 500, error.message);
   }
 });
 
 // ── SMS Balance Alert Monitor ─────────────────────────────────────────────────
-// Runs every 2 hours. If Termii < threshold (₦) or Twilio < threshold ($),
-// sends an SMS (trying both providers) + email to the configured admin phone
-// and SUPER_ADMIN_EMAIL. Repeats every 2 h while still below threshold.
-const _smsAlertLastSent = { termii: 0, twilio: 0, textflow: 0 };
+// Runs every 2 hours. If Termii or TextFlow balance drops below threshold,
+// sends an SMS + email to the configured admin phone and SUPER_ADMIN_EMAIL.
+// Repeats every 2 h while still below threshold.
+const _smsAlertLastSent = { termii: 0, textflow: 0 };
 const SMS_ALERT_COOLDOWN_MS = 2 * 60 * 60 * 1000;
 
 async function _getAdminAlertPhones() {
@@ -5743,13 +5683,12 @@ async function _getAdminAlertEmails() {
 
 async function _getSmsAlertThresholds() {
   try {
-    const [tRow, wRow, tfRow] = await Promise.all([
+    const [tRow, tfRow] = await Promise.all([
       prisma.systemSetting.findFirst({ where: { key: 'sms_alert_termii_threshold' } }),
-      prisma.systemSetting.findFirst({ where: { key: 'sms_alert_twilio_threshold' } }),
       prisma.systemSetting.findFirst({ where: { key: 'sms_alert_textflow_threshold' } }),
     ]);
-    return { termii: parseFloat(tRow?.value) || 1000, twilio: parseFloat(wRow?.value) || 5, textflow: parseFloat(tfRow?.value) || 1000 };
-  } catch { return { termii: 1000, twilio: 5, textflow: 1000 }; }
+    return { termii: parseFloat(tRow?.value) || 1000, textflow: parseFloat(tfRow?.value) || 1000 };
+  } catch { return { termii: 1000, textflow: 1000 }; }
 }
 
 async function _sendBalanceAlertSms(phones, message) {
@@ -5757,16 +5696,14 @@ async function _sendBalanceAlertSms(phones, message) {
   for (const phone of phones) {
     const tRes = await sendTermiiSms({ to: phone, message });
     if (!tRes?.error && !tRes?.skipped) continue;
-    const tfRes = await sendTextflowSms({ to: phone, message });
-    if (!tfRes?.error && !tfRes?.skipped) continue;
-    await sendTwilioSms({ to: phone, message });
+    await sendTextflowSms({ to: phone, message });
   }
 }
 
 async function checkSmsBalancesAndAlert() {
   try {
-    const [termiiData, twilioData, textflowData, thresholds, phones, emails] = await Promise.all([
-      getTermiiBalance(), getTwilioBalance(), getTextflowBalance(), _getSmsAlertThresholds(),
+    const [termiiData, textflowData, thresholds, phones, emails] = await Promise.all([
+      getTermiiBalance(), getTextflowBalance(), _getSmsAlertThresholds(),
       _getAdminAlertPhones(), _getAdminAlertEmails(),
     ]);
     const now = Date.now();
@@ -5785,24 +5722,6 @@ async function checkSmsBalancesAndAlert() {
             actionUrl: APP_BASE_URL || '', actionLabel: 'Open RMS Dashboard',
           });
           await sendEmail({ to: toEmail, subject: '⚠️ CSS RMS — Termii SMS Balance Low', text, html }).catch(e => logger.error('[SMS-ALERT] email failed:', e.message));
-        }
-      }
-    }
-
-    if (twilioData.configured && !twilioData.error && twilioData.balance !== undefined) {
-      const bal = parseFloat(twilioData.balance);
-      if (bal < thresholds.twilio && now - _smsAlertLastSent.twilio > SMS_ALERT_COOLDOWN_MS) {
-        _smsAlertLastSent.twilio = now;
-        logger.warn(`[SMS-ALERT] Twilio balance $${bal} below threshold $${thresholds.twilio} — alerting ${phones.length} phone(s), ${emails.length} email(s)`);
-        const msg = `⚠️ CSS RMS ALERT: Twilio balance is $${bal} USD. Threshold: $${thresholds.twilio}. Top up to prevent SMS failures. Repeats every 2h.`;
-        await _sendBalanceAlertSms(phones, msg);
-        for (const toEmail of emails) {
-          const { text, html } = buildEmailContent({
-            title: '⚠️ Twilio Balance Low',
-            lines: [`Current balance: $${bal} USD`, `Alert threshold: $${thresholds.twilio} USD`, 'Top up your Twilio account to prevent SMS delivery failures.', 'This alert repeats every 2 hours until the balance is above threshold.'],
-            actionUrl: APP_BASE_URL || '', actionLabel: 'Open RMS Dashboard',
-          });
-          await sendEmail({ to: toEmail, subject: '⚠️ CSS RMS — Twilio Balance Low', text, html }).catch(e => logger.error('[SMS-ALERT] email failed:', e.message));
         }
       }
     }
