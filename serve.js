@@ -9792,11 +9792,9 @@ app.post('/api/test-sms', authenticateToken, requireRoles(['global_admin']), asy
       results = await Promise.all([
         runProvider('termii',   sendTermiiSms),
         runProvider('textflow', sendTextflowSms),
-        runProvider('twilio',   sendTwilioSms),
       ]);
     } else if (provider === 'termii')   { results = [await runProvider('termii',   sendTermiiSms)]; }
     else if (provider === 'textflow')   { results = [await runProvider('textflow', sendTextflowSms)]; }
-    else if (provider === 'twilio')     { results = [await runProvider('twilio',   sendTwilioSms)]; }
     else { return res.json({ success: false, results: [{ provider, success: false, error: 'Unknown provider' }] }); }
 
     const anyOk = results.some(r => r.success);
