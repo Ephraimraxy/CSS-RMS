@@ -60,3 +60,8 @@ tsconfig.json
 # Allow project runtime helpers in /lib
 !/lib/
 !/lib/**
+
+# Local working folders — never commit
+MEDIAN/
+restored.dump
+samples/

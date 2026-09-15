@@ -998,7 +998,7 @@ const Login = () => {
                     className="w-full bg-primary hover:bg-primary/90 active:bg-primary/95 text-primary-foreground font-bold py-4 px-5 rounded-2xl transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-3 active:scale-[0.985] disabled:opacity-50 text-base">
                     {isSubmitting
                       ? <><div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"/><span>Authenticating…</span></>
-                      : <><span>Enter RMS Portal</span><ArrowRight size={18}/></>}
+                      : <><span>Login</span><ArrowRight size={18}/></>}
                   </button>
 
                   {/* Biometric login button — only on native device with saved credentials */}
