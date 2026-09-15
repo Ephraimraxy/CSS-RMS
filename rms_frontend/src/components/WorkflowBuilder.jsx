@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import PipelineDelegationTab from './PipelineDelegationTab';
 import { Plus, Trash2, Shield, ArrowDown, Settings2, Info, FileText, ChevronRight, Save, Loader2, Monitor, Hash, ShieldCheck, Sparkles, Printer, Award, Phone, Send, CheckCircle2, Wifi, WifiOff, AlertCircle, RotateCcw, Mail, Eye, X, AlertTriangle, Zap, BadgeCheck, ArrowRight, Clock, PenTool, Pencil, MessageSquare, Image, Upload } from 'lucide-react';
 
 const WorkflowStage = ({ stage, onUpdate, onDelete, isFirst }) => {
@@ -488,6 +489,9 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [approvalTimerHr,  setApprovalTimerHr]  = useState('');
   const [approvalTimerGm,  setApprovalTimerGm]  = useState('');
   const [approvalTimerCeo, setApprovalTimerCeo] = useState('');
+  // Pipeline stage timer configuration — stored as JSON in SystemSetting
+  // Each stage: { id, deptId, timerCritical, timerUrgent, timerNormal, onExpiry, escalationDeptIds }
+  const [pipelineStages, setPipelineStages] = useState([]);
   // Part-payment discount verifier dept
   const [discountVerifierDeptId, setDiscountVerifierDeptId]       = useState('');
   const [adminCreateFundEnabled, setAdminCreateFundEnabled]       = useState(false);
@@ -660,6 +664,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         priorityCriticalRes, priorityUrgentRes, priorityNormalRes, priorityEscDeptIdsRes,
         discountVerifierDeptIdRes,
         approvalTimerHrRes, approvalTimerGmRes, approvalTimerCeoRes,
+        pipelineStagesRes,
       ] = await Promise.allSettled([
         settingsAPI.get('document_studio_enabled'),
         settingsAPI.get('hr_portal_enabled'),
@@ -686,6 +691,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.get('approval_timer_hr_minutes'),
         settingsAPI.get('approval_timer_gm_minutes'),
         settingsAPI.get('approval_timer_ceo_minutes'),
+        settingsAPI.get('pipeline_stages'),
       ]);
       if (studioRes.status === 'fulfilled' && studioRes.value?.value !== undefined)
         setStudioEnabled(studioRes.value.value !== 'false');
@@ -752,6 +758,9 @@ const WorkflowBuilder = ({ onViewChange }) => {
       }
       if (approvalTimerCeoRes.status === 'fulfilled') {
         const v = parseFloat(approvalTimerCeoRes.value?.value); setApprovalTimerCeo(!isNaN(v) && v > 0 ? String(v) : '');
+      }
+      if (pipelineStagesRes.status === 'fulfilled' && pipelineStagesRes.value?.value) {
+        try { setPipelineStages(JSON.parse(pipelineStagesRes.value.value)); } catch { setPipelineStages([]); }
       }
     } catch {}
 
@@ -843,6 +852,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.set('approval_timer_hr_minutes',  approvalTimerHr  !== '' ? String(parseFloat(approvalTimerHr))  : '0'),
         settingsAPI.set('approval_timer_gm_minutes',  approvalTimerGm  !== '' ? String(parseFloat(approvalTimerGm))  : '0'),
         settingsAPI.set('approval_timer_ceo_minutes', approvalTimerCeo !== '' ? String(parseFloat(approvalTimerCeo)) : '0'),
+        settingsAPI.set('pipeline_stages', JSON.stringify(pipelineStages)),
       ]);
       toast.success('Feature settings saved.');
       window.dispatchEvent(new CustomEvent('rms:flags:updated'));
@@ -1165,10 +1175,11 @@ const WorkflowBuilder = ({ onViewChange }) => {
         <div className="overflow-x-auto pb-1 -mb-1">
           <div className="flex bg-muted/40 p-1.5 rounded-2xl border border-border/50 shadow-inner min-w-max gap-0.5">
             {[
-              { id: 'features', label: 'Features' },
-              { id: 'stages',   label: 'Workflow, Types & Ref Code' },
-              { id: 'print',    label: 'Print, Stamp & Contact' },
-              { id: 'images',   label: 'Images' },
+              { id: 'features',  label: 'Features' },
+              { id: 'pipeline',  label: 'Pipeline & Delegation' },
+              { id: 'stages',    label: 'Workflow, Types & Ref Code' },
+              { id: 'print',     label: 'Print, Stamp & Contact' },
+              { id: 'images',    label: 'Images' },
               { id: 'zkteco',     label: 'ZKTeco & Desktop Sync' },
               { id: 'onboarding', label: 'Staff Onboarding SMS' },
               { id: 'bin',        label: 'Deleted Records & Danger Zone' },
@@ -1955,6 +1966,18 @@ const WorkflowBuilder = ({ onViewChange }) => {
               </div>
             </div>
           </div>
+        ) : activeTab === 'pipeline' ? (
+          <PipelineDelegationTab
+            allDepts={allDepts}
+            pipelineStages={pipelineStages}
+            setPipelineStages={setPipelineStages}
+            onSave={async () => {
+              try {
+                await settingsAPI.set('pipeline_stages', JSON.stringify(pipelineStages));
+                toast.success('Pipeline stages saved.');
+              } catch { toast.error('Failed to save pipeline stages.'); }
+            }}
+          />
         ) : activeTab === 'stages' ? (
           <div className="space-y-10 animate-in fade-in slide-in-from-bottom-2 duration-500">
             <div>

@@ -359,7 +359,34 @@ export const reqAPI = {
   },
   async getSubVisibility(id) {
     return api.get(`/requisitions/${id}/sub-visibility`);
-  }
+  },
+  // Pipeline: change priority with reason
+  async changePriority(id, urgency, reason) {
+    return api.post(`/requisitions/${id}/change-priority`, { urgency, reason });
+  },
+  async getPriorityLog(id) {
+    return api.get(`/requisitions/${id}/priority-log`);
+  },
+  // Pipeline: internal delegation
+  async delegateRequest(id, subDeptId, instruction) {
+    return api.post(`/requisitions/${id}/delegate`, { subDeptId, instruction });
+  },
+  async submitDelegation(id, assignmentId, note, attachments) {
+    return api.post(`/requisitions/${id}/delegation/${assignmentId}/submit`, { note, attachments });
+  },
+  async confirmDelegation(id, assignmentId) {
+    return api.post(`/requisitions/${id}/delegation/${assignmentId}/confirm`);
+  },
+  async getDelegations(id) {
+    return api.get(`/requisitions/${id}/delegations`);
+  },
+  async uploadDelegationAttachments(reqId, files) {
+    const formData = new FormData();
+    files.forEach(f => formData.append('files', f));
+    return api.post(`/requisitions/${reqId}/attachments`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+  },
 };
 
 export const storeAPI = {

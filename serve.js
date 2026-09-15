@@ -463,6 +463,125 @@ function getAuthorityTier(deptName) {
   return null;
 }
 
+// ── Pipeline stage timer check ────────────────────────────────────────────────
+// Runs every 60 s. Reads the `pipeline_stages` SystemSetting (JSON array built
+// by the admin in the Pipeline & Delegation settings tab). For each stage,
+// checks all in-progress requests currently at that department and alerts or
+// escalates when the configured timer expires.
+//
+// Stage JSON shape:
+//   { id, deptId, timerCritical, timerUrgent, timerNormal,
+//     onExpiry: 'alert'|'escalate', escalationDeptIds: number[] }
+//
+// Timer is skipped when the request is ICC-frozen, in a vetting detour, stalled,
+// or waiting for re-approval — same safety rules as runApprovalTimerCheck.
+async function runStageTimerCheck() {
+  try {
+    const stageSetting = await prisma.systemSetting.findUnique({ where: { key: 'pipeline_stages' } });
+    if (!stageSetting?.value) return;
+
+    let stages;
+    try { stages = JSON.parse(stageSetting.value); } catch { return; }
+    if (!Array.isArray(stages) || stages.length === 0) return;
+
+    const now = new Date();
+    const activeDeptIds = stages.map(s => Number(s.deptId)).filter(Boolean);
+    if (activeDeptIds.length === 0) return;
+
+    // Fetch all in-progress requests sitting at a configured stage department
+    const candidates = await prisma.requisition.findMany({
+      where: {
+        targetDepartmentId: { in: activeDeptIds },
+        status:             { notIn: ['approved', 'treated', 'published', 'rejected'] },
+        finalApprovalStatus:{ notIn: ['approved', 'treated', 'published', 'rejected'] },
+        iccFrozen:          false,
+        needsReapproval:    false,
+        approvalStalled:    false,
+        currentVettingDeptId: null,
+        currentDeptArrivedAt: { not: null },
+      },
+      include: {
+        department:       { select: { id: true, name: true } },
+        targetDepartment: { select: { id: true, name: true } },
+      },
+    });
+
+    for (const req of candidates) {
+      const stage = stages.find(s => Number(s.deptId) === req.targetDepartmentId);
+      if (!stage) continue;
+
+      // Pick timer based on urgency
+      const urgency = (req.urgency || 'normal').toLowerCase();
+      const timerMins = urgency === 'critical'
+        ? (parseFloat(stage.timerCritical) || 0)
+        : urgency === 'urgent'
+          ? (parseFloat(stage.timerUrgent) || 0)
+          : (parseFloat(stage.timerNormal) || 0);
+
+      if (timerMins <= 0) continue;
+
+      const elapsedMins = (now - new Date(req.currentDeptArrivedAt)) / 60000;
+      if (elapsedMins < timerMins) continue;
+
+      const holderDept = req.targetDepartment?.name || 'Unknown';
+      const reqLabel   = req.title || req.refCode || `#${req.id}`;
+      const elapsed    = `${Math.floor(elapsedMins)}m`;
+
+      if (stage.onExpiry === 'escalate' && Array.isArray(stage.escalationDeptIds) && stage.escalationDeptIds.length > 0) {
+        // Escalate to first dept in the queue
+        const targetDeptId = Number(stage.escalationDeptIds[0]);
+        const targetDept   = await prisma.department.findUnique({ where: { id: targetDeptId }, select: { id: true, name: true } });
+        if (targetDept) {
+          await prisma.requisition.update({
+            where: { id: req.id },
+            data:  { targetDepartmentId: targetDept.id, currentDeptArrivedAt: now },
+          });
+          await prisma.forwardEvent.create({
+            data: {
+              requisitionId: req.id,
+              fromDeptId:    req.targetDepartmentId,
+              toDeptId:      targetDept.id,
+              action:        'forwarded',
+              note:          `Pipeline auto-escalation: ${holderDept} held for ${elapsed} (limit: ${timerMins}m, urgency: ${urgency})`,
+            },
+          }).catch(() => {});
+          await notifyDepartmentHead({
+            departmentId: targetDept.id, requisition: req,
+            subject: `⏰ Escalated to you — pipeline timer expired at ${holderDept}`,
+            lines: [
+              `"${reqLabel}" was escalated because ${holderDept} held it for ${elapsed} without acting (limit: ${timerMins}m).`,
+              `It has been forwarded to your department.`,
+            ],
+          }).catch(() => {});
+          await notifyDepartmentHead({
+            departmentId: req.targetDepartmentId, requisition: req,
+            subject: `⏱ Time expired — "${reqLabel}" escalated`,
+            lines: [`Your ${timerMins}-minute window (${urgency}) to act on this request has passed. It has been forwarded to ${targetDept.name}.`],
+          }).catch(() => {});
+          logger.info(`[STAGE TIMER] Req #${req.id} escalated from ${holderDept} → ${targetDept.name} (${elapsed} elapsed)`);
+        }
+      } else {
+        // Alert only
+        const subject = `⏰ Stage Delay Alert — "${reqLabel}" at ${holderDept}`;
+        const lines = [
+          `"${reqLabel}" has been sitting at ${holderDept} for ${elapsed} with no action.`,
+          `The configured limit for ${urgency} requests at this stage is ${timerMins} minutes.`,
+          `Please follow up immediately.`,
+        ];
+        const adminUsers = await prisma.user.findMany({ where: { role: 'global_admin' }, select: { id: true } });
+        await Promise.all(adminUsers.map(u =>
+          prisma.notification.create({ data: { userId: u.id, content: subject, link: `/requisitions/${req.id}` } }).catch(() => {})
+        ));
+        await notifyDepartmentHead({ departmentId: req.targetDepartmentId, requisition: req, subject, lines }).catch(() => {});
+        logger.info(`[STAGE TIMER] Alert sent for Req #${req.id} at ${holderDept} — ${elapsed} elapsed`);
+      }
+    }
+  } catch (err) {
+    logger.error('[STAGE TIMER] Check failed:', err.message);
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── Sub-account privilege helpers ─────────────────────────────────────────────
 // getEffectiveReqAmount now lives in rms_backend/lib/businessRules.js (required above).
 
@@ -6192,6 +6311,243 @@ app.post('/api/requisitions/:id/creator-comment', authenticateToken, async (req,
   } catch (error) { sendError(res, 500, error.message); }
 });
 
+// ── Pipeline: Change Priority ─────────────────────────────────────────────────
+// Both the department currently holding the request AND Super Admin may change
+// the urgency (priority). Both must supply a written reason. The change is
+// logged with full trail and the new priority's stage timer rules apply immediately.
+app.post('/api/requisitions/:id/change-priority', authenticateToken, async (req, res) => {
+  try {
+    const { id }        = req.params;
+    const { urgency, reason } = req.body;
+    if (!urgency || !['normal','urgent','critical'].includes(urgency))
+      return res.status(400).json({ error: 'urgency must be normal | urgent | critical' });
+    if (!reason || !reason.trim())
+      return res.status(400).json({ error: 'A written reason is required to change priority' });
+
+    const requisition = await prisma.requisition.findUnique({ where: { id: parseInt(id) } });
+    if (!requisition) return res.status(404).json({ error: 'Requisition not found' });
+    if (requisition.urgency === urgency)
+      return res.status(400).json({ error: 'New urgency is the same as the current one' });
+
+    const isAdmin    = req.user?.role === 'global_admin';
+    const userDeptId = Number(req.user?.departmentId || 0);
+    const holderDeptId = requisition.targetDepartmentId || requisition.departmentId;
+
+    // Only the holding dept or admin may change priority
+    if (!isAdmin && userDeptId !== holderDeptId)
+      return res.status(403).json({ error: 'Only the department currently holding this request or a Super Admin may change its priority' });
+
+    const fromUrgency = requisition.urgency || 'normal';
+    const actorName   = req.user?.name || (isAdmin ? 'Super Admin' : 'Department');
+    const deptName    = req.user?.departmentName || null;
+
+    await prisma.requisition.update({
+      where: { id: parseInt(id) },
+      data:  { urgency, currentDeptArrivedAt: new Date() }, // reset stage timer from now
+    });
+
+    await prisma.priorityChangeLog.create({
+      data: {
+        requisitionId:    parseInt(id),
+        changedByDeptId:  isAdmin ? null : userDeptId,
+        changedByDeptName: deptName,
+        changedByName:    actorName,
+        fromUrgency,
+        toUrgency:        urgency,
+        reason:           reason.trim(),
+      },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId:  getNumericUserId(req.user) || null,
+        action:  'Priority Changed',
+        details: `Req #${id}: priority changed ${fromUrgency} → ${urgency} by ${actorName}. Reason: ${reason.trim()}`,
+      },
+    });
+
+    broadcastUpdate(parseInt(id), { action: 'priorityChanged', urgency, fromUrgency, by: actorName });
+    res.json({ ok: true, fromUrgency, toUrgency: urgency });
+  } catch (err) {
+    logger.error('[CHANGE PRIORITY]', err.message);
+    res.status(500).json({ error: 'Failed to change priority' });
+  }
+});
+
+// ── Pipeline: Get priority change log for a request ───────────────────────────
+app.get('/api/requisitions/:id/priority-log', authenticateToken, async (req, res) => {
+  try {
+    const logs = await prisma.priorityChangeLog.findMany({
+      where:   { requisitionId: parseInt(req.params.id) },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch priority log' });
+  }
+});
+
+// ── Pipeline: Internal Delegation ─────────────────────────────────────────────
+// HEAD assigns request to a sub-account to work on.
+app.post('/api/requisitions/:id/delegate', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { subDeptId, instruction } = req.body;
+    if (!subDeptId) return res.status(400).json({ error: 'subDeptId is required' });
+
+    const requisition = await prisma.requisition.findUnique({ where: { id: parseInt(id) } });
+    if (!requisition) return res.status(404).json({ error: 'Requisition not found' });
+
+    const userDeptId = Number(req.user?.departmentId || 0);
+    const holderDeptId = requisition.targetDepartmentId || requisition.departmentId;
+    if (userDeptId !== holderDeptId && req.user?.role !== 'global_admin')
+      return res.status(403).json({ error: 'Only the holding department may delegate this request' });
+
+    // Verify the target sub-account belongs to this department
+    const subDept = await prisma.department.findUnique({
+      where: { id: parseInt(subDeptId) },
+      select: { id: true, name: true, parentId: true, isSubAccount: true },
+    });
+    if (!subDept || !subDept.isSubAccount || subDept.parentId !== userDeptId)
+      return res.status(400).json({ error: 'Target must be a sub-account of your department' });
+
+    // Mark any existing active assignment on this request from this dept as reassigned
+    await prisma.deptAssignment.updateMany({
+      where: { requisitionId: parseInt(id), assignedByDeptId: userDeptId, status: 'active' },
+      data:  { status: 'reassigned' },
+    });
+
+    const assignment = await prisma.deptAssignment.create({
+      data: {
+        requisitionId:      parseInt(id),
+        assignedByDeptId:   userDeptId,
+        assignedToSubDeptId: parseInt(subDeptId),
+        assignedByName:     req.user?.name || 'Department Head',
+        assignedToName:     subDept.name,
+        instruction:        instruction?.trim() || null,
+        status:             'active',
+      },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId:  getNumericUserId(req.user) || null,
+        action:  'Request Delegated',
+        details: `Req #${id}: delegated to sub-account "${subDept.name}" by ${req.user?.name || 'Head'}`,
+      },
+    });
+
+    broadcastUpdate(parseInt(id), { action: 'delegated', assignedTo: subDept.name });
+    res.json(assignment);
+  } catch (err) {
+    logger.error('[DELEGATE]', err.message);
+    res.status(500).json({ error: 'Failed to delegate request' });
+  }
+});
+
+// ── Pipeline: Sub-account submits work on a delegation ───────────────────────
+app.post('/api/requisitions/:id/delegation/:assignmentId/submit', authenticateToken, async (req, res) => {
+  try {
+    const { id, assignmentId } = req.params;
+    const { note, attachments } = req.body; // attachments: [{ key, name, mimeType, size }]
+
+    const assignment = await prisma.deptAssignment.findUnique({ where: { id: parseInt(assignmentId) } });
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
+    if (assignment.requisitionId !== parseInt(id))
+      return res.status(400).json({ error: 'Assignment does not belong to this requisition' });
+    if (assignment.status !== 'active')
+      return res.status(400).json({ error: 'This assignment is no longer active' });
+
+    const userDeptId = Number(req.user?.departmentId || 0);
+    if (userDeptId !== assignment.assignedToSubDeptId)
+      return res.status(403).json({ error: 'Only the assigned sub-account may submit work on this delegation' });
+
+    const updated = await prisma.deptAssignment.update({
+      where: { id: parseInt(assignmentId) },
+      data: {
+        status:                'submitted',
+        submissionNote:        note?.trim() || null,
+        submissionAttachments: attachments ? JSON.stringify(attachments) : null,
+        submittedAt:           new Date(),
+      },
+    });
+
+    // Notify the head
+    const requisition = await prisma.requisition.findUnique({ where: { id: parseInt(id) }, select: { title: true, refCode: true } });
+    const reqLabel    = requisition?.title || requisition?.refCode || `#${id}`;
+    await notifyDepartmentHead({
+      departmentId: assignment.assignedByDeptId,
+      requisition:  { id: parseInt(id), title: reqLabel },
+      subject:      `✅ Delegation Submitted — "${reqLabel}"`,
+      lines: [
+        `${assignment.assignedToName} has finished working on "${reqLabel}" and marked it as done.`,
+        note ? `Submission note: "${note.trim()}"` : 'No submission note.',
+        `Please review and proceed.`,
+      ],
+    }).catch(() => {});
+
+    broadcastUpdate(parseInt(id), { action: 'delegationSubmitted', by: assignment.assignedToName });
+    res.json(updated);
+  } catch (err) {
+    logger.error('[DELEGATION SUBMIT]', err.message);
+    res.status(500).json({ error: 'Failed to submit delegation work' });
+  }
+});
+
+// ── Pipeline: Head confirms delegation is done and takes it back ─────────────
+app.post('/api/requisitions/:id/delegation/:assignmentId/confirm', authenticateToken, async (req, res) => {
+  try {
+    const { id, assignmentId } = req.params;
+
+    const assignment = await prisma.deptAssignment.findUnique({ where: { id: parseInt(assignmentId) } });
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
+    if (assignment.requisitionId !== parseInt(id))
+      return res.status(400).json({ error: 'Assignment does not belong to this requisition' });
+    if (!['active', 'submitted'].includes(assignment.status))
+      return res.status(400).json({ error: 'Assignment is already confirmed or invalid' });
+
+    const userDeptId = Number(req.user?.departmentId || 0);
+    if (userDeptId !== assignment.assignedByDeptId && req.user?.role !== 'global_admin')
+      return res.status(403).json({ error: 'Only the delegating department head may confirm this delegation' });
+
+    const updated = await prisma.deptAssignment.update({
+      where: { id: parseInt(assignmentId) },
+      data: {
+        status:          'confirmed',
+        confirmedByName: req.user?.name || 'Department Head',
+        confirmedAt:     new Date(),
+      },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId:  getNumericUserId(req.user) || null,
+        action:  'Delegation Confirmed',
+        details: `Req #${id}: delegation to "${assignment.assignedToName}" confirmed by ${req.user?.name || 'Head'}`,
+      },
+    });
+
+    broadcastUpdate(parseInt(id), { action: 'delegationConfirmed', by: req.user?.name || 'Head' });
+    res.json(updated);
+  } catch (err) {
+    logger.error('[DELEGATION CONFIRM]', err.message);
+    res.status(500).json({ error: 'Failed to confirm delegation' });
+  }
+});
+
+// ── Pipeline: Get all delegations for a request ───────────────────────────────
+app.get('/api/requisitions/:id/delegations', authenticateToken, async (req, res) => {
+  try {
+    const delegations = await prisma.deptAssignment.findMany({
+      where:   { requisitionId: parseInt(req.params.id) },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json(delegations);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch delegations' });
+  }
+});
+
 // ── KIV (Keep In View) — holder or ICC puts request on hold ───────────────────
 app.post('/api/requisitions/:id/kiv', authenticateToken, async (req, res) => {
   try {
@@ -6419,6 +6775,8 @@ app.post('/api/requisitions/:id/forward', authenticateToken, async (req, res) =>
       data: {
         targetDepartmentId: returnTargetId,
         forwardNote: note || null,
+        // Record when the request arrived at the new department for pipeline stage timer
+        currentDeptArrivedAt: returnToSender ? null : new Date(),
         ...extraVettingData,
         ...timerUpdate,
       },
@@ -11360,6 +11718,9 @@ const server = app.listen(PORT, async () => {
       // Safe no-op when no timers are configured (0 = disabled).
       setInterval(runApprovalTimerCheck, 60_000);
       runApprovalTimerCheck().catch(() => {});
+      // ── Pipeline stage timer job ──────────────────────────────────────────
+      setInterval(runStageTimerCheck, 60_000);
+      runStageTimerCheck().catch(() => {});
       // ────────────────────────────────────────────────────────────────────────
     }
   } catch (err) {

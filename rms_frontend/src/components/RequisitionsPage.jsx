@@ -18,7 +18,8 @@ import {
   Building2, ArrowRight, ArrowLeft, History, Download, AlertTriangle,
   ExternalLink, ArrowDownToLine, MessageSquare, RotateCcw, Forward as ForwardIcon,
   CheckCircle2, Award, ChevronDown, ChevronUp, Gavel, Zap, Trash, BookMarked, Users,
-  Lock, Unlock, ShieldAlert, MessageCircle, Check, Shield
+  Lock, Unlock, ShieldAlert, MessageCircle, Check, Shield, AlertCircle, ArrowUp,
+  UserCheck, Paperclip as PaperclipIcon, Flag
 } from 'lucide-react';
 import { reqAPI, forwardAPI, discountAPI } from '../lib/api';
 
@@ -4266,6 +4267,27 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                 </div>
               )}
 
+              {/* Priority Change Panel — holding dept or admin may re-classify urgency with reason */}
+              {detail && !loading && !isMemoRecord(req) && (
+                <PriorityChangePanel
+                  req={req}
+                  detail={detail}
+                  user={user}
+                  onDone={() => { getRequisitionDetail(req.id).then(d => setDetail(d)); onAction(); }}
+                />
+              )}
+
+              {/* Delegation Panel — head can assign request internally to sub-account */}
+              {detail && !loading && !isMemoRecord(req) && (
+                <DelegationPanel
+                  req={req}
+                  detail={detail}
+                  user={user}
+                  subAccounts={departments}
+                  onDone={() => { getRequisitionDetail(req.id).then(d => setDetail(d)); onAction(); }}
+                />
+              )}
+
               {/* Audit Override Panel — primary action surface for Audit dept (replaces RespondPanel) */}
               {!isTaggedObserver && user?.role === 'department' && detail && !loading && !isFrozen &&
                /\baudit\b/i.test(user?.name || '') &&
@@ -5233,6 +5255,335 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
           } finally { setDeletingAttachment(false); }
         }}
       />
+    </div>
+  );
+};
+
+// ── Priority Change Panel ─────────────────────────────────────────────────────
+// Shown to: (a) the dept currently holding the request, (b) Super Admin.
+// Both must supply a written reason. The change is stamped in the priority log.
+const PriorityChangePanel = ({ req, detail, user, onDone }) => {
+  const [open, setOpen]       = useState(false);
+  const [urgency, setUrgency] = useState('');
+  const [reason, setReason]   = useState('');
+  const [acting, setActing]   = useState(false);
+  const [log, setLog]         = useState(null);
+
+  const isAdmin      = user?.role === 'global_admin';
+  const holderDeptId = detail?.targetDepartmentId || req?.departmentId;
+  const isHolder     = user?.deptId && parseInt(user.deptId) === parseInt(holderDeptId);
+  if (!isAdmin && !isHolder) return null;
+  if (['treated', 'published', 'approved', 'rejected'].includes(detail?.status || req?.status)) return null;
+
+  const current = detail?.urgency || req?.urgency || 'normal';
+
+  const urgencyConfig = {
+    critical: { label: 'Critical', color: 'red',   dot: 'bg-red-500 animate-pulse' },
+    urgent:   { label: 'Urgent',   color: 'amber', dot: 'bg-amber-500' },
+    normal:   { label: 'Normal',   color: 'slate', dot: 'bg-slate-400' },
+  };
+
+  async function loadLog() {
+    try { const r = await reqAPI.getPriorityLog(req.id); setLog(r); } catch { setLog([]); }
+  }
+
+  async function handleChange() {
+    if (!urgency || urgency === current) return;
+    if (!reason.trim()) { toast.error('A written reason is required.'); return; }
+    setActing(true);
+    try {
+      await reqAPI.changePriority(req.id, urgency, reason.trim());
+      toast.success(`Priority changed to ${urgencyConfig[urgency]?.label || urgency}.`);
+      setOpen(false); setReason(''); setUrgency('');
+      onDone?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'Failed to change priority.');
+    } finally { setActing(false); }
+  }
+
+  return (
+    <div className="mt-2">
+      {!open ? (
+        <button onClick={() => { setOpen(true); loadLog(); }}
+          className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-orange-200 bg-orange-50 hover:bg-orange-100 text-orange-700 text-[10px] font-black transition-all">
+          <Flag size={11} />
+          Change Priority
+        </button>
+      ) : (
+        <div className="space-y-3 p-3 rounded-xl bg-orange-50 border border-orange-200 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <p className="text-[10px] font-black text-orange-800 uppercase tracking-wide flex items-center gap-1.5">
+            <Flag size={10} /> Change Priority
+          </p>
+
+          {/* Current */}
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+            <span>Current:</span>
+            <span className="flex items-center gap-1 font-bold text-foreground">
+              <div className={`w-1.5 h-1.5 rounded-full ${urgencyConfig[current]?.dot}`} />
+              {urgencyConfig[current]?.label || current}
+            </span>
+          </div>
+
+          {/* New urgency selection */}
+          <div className="grid grid-cols-3 gap-1.5">
+            {['critical','urgent','normal'].filter(u => u !== current).map(u => (
+              <button key={u} type="button" onClick={() => setUrgency(u)}
+                className={`py-2 rounded-xl border-2 text-[9px] font-black uppercase tracking-widest transition-all ${urgency === u ? `border-${urgencyConfig[u].color}-400 bg-${urgencyConfig[u].color}-50 text-${urgencyConfig[u].color}-700` : 'border-border/40 bg-white text-muted-foreground hover:border-orange-200'}`}>
+                <div className={`w-1.5 h-1.5 rounded-full mx-auto mb-1 ${urgencyConfig[u].dot}`} />
+                {urgencyConfig[u].label}
+              </button>
+            ))}
+          </div>
+
+          <textarea
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            rows={2}
+            placeholder="State the reason for changing priority (required)…"
+            className="w-full text-xs border border-orange-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none bg-white"
+          />
+
+          <div className="flex gap-2">
+            <button onClick={handleChange} disabled={acting || !urgency || !reason.trim() || urgency === current}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold transition-all disabled:opacity-50">
+              {acting ? <Loader2 size={11} className="animate-spin" /> : <Flag size={11} />}
+              {acting ? 'Changing…' : 'Confirm Change'}
+            </button>
+            <button onClick={() => { setOpen(false); setReason(''); setUrgency(''); }}
+              className="px-3 py-2 rounded-xl border border-orange-200 text-orange-700 text-xs font-bold hover:bg-orange-100 transition-all">
+              Cancel
+            </button>
+          </div>
+
+          {/* Change log trail */}
+          {log && log.length > 0 && (
+            <div className="space-y-1 pt-1 border-t border-orange-200">
+              <p className="text-[9px] font-black text-orange-700 uppercase tracking-widest">Change Trail</p>
+              {log.map(entry => (
+                <div key={entry.id} className="text-[9px] text-muted-foreground leading-relaxed bg-white rounded-lg px-2 py-1.5 border border-orange-100">
+                  <span className="font-bold text-foreground">{urgencyConfig[entry.fromUrgency]?.label || entry.fromUrgency}</span>
+                  {' → '}
+                  <span className="font-bold text-foreground">{urgencyConfig[entry.toUrgency]?.label || entry.toUrgency}</span>
+                  {' by '}<span className="font-semibold">{entry.changedByName || 'Unknown'}</span>
+                  {entry.changedByDeptName ? ` (${entry.changedByDeptName})` : ''}
+                  {' — '}{entry.reason}
+                  <span className="block text-[8px] text-muted-foreground/60 mt-0.5">{new Date(entry.createdAt).toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Delegation Panel ──────────────────────────────────────────────────────────
+// Dept head (holder) can assign request to a sub-account. Sub-account submits
+// work. Head confirms. All steps trailed.
+const DelegationPanel = ({ req, detail, user, subAccounts, onDone }) => {
+  const [open, setOpen]           = useState(false);
+  const [delegations, setDelegations] = useState(null);
+  const [selectedSub, setSelectedSub] = useState('');
+  const [instruction, setInstruction] = useState('');
+  const [acting, setActing]       = useState(false);
+
+  // Sub-account submitting work
+  const [submitNote, setSubmitNote]     = useState('');
+  const [submitFiles, setSubmitFiles]   = useState([]);
+  const [submitting, setSubmitting]     = useState(false);
+  const [confirming, setConfirming]     = useState(false);
+  const fileRef                         = React.useRef(null);
+
+  const isAdmin      = user?.role === 'global_admin';
+  const holderDeptId = detail?.targetDepartmentId || req?.departmentId;
+  const isHolder     = user?.deptId && parseInt(user.deptId) === parseInt(holderDeptId);
+  const isSubOfHolder = user?.isSubAccount && user?.parentDeptId && parseInt(user.parentDeptId) === parseInt(holderDeptId);
+
+  // Show to: head holding it, sub-accounts of head, admin
+  if (!isAdmin && !isHolder && !isSubOfHolder) return null;
+  if (['treated', 'published', 'approved', 'rejected'].includes(detail?.status || req?.status)) return null;
+
+  const mySubAccounts = (subAccounts || []).filter(d => d.isSubAccount && parseInt(d.parentId) === parseInt(user?.deptId));
+
+  async function loadDelegations() {
+    try { const r = await reqAPI.getDelegations(req.id); setDelegations(r); } catch { setDelegations([]); }
+  }
+
+  async function handleDelegate() {
+    if (!selectedSub) { toast.error('Select a sub-account first.'); return; }
+    setActing(true);
+    try {
+      await reqAPI.delegateRequest(req.id, parseInt(selectedSub), instruction.trim() || undefined);
+      toast.success('Request delegated successfully.');
+      setInstruction(''); setSelectedSub('');
+      await loadDelegations();
+      onDone?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'Failed to delegate.');
+    } finally { setActing(false); }
+  }
+
+  async function handleSubmitWork(assignmentId) {
+    if (!submitNote.trim() && submitFiles.length === 0) {
+      toast.error('Add a note or attach a file before marking as done.'); return;
+    }
+    setSubmitting(true);
+    try {
+      let attachments = [];
+      if (submitFiles.length > 0) {
+        const uploaded = await reqAPI.uploadDelegationAttachments(req.id, submitFiles);
+        attachments = (uploaded || []).map(f => ({ key: f.storageKey || f.key, name: f.filename || f.name, mimeType: f.mimeType, size: f.size }));
+      }
+      await reqAPI.submitDelegation(req.id, assignmentId, submitNote.trim(), attachments);
+      toast.success('Work submitted. Your head can now review and proceed.');
+      setSubmitNote(''); setSubmitFiles([]);
+      await loadDelegations();
+      onDone?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'Failed to submit work.');
+    } finally { setSubmitting(false); }
+  }
+
+  async function handleConfirm(assignmentId) {
+    setConfirming(true);
+    try {
+      await reqAPI.confirmDelegation(req.id, assignmentId);
+      toast.success('Delegation confirmed. You can now proceed with the request.');
+      await loadDelegations();
+      onDone?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'Failed to confirm.');
+    } finally { setConfirming(false); }
+  }
+
+  const statusColor = { active: 'blue', submitted: 'emerald', confirmed: 'slate', reassigned: 'amber' };
+  const statusLabel = { active: 'In Progress', submitted: 'Submitted — Review', confirmed: 'Confirmed', reassigned: 'Reassigned' };
+
+  return (
+    <div className="mt-2">
+      {!open ? (
+        <button onClick={() => { setOpen(true); loadDelegations(); }}
+          className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-black transition-all">
+          <UserCheck size={11} />
+          {isSubOfHolder ? 'View Assignment' : 'Delegate / Assign'}
+        </button>
+      ) : (
+        <div className="space-y-3 p-3 rounded-xl bg-blue-50 border border-blue-200 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-black text-blue-800 uppercase tracking-wide flex items-center gap-1.5">
+              <UserCheck size={10} /> Internal Delegation
+            </p>
+            <button onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground">
+              <X size={12} />
+            </button>
+          </div>
+
+          {/* Existing delegation trail */}
+          {delegations && delegations.length > 0 && (
+            <div className="space-y-2">
+              {delegations.map(d => {
+                const color = statusColor[d.status] || 'slate';
+                const isMyAssignment = user?.isSubAccount && parseInt(user?.deptId) === parseInt(d.assignedToSubDeptId);
+                const isMyConfirmation = isHolder && parseInt(user?.deptId) === parseInt(d.assignedByDeptId);
+
+                return (
+                  <div key={d.id} className={`rounded-xl border-2 p-3 space-y-2 bg-white border-${color}-200`}>
+                    <div className="flex items-center gap-2 justify-between">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-muted-foreground">Assigned to</p>
+                        <p className="text-xs font-bold text-foreground">{d.assignedToName}</p>
+                      </div>
+                      <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-${color}-100 text-${color}-700`}>
+                        {statusLabel[d.status] || d.status}
+                      </span>
+                    </div>
+                    {d.instruction && (
+                      <p className="text-[9px] text-muted-foreground bg-muted/20 rounded-lg px-2 py-1">
+                        <span className="font-bold">Instruction:</span> {d.instruction}
+                      </p>
+                    )}
+                    {d.status === 'submitted' && d.submissionNote && (
+                      <p className="text-[9px] text-emerald-800 bg-emerald-50 rounded-lg px-2 py-1">
+                        <span className="font-bold">Submission:</span> {d.submissionNote}
+                      </p>
+                    )}
+                    {/* Sub-account submit work */}
+                    {isMyAssignment && d.status === 'active' && (
+                      <div className="space-y-2 pt-2 border-t border-blue-100">
+                        <p className="text-[9px] font-bold text-blue-700 uppercase tracking-widest">Submit Your Work</p>
+                        <textarea
+                          value={submitNote}
+                          onChange={e => setSubmitNote(e.target.value)}
+                          rows={2}
+                          placeholder="Add your notes, findings, or summary…"
+                          className="w-full text-xs border border-blue-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none bg-white"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => fileRef.current?.click()}
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-blue-200 text-blue-700 text-[9px] font-bold hover:bg-blue-100 transition-all">
+                            <PaperclipIcon size={10} />Attach files
+                          </button>
+                          <input ref={fileRef} type="file" multiple className="hidden"
+                            onChange={e => setSubmitFiles(Array.from(e.target.files))} />
+                          {submitFiles.length > 0 && (
+                            <span className="text-[9px] text-muted-foreground">{submitFiles.length} file(s) selected</span>
+                          )}
+                        </div>
+                        <button onClick={() => handleSubmitWork(d.id)} disabled={submitting}
+                          className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all disabled:opacity-50">
+                          {submitting ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
+                          {submitting ? 'Submitting…' : 'Mark as Done & Submit'}
+                        </button>
+                      </div>
+                    )}
+                    {/* Head confirm */}
+                    {isMyConfirmation && d.status === 'submitted' && (
+                      <button onClick={() => handleConfirm(d.id)} disabled={confirming}
+                        className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all disabled:opacity-50 mt-1">
+                        {confirming ? <Loader2 size={11} className="animate-spin" /> : <UserCheck size={11} />}
+                        {confirming ? 'Confirming…' : 'Confirm — Take Back & Proceed'}
+                      </button>
+                    )}
+                    <p className="text-[8px] text-muted-foreground/60">Assigned by {d.assignedByName} · {new Date(d.createdAt).toLocaleString()}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* New assignment form — only shown to head/admin */}
+          {(isHolder || isAdmin) && mySubAccounts.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-blue-200">
+              <p className="text-[9px] font-bold text-blue-700 uppercase tracking-widest">Assign to Sub-Account</p>
+              <select
+                value={selectedSub}
+                onChange={e => setSelectedSub(e.target.value)}
+                className="w-full bg-white border border-blue-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+              >
+                <option value="">— Select sub-account —</option>
+                {mySubAccounts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+              <textarea
+                value={instruction}
+                onChange={e => setInstruction(e.target.value)}
+                rows={2}
+                placeholder="Optional instruction for sub-account…"
+                className="w-full text-xs border border-blue-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none bg-white"
+              />
+              <button onClick={handleDelegate} disabled={acting || !selectedSub}
+                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all disabled:opacity-50">
+                {acting ? <Loader2 size={11} className="animate-spin" /> : <UserCheck size={11} />}
+                {acting ? 'Assigning…' : 'Assign'}
+              </button>
+            </div>
+          )}
+
+          {(isHolder || isAdmin) && mySubAccounts.length === 0 && (
+            <p className="text-[9px] text-muted-foreground text-center py-2">No sub-accounts under your department to assign to.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 };

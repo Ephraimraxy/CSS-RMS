@@ -71,6 +71,8 @@ model Department {
   currentVettingRequisitions Requisition[] @relation("CurrentVetting")
   reapprovedRequisitions     Requisition[] @relation("Reapprover")
   discountVerifierRequisitions Requisition[] @relation("DiscountVerifier")
+  assignmentsGiven      DeptAssignment[] @relation("AssignmentGiver")
+  assignmentsReceived   DeptAssignment[] @relation("AssignmentReceiver")
   canPrint             Boolean          @default(true)
   subVisibilities      RequisitionSubVisibility[] @relation("SubVisibility")
   storeRecords         StoreRecord[]
@@ -248,6 +250,15 @@ model Requisition {
   iccOverrideContent     String?   @db.Text   // JSON: { itemized, items, comment, total }
   iccOverrideAmount      Float?               // verified total from ICC — takes priority over Audit's
   iccOverrideDeptName    String?
+
+  // Pipeline stage tracking — when the request arrived at its current department
+  currentDeptArrivedAt   DateTime?
+
+  // Priority change trail
+  priorityChangeLogs     PriorityChangeLog[]
+
+  // Internal department delegation
+  deptAssignments        DeptAssignment[]
 
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
@@ -556,6 +567,47 @@ model DeletedRecord {
   deletedByName  String?
   deletedAt      DateTime @default(now())
   snapshot       Json
+}
+
+// Tracks every priority (urgency) change made to a request at any stage.
+// Both the currently-holding department and Super Admin may change priority,
+// but both must supply a written reason.
+model PriorityChangeLog {
+  id              Int         @id @default(autoincrement())
+  requisitionId   Int
+  requisition     Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  changedByDeptId Int?
+  changedByDeptName String?
+  changedByName   String?     // actor name (head or admin)
+  fromUrgency     String      // previous urgency value
+  toUrgency       String      // new urgency value
+  reason          String      @db.Text
+  createdAt       DateTime    @default(now())
+}
+
+// Internal department delegation: a dept head assigns a request to one of their
+// sub-accounts to work on. The sub-account submits notes + attachments and marks
+// done; the head then confirms and proceeds. The stage timer keeps running against
+// the head — delegation is fully internal.
+model DeptAssignment {
+  id                  Int         @id @default(autoincrement())
+  requisitionId       Int
+  requisition         Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  assignedByDeptId    Int
+  assignedByDept      Department  @relation("AssignmentGiver", fields: [assignedByDeptId], references: [id])
+  assignedToSubDeptId Int
+  assignedToSubDept   Department  @relation("AssignmentReceiver", fields: [assignedToSubDeptId], references: [id])
+  assignedByName      String?
+  assignedToName      String?
+  instruction         String?     @db.Text
+  status              String      @default("active") // 'active' | 'submitted' | 'confirmed' | 'reassigned'
+  submissionNote      String?     @db.Text
+  submissionAttachments String?   @db.Text // JSON: [{ key, name, mimeType, size }]
+  submittedAt         DateTime?
+  confirmedByName     String?
+  confirmedAt         DateTime?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
 }
 
 // ── HR Portal: Employee Directory ──────────────────────────────────────────────
