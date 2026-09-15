@@ -314,6 +314,155 @@ async function runPriorityEscalationCheck() {
   }
 }
 
+// ── Authority-tier response timer check ──────────────────────────────────────
+// Runs every 60 s. For each request sitting at an HR / GM / CEO final-approver
+// with an active timer, checks if the configured window has passed.
+// On expiry:
+//   HR  → escalate to GM (notify GM, start GM timer, log)
+//   GM  → escalate to CEO/Chairman (notify CEO, start CEO timer, log)
+//   CEO → set approvalStalled=true, notify Super Admin — never auto-approve
+// Pauses automatically when the request is ICC-frozen, in a vetting detour,
+// or waiting for re-approval (needsReapproval=true).
+async function runApprovalTimerCheck() {
+  try {
+    const [hrS, gmS, ceoS] = await Promise.all([
+      prisma.systemSetting.findUnique({ where: { key: 'approval_timer_hr_minutes' } }),
+      prisma.systemSetting.findUnique({ where: { key: 'approval_timer_gm_minutes' } }),
+      prisma.systemSetting.findUnique({ where: { key: 'approval_timer_ceo_minutes' } }),
+    ]);
+    const limits = {
+      hr:       parseFloat(hrS?.value  || '0') || 0,
+      gm:       parseFloat(gmS?.value  || '0') || 0,
+      chairman: parseFloat(ceoS?.value || '0') || 0,
+    };
+    const activeTiers = Object.keys(limits).filter(k => limits[k] > 0);
+    if (activeTiers.length === 0) return;
+
+    const now = new Date();
+
+    const timedReqs = await prisma.requisition.findMany({
+      where: {
+        approvalTimerStartedAt: { not: null },
+        approvalTimerTier:      { in: activeTiers },
+        finalApprovalStatus:    { notIn: ['approved', 'treated', 'published', 'rejected'] },
+        iccFrozen:              false,
+        needsReapproval:        false,
+        approvalStalled:        false,
+        // skip vetting detour — currentVettingDeptId set means request is in a side-loop
+        currentVettingDeptId:   null,
+      },
+      include: {
+        department:       { select: { id: true, name: true } },
+        targetDepartment: { select: { id: true, name: true } },
+      },
+    });
+
+    for (const req of timedReqs) {
+      const tier = req.approvalTimerTier;
+      const limitMins = limits[tier];
+      if (!limitMins) continue;
+
+      const elapsedMins = (now - new Date(req.approvalTimerStartedAt)) / 60000;
+      if (elapsedMins < limitMins) continue;
+
+      const holderName = req.targetDepartment?.name || req.department?.name || 'Unknown';
+      const reqLabel   = req.title || req.refCode || `#${req.id}`;
+      const elapsed    = `${Math.floor(elapsedMins)}m`;
+
+      if (tier === 'chairman') {
+        // CEO tier expired — stall the request, notify admin
+        await prisma.requisition.update({
+          where: { id: req.id },
+          data: { approvalStalled: true, approvalTimerStartedAt: null, approvalTimerTier: null },
+        });
+        const subject = `🔴 Stalled Requisition — CEO/Chairman did not act in time`;
+        const lines = [
+          `Request "${reqLabel}" has been waiting for CEO/Chairman final approval for ${elapsed}.`,
+          `The configured limit is ${limitMins} minutes.`,
+          `The request is now marked STALLED. No automated action was taken — manual review required.`,
+        ];
+        const adminUsers = await prisma.user.findMany({ where: { role: 'global_admin' }, select: { id: true } });
+        await Promise.all(adminUsers.map(u =>
+          prisma.notification.create({ data: { userId: u.id, content: subject, link: `/requisitions/${req.id}` } }).catch(() => {})
+        ));
+        await notifyDepartmentHead({ departmentId: req.targetDepartment?.id || req.department?.id, requisition: req, subject, lines }).catch(() => {});
+        logger.warn(`[APPROVAL TIMER] Req #${req.id} STALLED — CEO/Chairman held ${elapsed}, limit ${limitMins}m`);
+
+      } else {
+        // HR or GM timer expired — escalate to next tier
+        const nextTier       = tier === 'hr' ? 'gm' : 'chairman';
+        const nextPattern    = nextTier === 'gm' ? /general\s*manager|\bgm\b/i : /ceo|chairman/i;
+        const nextLimitMins  = limits[nextTier];
+
+        // Find the next-tier department
+        const allDepts = await prisma.department.findMany({ where: { isActive: true }, select: { id: true, name: true } });
+        const nextDept = allDepts.find(d => nextPattern.test(d.name));
+
+        if (!nextDept) {
+          // Can't find the next-tier dept — just notify admin and clear timer
+          logger.warn(`[APPROVAL TIMER] Req #${req.id} — no ${nextTier.toUpperCase()} dept found, cannot escalate`);
+          await prisma.requisition.update({ where: { id: req.id }, data: { approvalTimerStartedAt: null, approvalTimerTier: null } });
+          continue;
+        }
+
+        // Forward to next tier
+        const timerData = nextLimitMins > 0
+          ? { approvalTimerStartedAt: now, approvalTimerTier: nextTier }
+          : { approvalTimerStartedAt: null, approvalTimerTier: null };
+
+        await prisma.requisition.update({
+          where: { id: req.id },
+          data: { targetDepartmentId: nextDept.id, ...timerData },
+        });
+
+        // Log escalation as a forward event
+        await prisma.forwardEvent.create({
+          data: {
+            requisitionId: req.id,
+            fromDeptId:    req.targetDepartment?.id || req.department?.id,
+            toDeptId:      nextDept.id,
+            action:        'forwarded',
+            note:          `Auto-escalated: ${tier.toUpperCase()} did not act within ${limitMins} minutes`,
+          },
+        }).catch(() => {});
+
+        // Notify the next-tier dept
+        const subject = `⏰ Escalated to you — ${nextTier.toUpperCase()} approval required`;
+        const lines = [
+          `Request "${reqLabel}" was escalated because the previous approver (${holderName}) did not act within ${limitMins} minutes.`,
+          `It has been forwarded to your department for final approval.`,
+          `Amount: ₦${Number(req.amount || 0).toLocaleString()}`,
+        ];
+        await notifyDepartmentHead({ departmentId: nextDept.id, requisition: req, subject, lines }).catch(() => {});
+
+        // Also notify the original holder that time expired
+        const prevDeptId = req.targetDepartment?.id || req.department?.id;
+        if (prevDeptId) {
+          await notifyDepartmentHead({
+            departmentId: prevDeptId,
+            requisition:  req,
+            subject:      `⏱ Time expired — "${reqLabel}" escalated to ${nextDept.name}`,
+            lines: [`Your ${limitMins}-minute window to approve this request has passed. It has been automatically forwarded to ${nextDept.name}.`],
+          }).catch(() => {});
+        }
+
+        logger.info(`[APPROVAL TIMER] Req #${req.id} escalated ${tier.toUpperCase()} → ${nextTier.toUpperCase()} (${nextDept.name}) after ${elapsed}`);
+      }
+    }
+  } catch (err) {
+    logger.error('[APPROVAL TIMER] Check failed:', err.message);
+  }
+}
+
+// Helper: detect which authority tier a department belongs to
+function getAuthorityTier(deptName) {
+  const n = deptName || '';
+  if (/ceo|chairman/i.test(n))                  return 'chairman';
+  if (/general\s*manager|\bgm\b/i.test(n))      return 'gm';
+  if (/\bhr\b|human\s*resource/i.test(n))        return 'hr';
+  return null;
+}
+
 // ── Sub-account privilege helpers ─────────────────────────────────────────────
 // getEffectiveReqAmount now lives in rms_backend/lib/businessRules.js (required above).
 
@@ -1604,7 +1753,10 @@ const processApprovalAction = async ({ requisitionId, action, remarks, user }) =
         rejectedAt: new Date(),
         currentStageId: null,
         lastActionById: userId,
-        lastActionAt: new Date()
+        lastActionAt: new Date(),
+        approvalTimerStartedAt: null,
+        approvalTimerTier:      null,
+        approvalStalled:        false,
       }
     });
     await notifyRole('creator', `Requisition Rejected: ${requisition.title}`, requisition.id, requisition.departmentId);
@@ -6242,12 +6394,33 @@ app.post('/api/requisitions/:id/forward', authenticateToken, async (req, res) =>
       }
     }
 
+    // ── Authority-tier response timer ──────────────────────────────────────────
+    // If forwarding to an HR/GM/CEO dept while the request still needs final
+    // approval, start that tier's timer (if the admin has configured one).
+    // Clear the timer on any return-to-sender or forward to a non-authority dept.
+    let timerUpdate = { approvalTimerStartedAt: null, approvalTimerTier: null };
+    if (!returnToSender && returnTargetId && requisition.finalApprovalStatus === 'none') {
+      try {
+        const targetDept = await prisma.department.findUnique({ where: { id: returnTargetId }, select: { name: true } });
+        const tier = targetDept ? getAuthorityTier(targetDept.name) : null;
+        if (tier) {
+          const settingKey = `approval_timer_${tier}_minutes`;
+          const timerSetting = await prisma.systemSetting.findUnique({ where: { key: settingKey } });
+          const timerMins = parseFloat(timerSetting?.value || '0') || 0;
+          if (timerMins > 0) {
+            timerUpdate = { approvalTimerStartedAt: new Date(), approvalTimerTier: tier };
+          }
+        }
+      } catch (_) {}
+    }
+
     const updated = await prisma.requisition.update({
       where: { id: parseInt(id) },
       data: {
         targetDepartmentId: returnTargetId,
         forwardNote: note || null,
-        ...extraVettingData
+        ...extraVettingData,
+        ...timerUpdate,
       },
       include: { department: true, targetDepartment: true }
     });
@@ -6389,7 +6562,11 @@ app.post('/api/requisitions/:id/final-approve', authenticateToken, async (req, r
         finalApprovalStatus: 'approved',
         finalApprovedByDeptId: userDeptId || null,
         finalApprovedAt: new Date(),
-        finalApprovedNote: note || null
+        finalApprovedNote: note || null,
+        // Clear the authority-tier timer — action taken, no escalation needed
+        approvalTimerStartedAt: null,
+        approvalTimerTier:      null,
+        approvalStalled:        false,
       },
       include: {
         department: { select: { name: true } },
@@ -11176,8 +11353,13 @@ const server = app.listen(PORT, async () => {
       // Runs every 60 seconds. Only fires alerts when the admin has configured
       // a time limit for a priority level — silent otherwise (zero overhead).
       setInterval(runPriorityEscalationCheck, 60_000);
-      // Run once immediately so the first check doesn't wait a full minute
       runPriorityEscalationCheck().catch(() => {});
+
+      // ── Authority-tier response timer job ────────────────────────────────────
+      // Runs every 60 seconds. Escalates HR→GM→CEO when configured timers expire.
+      // Safe no-op when no timers are configured (0 = disabled).
+      setInterval(runApprovalTimerCheck, 60_000);
+      runApprovalTimerCheck().catch(() => {});
       // ────────────────────────────────────────────────────────────────────────
     }
   } catch (err) {

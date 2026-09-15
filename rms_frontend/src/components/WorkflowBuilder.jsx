@@ -484,6 +484,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [priorityLimitUrgent, setPriorityLimitUrgent]             = useState('');
   const [priorityLimitNormal, setPriorityLimitNormal]             = useState('');
   const [priorityEscalationDeptIds, setPriorityEscalationDeptIds] = useState([]);
+  // Authority-tier response timers: how long HR / GM / CEO has to final-approve
+  const [approvalTimerHr,  setApprovalTimerHr]  = useState('');
+  const [approvalTimerGm,  setApprovalTimerGm]  = useState('');
+  const [approvalTimerCeo, setApprovalTimerCeo] = useState('');
   // Part-payment discount verifier dept
   const [discountVerifierDeptId, setDiscountVerifierDeptId]       = useState('');
   const [adminCreateFundEnabled, setAdminCreateFundEnabled]       = useState(false);
@@ -655,6 +659,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         deptSelfApprovalEnabledRes, deptSelfApprovalLimitRes,
         priorityCriticalRes, priorityUrgentRes, priorityNormalRes, priorityEscDeptIdsRes,
         discountVerifierDeptIdRes,
+        approvalTimerHrRes, approvalTimerGmRes, approvalTimerCeoRes,
       ] = await Promise.allSettled([
         settingsAPI.get('document_studio_enabled'),
         settingsAPI.get('hr_portal_enabled'),
@@ -678,6 +683,9 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.get('priority_time_limit_normal'),
         settingsAPI.get('priority_escalation_dept_ids'),
         settingsAPI.get('discount_verifier_dept_id'),
+        settingsAPI.get('approval_timer_hr_minutes'),
+        settingsAPI.get('approval_timer_gm_minutes'),
+        settingsAPI.get('approval_timer_ceo_minutes'),
       ]);
       if (studioRes.status === 'fulfilled' && studioRes.value?.value !== undefined)
         setStudioEnabled(studioRes.value.value !== 'false');
@@ -736,6 +744,15 @@ const WorkflowBuilder = ({ onViewChange }) => {
       }
       if (discountVerifierDeptIdRes.status === 'fulfilled' && discountVerifierDeptIdRes.value?.value)
         setDiscountVerifierDeptId(discountVerifierDeptIdRes.value.value);
+      if (approvalTimerHrRes.status === 'fulfilled') {
+        const v = parseFloat(approvalTimerHrRes.value?.value); setApprovalTimerHr(!isNaN(v) && v > 0 ? String(v) : '');
+      }
+      if (approvalTimerGmRes.status === 'fulfilled') {
+        const v = parseFloat(approvalTimerGmRes.value?.value); setApprovalTimerGm(!isNaN(v) && v > 0 ? String(v) : '');
+      }
+      if (approvalTimerCeoRes.status === 'fulfilled') {
+        const v = parseFloat(approvalTimerCeoRes.value?.value); setApprovalTimerCeo(!isNaN(v) && v > 0 ? String(v) : '');
+      }
     } catch {}
 
     // Load Turnstile required depts separately (JSON array)
@@ -823,6 +840,9 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.set('priority_time_limit_normal',   priorityLimitNormal   !== '' ? String(parseFloat(priorityLimitNormal))   : '0'),
         settingsAPI.set('priority_escalation_dept_ids', JSON.stringify(priorityEscalationDeptIds)),
         settingsAPI.set('discount_verifier_dept_id', discountVerifierDeptId ? String(discountVerifierDeptId) : ''),
+        settingsAPI.set('approval_timer_hr_minutes',  approvalTimerHr  !== '' ? String(parseFloat(approvalTimerHr))  : '0'),
+        settingsAPI.set('approval_timer_gm_minutes',  approvalTimerGm  !== '' ? String(parseFloat(approvalTimerGm))  : '0'),
+        settingsAPI.set('approval_timer_ceo_minutes', approvalTimerCeo !== '' ? String(parseFloat(approvalTimerCeo)) : '0'),
       ]);
       toast.success('Feature settings saved.');
       window.dispatchEvent(new CustomEvent('rms:flags:updated'));
@@ -1443,6 +1463,53 @@ const WorkflowBuilder = ({ onViewChange }) => {
                     </p>
                   )}
                   <p className="text-[10px] text-muted-foreground">Super Admin always receives alerts — you cannot remove them. The department currently holding the request also gets a reminder automatically.</p>
+                </div>
+              </div>
+
+              {/* Authority-Tier Response Timers */}
+              <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-indigo-200 bg-indigo-50/40 space-y-5">
+                <div className="space-y-1">
+                  <p className="text-sm font-black text-foreground flex items-center gap-2">
+                    <AlertCircle size={15} className="text-indigo-600 shrink-0" />
+                    Authority-Tier Response Timers
+                  </p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed max-w-2xl">
+                    Set a maximum time (in minutes) for each authority tier to give final approval on a request. When HR or GM exceeds their limit the request is automatically forwarded to the next tier. When CEO/Chairman exceeds the limit the request is flagged as <strong>stalled</strong> and Super Admin is notified — it is never auto-approved.
+                  </p>
+                  <p className="text-[11px] text-indigo-700 font-semibold leading-relaxed">
+                    The timer pauses automatically when a request is ICC-frozen, under vetting, or awaiting re-approval. Leave a field blank or set to 0 to disable that tier's timer.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {[
+                    { key: 'hr',  label: 'HR',              color: 'blue',   value: approvalTimerHr,  set: setApprovalTimerHr,  placeholder: 'e.g. 39', hint: 'Escalates to GM after limit' },
+                    { key: 'gm',  label: 'General Manager', color: 'violet', value: approvalTimerGm,  set: setApprovalTimerGm,  placeholder: 'e.g. 39', hint: 'Escalates to CEO/Chairman after limit' },
+                    { key: 'ceo', label: 'CEO / Chairman',  color: 'indigo', value: approvalTimerCeo, set: setApprovalTimerCeo, placeholder: 'e.g. 39', hint: 'Notifies Super Admin + flags request as stalled' },
+                  ].map(({ key, label, color, value, set, placeholder, hint }) => {
+                    const parsed = parseFloat(value);
+                    const active = value !== '' && !isNaN(parsed) && parsed > 0;
+                    const hrs = active ? (parsed >= 60 ? `${Math.floor(parsed/60)}h ${parsed%60 > 0 ? `${Math.round(parsed%60)}m` : ''}`.trim() : `${Math.round(parsed)}m`) : null;
+                    return (
+                      <div key={key} className={`p-4 rounded-xl border-2 space-y-2 transition-all bg-white ${active ? `border-${color}-300` : 'border-border/40'}`}>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${active ? `bg-${color}-500` : 'bg-slate-300'}`} />
+                          <p className="text-xs font-black text-foreground uppercase tracking-widest">{label}</p>
+                        </div>
+                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Max hold time (minutes)</label>
+                        <input
+                          type="number" min="0" step="1"
+                          value={value}
+                          onChange={e => set(e.target.value)}
+                          placeholder={placeholder}
+                          className={`w-full bg-muted/20 border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 placeholder:text-[10px] placeholder:text-muted-foreground/50 ${active ? `border-${color}-300 focus:ring-${color}-200` : 'border-border/60 focus:ring-muted'}`}
+                        />
+                        <p className={`text-[9px] leading-relaxed ${active ? `text-${color}-700 font-semibold` : 'text-muted-foreground'}`}>
+                          {active ? `Timer: ${hrs} — ${hint}` : `Off — ${hint.replace('Escalates', 'would escalate').replace('Notifies', 'would notify')}`}
+                        </p>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
