@@ -413,7 +413,7 @@ const Navbar = ({ user, toggleSidebar, isCollapsed, notifications, setNotificati
           <Menu size={18} />
         </button>
         <div className="w-20 h-11 rounded-xl overflow-hidden shrink-0 shadow-sm border border-primary/10">
-          <img src="/CSS_Group.png" alt="Logo" className="w-full h-full object-cover object-center" />
+          <img src="/CSS_Group.png" alt="Logo" className="w-full h-full object-contain object-center" />
         </div>
         <div className="flex flex-col">
           <h1 className="text-[10px] font-black text-foreground tracking-[0.2em] uppercase flex items-center leading-none">
@@ -1153,7 +1153,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
           {isCollapsed && (
             <div className="flex items-center justify-center pt-5 pb-4 border-b border-white/5 shrink-0">
               <div className="w-11 h-11 rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-lg shadow-black/30">
-                <img src="/CSS_Group.png" alt="CSS Group" className="w-full h-full object-cover object-center" />
+                <img src="/CSS_Group.png" alt="CSS Group" className="w-full h-full object-contain object-center" />
               </div>
             </div>
           )}

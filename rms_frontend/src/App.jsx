@@ -133,7 +133,7 @@ const NetworkProvider = ({ children }) => {
           if (!isOnline) {
             setIsOnline(true);
             toast.success('Connection Restored. Syncing pending actions…', {
-              icon: <img src="/CSS_Group.png" className="w-8 h-5 object-cover rounded" alt="" />
+              icon: <img src="/CSS_Group.png" className="w-8 h-5 object-contain rounded" alt="" />
             });
             flushSyncQueue();
           }
@@ -145,7 +145,7 @@ const NetworkProvider = ({ children }) => {
         if (isOnline) {
           setIsOnline(false);
           toast.error('Offline Mode Active. Drafts will save locally.', {
-            icon: <img src="/CSS_Group.png" className="w-8 h-5 object-cover rounded grayscale opacity-50" alt="" />,
+            icon: <img src="/CSS_Group.png" className="w-8 h-5 object-contain rounded grayscale opacity-50" alt="" />,
             duration: 4000
           });
         }
@@ -389,7 +389,7 @@ const AppContent = () => {
         <div className="relative">
           <div className="w-20 h-20 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
           <div className="absolute inset-0 flex items-center justify-center">
-            <img src="/CSS_Group.png" className="w-24 h-14 object-cover rounded-xl animate-pulse" alt="Loading" />
+            <img src="/CSS_Group.png" className="w-24 h-14 object-contain rounded-xl animate-pulse" alt="Loading" />
           </div>
         </div>
         <div className="text-center space-y-2">
