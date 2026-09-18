@@ -63,7 +63,7 @@ describe('computeDashboardStats', () => {
 
   it('a department user with no deptId and no admin role gets zeroed stats, not a crash', () => {
     const stats = computeDashboardStats([{ type: 'Cash', status: 'pending' }], { role: 'department' });
-    expect(stats).toEqual({ pending: 0, approved: 0, rejected: 0, totalSpent: 0, memos: 0, memoPending: 0, memoPublished: 0 });
+    expect(stats).toEqual({ pending: 0, approved: 0, rejected: 0, totalSpent: 0, memos: 0, memoPending: 0, memoPublished: 0, approvedByMe: 0, treated: 0 });
   });
 
   it('separates memo counts from operational (cash/material) counts', () => {
