@@ -775,9 +775,7 @@ const Login = () => {
 
           {/* Logo row */}
           <div className="flex flex-col items-center gap-3 w-full mb-5">
-            <div className="w-[66px] h-[66px] rounded-2xl overflow-hidden ring-2 ring-white/15 shadow-xl shrink-0 bg-white/10 flex items-center justify-center">
-              <img src="/CSS_Group.png" alt="CSS Group" className="w-full h-full object-contain p-1"/>
-            </div>
+            <img src="/CSS_Group.png" alt="CSS Group" className="w-36 h-14 object-contain object-center drop-shadow-lg"/>
             <div className="text-center leading-tight">
               <p className="text-[9.5px] font-black uppercase tracking-[0.32em] text-white/38">CSS Group of</p>
               <p className="text-[17px] font-black uppercase tracking-[0.16em] text-white">Companies</p>
