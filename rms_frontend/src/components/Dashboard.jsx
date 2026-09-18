@@ -39,6 +39,7 @@ const statusColors = {
   draft:      'bg-muted border-border text-muted-foreground',
   // Final states
   vetting:    'bg-blue-50 border-blue-200 text-blue-700',
+  partial:    'bg-orange-50 border-orange-200 text-orange-700',
   treated:    'bg-indigo-50 border-indigo-200 text-indigo-700',
   published:  'bg-emerald-50 border-emerald-200 text-emerald-700',
 };
@@ -491,6 +492,7 @@ const Dashboard = ({ onViewChange }) => {
                             if (norm.finalState === 'published') return { label: 'Published', color: statusColors.published };
                             if (norm.finalState === 'treated') return { label: 'Treated', color: statusColors.treated };
                             if (norm.finalState === 'vetting') return { label: 'Vetting', color: statusColors.vetting };
+                            if (norm.finalState === 'partial') return { label: 'Partial Pay', color: statusColors.partial };
                             if (norm.finalState === 'approved' && norm.status === 'approved') return { label: 'Finally Approved', color: statusColors.approved };
                             if (norm.finalState === 'approved' && norm.status === 'pending') return { label: 'Approved', color: 'bg-emerald-50 border-emerald-300 text-emerald-700', sub: 'Awaiting vetting' };
                             if (norm.status === 'approved') return { label: 'Approved', color: statusColors.approved };
@@ -716,13 +718,14 @@ const Dashboard = ({ onViewChange }) => {
                                   if (norm.finalState === 'published') return { label: 'Published', color: statusColors.published };
                                   if (norm.finalState === 'treated')   return { label: 'Treated', color: statusColors.treated };
                                   if (norm.finalState === 'vetting')   return { label: 'Vetting', color: statusColors.vetting };
+                                  if (norm.finalState === 'partial')   return { label: 'Partial Pay', color: statusColors.partial };
                                   if (norm.finalState === 'approved' && norm.status === 'approved') return { label: 'Final Approved', color: statusColors.approved };
-                                  
+
                                   if (norm.status === 'approved') return { label: 'Approved (Internal)', color: statusColors.approved };
-                                  
+
                                   if (norm.status === 'pending') {
-                                    return { 
-                                      label:  norm.currentStageName ? `At: ${norm.currentStageName}` : 'Pending', 
+                                    return {
+                                      label:  norm.currentStageName ? `At: ${norm.currentStageName}` : 'Pending',
                                       color:  statusColors.pending,
                                       sub:    norm.currentStageName ? 'Review Pending' : null
                                     };
@@ -841,6 +844,10 @@ const Dashboard = ({ onViewChange }) => {
                               const vDept = departments.find(d => d.id === Number(r.currentVettingDeptId));
                               return { label: vDept?.name || 'Vetting Dept', color: 'text-purple-600' };
                             }
+                            if (r.finalApprovalStatus === 'partial') {
+                              const vDept = departments.find(d => d.id === Number(r.currentVettingDeptId));
+                              return { label: vDept?.name || 'Account', color: 'text-orange-600' };
+                            }
                             const tDept = departments.find(d => d.id === Number(r.targetDepartmentId));
                             return { label: tDept?.name || 'Processing', color: 'text-blue-600' };
                           })();
@@ -851,6 +858,7 @@ const Dashboard = ({ onViewChange }) => {
                             if (norm.finalState === 'published') return { label: 'Published', color: statusColors.published };
                             if (norm.finalState === 'treated') return { label: 'Treated', color: statusColors.treated };
                             if (norm.finalState === 'vetting') return { label: 'In Vetting', color: statusColors.vetting };
+                            if (norm.finalState === 'partial') return { label: 'Partial Pay', color: statusColors.partial };
                             if (norm.finalState === 'approved') return { label: 'Finally Approved', color: statusColors.approved };
                             if (norm.status === 'approved') return { label: 'Approved', color: statusColors.approved };
                             if (norm.status === 'pending') return { label: 'Pending', color: statusColors.pending };
@@ -891,7 +899,7 @@ const Dashboard = ({ onViewChange }) => {
                               </td>
                               <td className="py-3 px-4 bg-blue-50/30 border-y border-blue-100/60 group-hover:bg-blue-50/60 transition-colors">
                                 {isMoneyReq
-                                  ? <span className="text-[11px] font-black font-mono text-foreground">₦{Number(r.amount || 0).toLocaleString()}</span>
+                                  ? <span className="text-[11px] font-black font-mono text-foreground">₦{getEffectiveAmount(r).amount.toLocaleString()}</span>
                                   : <span className="text-[9px] text-muted-foreground/50 italic">—</span>}
                               </td>
                               <td className="py-3 px-4 bg-blue-50/30 border-y border-blue-100/60 group-hover:bg-blue-50/60 transition-colors">

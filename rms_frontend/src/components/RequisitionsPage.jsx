@@ -6215,6 +6215,11 @@ const RequisitionsPage = ({ onViewChange, initialReqId, onDeepLinkConsumed }) =>
                                   const cvDeptName = cvId ? departments.find(d => d.id === cvId)?.name : null;
                                   return { label: 'Vetting', color: statusColors.vetting, sub: cvDeptName ? `now in ${cvDeptName}` : null };
                                 }
+                                if (norm.finalState === 'partial') {
+                                  const cvId = r.currentVettingDeptId ? parseInt(r.currentVettingDeptId) : null;
+                                  const cvDeptName = cvId ? departments.find(d => d.id === cvId)?.name : null;
+                                  return { label: 'Partial Pay', color: statusColors.partial, sub: cvDeptName ? `balance with ${cvDeptName}` : null };
+                                }
                                 if (norm.finalState === 'approved' && norm.status === 'approved') return { label: 'Final Approved', color: statusColors.approved };
 
                                 // Finally approved but not yet routed to vetting / issuance
