@@ -412,8 +412,9 @@ const Navbar = ({ user, toggleSidebar, isCollapsed, notifications, setNotificati
         <button onClick={toggleSidebar} className="hidden lg:flex p-1.5 hover:bg-muted rounded-lg text-muted-foreground transition-colors mr-1">
           <Menu size={18} />
         </button>
-        <div className="w-20 h-11 rounded-xl overflow-hidden shrink-0 shadow-sm border border-primary/10">
-          <img src="/CSS_Group.png" alt="Logo" className="w-full h-full object-contain object-center" />
+        <div className="w-20 h-11 rounded-xl overflow-hidden shrink-0 shadow-sm border border-primary/10 bg-primary/5 flex items-center justify-center">
+          <img src="/CSS_Group.png" alt="CSS Group" className="w-full h-full object-contain object-center" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling.style.display = 'flex'; }} />
+          <span style={{display:'none'}} className="w-full h-full items-center justify-center text-[11px] font-black text-primary tracking-widest">CSS</span>
         </div>
         <div className="flex flex-col">
           <h1 className="text-[10px] font-black text-foreground tracking-[0.2em] uppercase flex items-center leading-none">
@@ -1152,8 +1153,9 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
           {/* Collapsed-only logo mark */}
           {isCollapsed && (
             <div className="flex items-center justify-center pt-5 pb-4 border-b border-white/5 shrink-0">
-              <div className="w-11 h-11 rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-lg shadow-black/30">
-                <img src="/CSS_Group.png" alt="CSS Group" className="w-full h-full object-contain object-center" />
+              <div className="w-11 h-11 rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-lg shadow-black/30 bg-primary/80 flex items-center justify-center">
+                <img src="/CSS_Group.png" alt="CSS Group" className="w-full h-full object-contain object-center" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling.style.display = 'flex'; }} />
+                <span style={{display:'none'}} className="w-full h-full items-center justify-center text-[9px] font-black text-white tracking-widest">CSS</span>
               </div>
             </div>
           )}

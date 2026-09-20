@@ -103,6 +103,7 @@ const LoginPagePremium = () => {
             src="/CSS_Group.png"
             alt="CSS Group"
             className="w-28 h-[4.5rem] object-contain object-center rounded-2xl shadow-lg mb-6"
+            onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
           />
 
           {/* "CSS GROUP OF COMPANIES" — Gagalin font */}
@@ -176,7 +177,7 @@ const LoginPagePremium = () => {
               {/* Mobile header bar — same logo style as standard login mobile header */}
               <div className="lg:hidden bg-primary px-6 py-5 flex items-center gap-4">
                 <div className="w-20 h-11 rounded-xl overflow-hidden shrink-0 bg-white/10 p-0.5">
-                  <img src="/CSS_Group.png" alt="CSS Group" className="w-full h-full object-contain object-center" />
+                  <img src="/CSS_Group.png" alt="CSS Group" className="w-full h-full object-contain object-center" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                 </div>
                 <div>
                   <h1 className="text-base font-black text-white tracking-[0.1em] italic uppercase">RMS</h1>
