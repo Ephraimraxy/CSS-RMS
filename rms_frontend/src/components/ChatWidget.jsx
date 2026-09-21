@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
+import ResilientImage from './ResilientImage';
 import {
   MessageCircle, X, ArrowLeft, Send, Users, MessageSquare,
   ChevronRight, Plus, Loader2, Mic, StopCircle, Paperclip,
@@ -110,7 +111,7 @@ const MediaPreviewModal = ({ msg, onClose, onForward }) => {
       {/* Image preview */}
       {msg.mediaType === 'image' && (
         <div className="flex-1 flex items-center justify-center p-4 overflow-auto" onClick={e => e.stopPropagation()}>
-          <img src={url} alt={msg.mediaName || 'image'} className="max-w-full max-h-full object-contain select-none" draggable={false} />
+          <ResilientImage src={url} alt={msg.mediaName || 'image'} className="max-w-full max-h-full object-contain select-none" draggable={false} />
         </div>
       )}
 
@@ -440,7 +441,7 @@ const Bubble = ({ msg, isMe, onReply, onForward, onPreview, onEdit }) => {
           {/* Image — opens preview modal, never navigates */}
           {msg.mediaType === 'image' && mediaUrl && (
             <button type="button" onClick={() => onPreview(msg)} className="block w-full cursor-zoom-in focus:outline-none">
-              <img src={mediaUrl} alt={msg.mediaName || 'image'} className="max-w-full max-h-[220px] w-full object-cover" />
+              <ResilientImage src={mediaUrl} alt={msg.mediaName || 'image'} className="max-w-full max-h-[220px] w-full object-cover" />
             </button>
           )}
 

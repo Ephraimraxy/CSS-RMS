@@ -34,6 +34,7 @@ const {
   generateStorageKey,
   useS3
 } = require('./lib/storage');
+const { processImage } = require('./lib/imageProcessor');
 const {
   getKeyPair,
   getMasterKey,
@@ -3068,12 +3069,21 @@ app.post('/api/chat/upload', authenticateToken, chatUpload.single('file'), async
     const myDeptId = toIntOrNull(req.user?.deptId);
     if (!myDeptId) return res.status(403).json({ error: 'Department account required' });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const mime = req.file.mimetype;
+    let mime = req.file.mimetype;
+    let body = req.file.buffer;
     let mediaType = 'file';
-    if (mime.startsWith('image/')) mediaType = 'image';
-    else if (mime.startsWith('audio/') || mime === 'video/webm') mediaType = 'audio';
-    const key = generateStorageKey('chat', req.file.originalname || `voice-${Date.now()}.webm`);
-    await putObject({ key, body: req.file.buffer, contentType: mime });
+    if (mime.startsWith('image/')) {
+      mediaType = 'image';
+      const processed = await processImage(body, mime, 'web');
+      if (processed) { body = processed.buffer; mime = processed.mime; }
+    } else if (mime.startsWith('audio/') || mime === 'video/webm') {
+      mediaType = 'audio';
+    }
+    const origName = mediaType === 'image' && mime === 'image/webp'
+      ? (req.file.originalname.replace(/\.[^.]+$/, '') + '.webp')
+      : (req.file.originalname || `voice-${Date.now()}.webm`);
+    const key = generateStorageKey('chat', origName);
+    await putObject({ key, body, contentType: mime });
     res.json({ key, name: req.file.originalname || 'voice-message.webm', type: mediaType, mime });
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -3100,6 +3110,8 @@ app.get('/api/chat/media', authenticateToken, async (req, res) => {
     const stream = await getObjectStream(key);
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${filename}"`);
+    // Keys contain a timestamp so they are immutable — safe to cache aggressively
+    if (!download) res.setHeader('Cache-Control', 'max-age=31536000, immutable');
     stream.pipe(res);
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -3726,8 +3738,12 @@ app.post('/api/departments/:id/stamp', authenticateToken, requireRoles(['global_
   try {
     const { id } = req.params;
     if (!req.file) return res.status(400).json({ error: 'No stamp uploaded' });
-    const storageKey = generateStorageKey(`stamps/department-${id}`, req.file.originalname);
-    await putObject({ key: storageKey, body: req.file.buffer, contentType: req.file.mimetype });
+    const processed = await processImage(req.file.buffer, req.file.mimetype, 'pdf');
+    const body = processed ? processed.buffer : req.file.buffer;
+    const mime = processed ? processed.mime : req.file.mimetype;
+    const ext  = processed ? processed.ext  : req.file.originalname.split('.').pop();
+    const storageKey = generateStorageKey(`stamps/department-${id}`, `stamp.${ext}`);
+    await putObject({ key: storageKey, body, contentType: mime });
     const stamp = await prisma.departmentStamp.upsert({
       where: { departmentId: parseInt(id) },
       update: { imageKey: storageKey },
@@ -4650,8 +4666,12 @@ app.post('/api/users/:id/signature', authenticateToken, upload.single('file'), a
     if (userId !== targetId && normalizeRole(req.user.role) !== 'global_admin') {
       return res.status(403).json({ error: 'You do not have permission to perform this action.' });
     }
-    const storageKey = generateStorageKey(`signatures/user-${id}`, req.file.originalname);
-    await putObject({ key: storageKey, body: req.file.buffer, contentType: req.file.mimetype });
+    const processed = await processImage(req.file.buffer, req.file.mimetype, 'pdf');
+    const body = processed ? processed.buffer : req.file.buffer;
+    const mime = processed ? processed.mime : req.file.mimetype;
+    const ext  = processed ? processed.ext  : req.file.originalname.split('.').pop();
+    const storageKey = generateStorageKey(`signatures/user-${id}`, `sig.${ext}`);
+    await putObject({ key: storageKey, body, contentType: mime });
     const signatureRecord = await prisma.userSignature.upsert({
       where: { userId: targetId },
       update: { imageKey: storageKey },
@@ -8547,8 +8567,12 @@ app.post('/api/department/signature', authenticateToken, upload.single('file'), 
       });
     }
 
-    const storageKey = generateStorageKey(`signatures/head-${dept.id}`, req.file.originalname);
-    await putObject({ key: storageKey, body: req.file.buffer, contentType: req.file.mimetype });
+    const _proc0 = await processImage(req.file.buffer, req.file.mimetype, 'pdf');
+    const _body0 = _proc0 ? _proc0.buffer : req.file.buffer;
+    const _mime0 = _proc0 ? _proc0.mime : req.file.mimetype;
+    const _ext0  = _proc0 ? _proc0.ext  : req.file.originalname.split('.').pop();
+    const storageKey = generateStorageKey(`signatures/head-${dept.id}`, `sig.${_ext0}`);
+    await putObject({ key: storageKey, body: _body0, contentType: _mime0 });
 
     await prisma.userSignature.upsert({
       where: { userId: headUser.id },
@@ -8571,7 +8595,7 @@ app.get('/api/department/signature/image', authenticateToken, async (req, res) =
     if (!headUser?.signature?.imageKey) return res.status(404).json({ error: 'No signature on file' });
     const buf = await getObjectBuffer(headUser.signature.imageKey);
     const ext = headUser.signature.imageKey.split('.').pop().toLowerCase();
-    const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+    const mime = ext === 'webp' ? 'image/webp' : ext === 'png' ? 'image/png' : 'image/jpeg';
     res.set({ 'Content-Type': mime, 'Cache-Control': 'no-store' });
     res.send(buf);
   } catch (error) { sendError(res, 500, error.message); }
@@ -8604,7 +8628,7 @@ app.get('/api/departments/:id/signature/image', authenticateToken, async (req, r
     }
     const buf = await getObjectBuffer(headUser.signature.imageKey);
     const ext = headUser.signature.imageKey.split('.').pop().toLowerCase();
-    const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+    const mime = ext === 'webp' ? 'image/webp' : ext === 'png' ? 'image/png' : 'image/jpeg';
     res.set({ 'Content-Type': mime, 'Cache-Control': 'no-store' });
     res.send(buf);
   } catch (error) { sendError(res, 500, error.message); }
@@ -8633,8 +8657,12 @@ app.post('/api/departments/:id/signature', authenticateToken, upload.single('fil
       });
     }
 
-    const storageKey = generateStorageKey(`signatures/head-${deptId}`, req.file.originalname);
-    await putObject({ key: storageKey, body: req.file.buffer, contentType: req.file.mimetype });
+    const _procA = await processImage(req.file.buffer, req.file.mimetype, 'pdf');
+    const _bodyA = _procA ? _procA.buffer : req.file.buffer;
+    const _mimeA = _procA ? _procA.mime : req.file.mimetype;
+    const _extA  = _procA ? _procA.ext  : req.file.originalname.split('.').pop();
+    const storageKey = generateStorageKey(`signatures/head-${deptId}`, `sig.${_extA}`);
+    await putObject({ key: storageKey, body: _bodyA, contentType: _mimeA });
     await prisma.userSignature.upsert({
       where: { userId: headUser.id },
       update: { imageKey: storageKey },
@@ -11226,10 +11254,26 @@ app.delete('/api/hr/employees/:id', hrAuth, async (req, res) => {
 app.post('/api/hr/employees/:id/photo', hrAuth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const key = `hr-photos/${req.params.id}-${Date.now()}`;
-    const s3key = await uploadToS3(req.file.buffer, key, req.file.mimetype);
-    await prisma.hREmployee.update({ where: { id: Number(req.params.id) }, data: { photoKey: s3key } });
-    res.json({ photoKey: s3key });
+    const processed = await processImage(req.file.buffer, req.file.mimetype, 'web');
+    const body = processed ? processed.buffer : req.file.buffer;
+    const mime = processed ? processed.mime   : req.file.mimetype;
+    const ext  = processed ? processed.ext    : req.file.originalname.split('.').pop();
+    const key  = generateStorageKey(`hr-photos/${req.params.id}`, `photo.${ext}`);
+    await putObject({ key, body, contentType: mime });
+    await prisma.hREmployee.update({ where: { id: Number(req.params.id) }, data: { photoKey: key } });
+    res.json({ photoKey: key });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/hr/employees/:id/photo', hrAuth, async (req, res) => {
+  try {
+    const emp = await prisma.hREmployee.findUnique({ where: { id: Number(req.params.id) }, select: { photoKey: true } });
+    if (!emp?.photoKey) return res.status(404).json({ error: 'No photo on file' });
+    const buf  = await getObjectBuffer(emp.photoKey);
+    const ext  = emp.photoKey.split('.').pop()?.toLowerCase() || '';
+    const mime = ext === 'webp' ? 'image/webp' : ext === 'png' ? 'image/png' : 'image/jpeg';
+    res.set({ 'Content-Type': mime, 'Cache-Control': 'max-age=86400, must-revalidate' });
+    res.send(buf);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
