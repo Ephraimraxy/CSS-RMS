@@ -5512,8 +5512,10 @@ app.get('/api/sync/heartbeat', desktopSyncLimiter, async (req, res) => {
     let staffDepartments = [];
     try {
       await ensureStaffDepartmentsTable();
-      const mappings = await prisma.$queryRaw`SELECT "staffId", "department", "name" FROM "StaffDepartmentMapping"`;
-      staffDepartments = mappings.map(m => ({ staffId: m.staffId, department: m.department, name: m.name }));
+      const mappings = await prisma.$queryRaw`SELECT "staffId", "department", "name", "email" FROM "StaffDepartmentMapping"`;
+      // "email" is additive, same reasoning as pendingCorrections above — an older desktop
+      // build that doesn't know this field yet just ignores the extra key.
+      staffDepartments = mappings.map(m => ({ staffId: m.staffId, department: m.department, name: m.name, email: m.email }));
     } catch (e) { logger.error(`[heartbeat] staffDepartments fetch failed: ${e.message}`); }
 
     res.json({
@@ -5712,6 +5714,12 @@ async function ensureStaffDepartmentsTable() {
   // makes this safe to run on every call, same pattern as the corrections
   // table's "times" column above.
   await prisma.$executeRaw`ALTER TABLE "StaffDepartmentMapping" ADD COLUMN IF NOT EXISTS "name" TEXT NOT NULL DEFAULT ''`;
+  // Same additive pattern again: a durable staff email, correlated by
+  // staffId exactly like Department/Name already are, pulled down by the
+  // desktop app on the same heartbeat (see the /api/desktop-sync handler
+  // below) so it can eventually be used for report/payslip delivery
+  // without a separate upload flow.
+  await prisma.$executeRaw`ALTER TABLE "StaffDepartmentMapping" ADD COLUMN IF NOT EXISTS "email" TEXT NOT NULL DEFAULT ''`;
 }
 
 // GET /api/staff-departments — Super Admin only: the full current mapping table
@@ -5720,7 +5728,7 @@ app.get('/api/staff-departments', authenticateToken, async (req, res) => {
   try {
     await ensureStaffDepartmentsTable();
     const rows = await prisma.$queryRaw`
-      SELECT "staffId", "department", "name", "updatedBy", "updatedAt" FROM "StaffDepartmentMapping" ORDER BY "staffId"
+      SELECT "staffId", "department", "name", "email", "updatedBy", "updatedAt" FROM "StaffDepartmentMapping" ORDER BY "staffId"
     `;
     res.json({ mappings: rows });
   } catch (error) { sendError(res, 500, error.message); }
@@ -5734,13 +5742,14 @@ app.patch('/api/staff-departments/:staffId', authenticateToken, async (req, res)
     const staffId = String(req.params.staffId || '').trim();
     const department = String(req.body?.department || '').trim();
     const name = String(req.body?.name || '').trim();
+    const email = String(req.body?.email || '').trim();
     if (!staffId) return res.status(400).json({ error: 'Missing staff ID.' });
     const updatedBy = req.user?.email || req.user?.name || 'admin';
     const rows = await prisma.$queryRaw`
-      INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "name", "updatedBy", "updatedAt")
-      VALUES (${staffId}, ${department}, ${name}, ${updatedBy}, now())
-      ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "name" = ${name}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
-      RETURNING "staffId", "department", "name", "updatedBy", "updatedAt"
+      INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "name", "email", "updatedBy", "updatedAt")
+      VALUES (${staffId}, ${department}, ${name}, ${email}, ${updatedBy}, now())
+      ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "name" = ${name}, "email" = ${email}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
+      RETURNING "staffId", "department", "name", "email", "updatedBy", "updatedAt"
     `;
     res.json({ ok: true, mapping: rows[0] });
   } catch (error) { sendError(res, 500, error.message); }
@@ -5765,13 +5774,14 @@ app.post('/api/staff-departments', authenticateToken, async (req, res) => {
     const staffId = String(req.body?.staffId || '').trim();
     const department = String(req.body?.department || '').trim();
     const name = String(req.body?.name || '').trim();
+    const email = String(req.body?.email || '').trim();
     if (!staffId) return res.status(400).json({ error: 'staffId is required.' });
     const updatedBy = req.user?.email || req.user?.name || 'admin';
     const rows = await prisma.$queryRaw`
-      INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "name", "updatedBy", "updatedAt")
-      VALUES (${staffId}, ${department}, ${name}, ${updatedBy}, now())
-      ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "name" = ${name}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
-      RETURNING "staffId", "department", "name", "updatedBy", "updatedAt"
+      INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "name", "email", "updatedBy", "updatedAt")
+      VALUES (${staffId}, ${department}, ${name}, ${email}, ${updatedBy}, now())
+      ON CONFLICT ("staffId") DO UPDATE SET "department" = ${department}, "name" = ${name}, "email" = ${email}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
+      RETURNING "staffId", "department", "name", "email", "updatedBy", "updatedAt"
     `;
     res.json({ ok: true, mapping: rows[0] });
   } catch (error) { sendError(res, 500, error.message); }
@@ -5824,23 +5834,30 @@ app.post('/api/staff-departments/import', authenticateToken, batchUpload.single(
       const staffId = findCol(row, 'staff id', 'staffid', 'id');
       const department = findCol(row, 'department', 'dept', 'unit');
       const name = findCol(row, 'name');
-      if (!staffId || (!department && !name)) {
+      // 'email' would also match inside 'staffid'/'department' etc. above, but findCol only
+      // matches keys, not values, and none of those OTHER columns' keys contain "email" — the
+      // one real ambiguity is a sheet that literally has both "Email" and "Personal Email"
+      // columns, where this takes the first matching column, same "first match wins" behavior
+      // every other findCol() call here already has.
+      const email = findCol(row, 'email');
+      if (!staffId || (!department && !name && !email)) {
         skipped.push({
           staffId: staffId || '(missing)',
-          reason: !staffId ? 'Missing Staff ID' : 'Missing both Name and Department',
+          reason: !staffId ? 'Missing Staff ID' : 'Missing Name, Department and Email',
         });
         continue;
       }
-      // Existing name/department preserved when this row only supplies the
-      // other one — a name-only or department-only re-import must never
-      // blank out whatever the other column already holds.
-      const existing = await prisma.$queryRaw`SELECT "name", "department" FROM "StaffDepartmentMapping" WHERE "staffId" = ${staffId}`;
+      // Existing name/department/email preserved when this row only supplies some of the
+      // others — a name-only, department-only, or "staff ID + email alone" re-import must never
+      // blank out whatever the other columns already hold.
+      const existing = await prisma.$queryRaw`SELECT "name", "department", "email" FROM "StaffDepartmentMapping" WHERE "staffId" = ${staffId}`;
       const finalName = name || existing[0]?.name || '';
       const finalDept = department || existing[0]?.department || '';
+      const finalEmail = email || existing[0]?.email || '';
       await prisma.$executeRaw`
-        INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "name", "updatedBy", "updatedAt")
-        VALUES (${staffId}, ${finalDept}, ${finalName}, ${updatedBy}, now())
-        ON CONFLICT ("staffId") DO UPDATE SET "department" = ${finalDept}, "name" = ${finalName}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
+        INSERT INTO "StaffDepartmentMapping" ("staffId", "department", "name", "email", "updatedBy", "updatedAt")
+        VALUES (${staffId}, ${finalDept}, ${finalName}, ${finalEmail}, ${updatedBy}, now())
+        ON CONFLICT ("staffId") DO UPDATE SET "department" = ${finalDept}, "name" = ${finalName}, "email" = ${finalEmail}, "updatedBy" = ${updatedBy}, "updatedAt" = now()
       `;
       imported++;
     }

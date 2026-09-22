@@ -341,10 +341,15 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [deptImportFileName, setDeptImportFileName] = useState('');
   const [deptEditValues, setDeptEditValues] = useState({}); // staffId -> dept text being edited
   const [deptNameEditValues, setDeptNameEditValues] = useState({}); // staffId -> name text being edited
+  const [deptEmailEditValues, setDeptEmailEditValues] = useState({}); // staffId -> email text being edited
   const [deptStaffIdEdits, setDeptStaffIdEdits] = useState({}); // staffId -> new staffId being typed
   const [deptSelectedIds, setDeptSelectedIds] = useState(new Set());
-  const [newDeptRow, setNewDeptRow] = useState({ staffId: '', name: '', department: '' });
+  const [newDeptRow, setNewDeptRow] = useState({ staffId: '', name: '', department: '', email: '' });
   const [savingNewDeptRow, setSavingNewDeptRow] = useState(false);
+  // Search / sort — this table only (per the admin's own request; the other
+  // tables on this page keep their existing, simpler list-as-is behavior).
+  const [deptSearch, setDeptSearch] = useState('');
+  const [deptSort, setDeptSort] = useState({ key: 'staffId', dir: 'asc' });
 
   const loadDeptMappings = async () => {
     try {
@@ -381,8 +386,9 @@ const WorkflowBuilder = ({ onViewChange }) => {
     const row = deptMappings.find(r => r.staffId === staffId);
     const department = (deptEditValues[staffId] ?? row?.department ?? '').trim();
     const name = (deptNameEditValues[staffId] ?? row?.name ?? '').trim();
+    const email = (deptEmailEditValues[staffId] ?? row?.email ?? '').trim();
     try {
-      await staffDepartmentsAPI.update(staffId, name, department);
+      await staffDepartmentsAPI.update(staffId, name, department, email);
       setDeptMappings(rows => rows.map(r => r.staffId === staffId ? { ...r, department } : r));
       toast.success(`Department updated for ${staffId}.`);
     } catch (err) {
@@ -394,10 +400,25 @@ const WorkflowBuilder = ({ onViewChange }) => {
     const row = deptMappings.find(r => r.staffId === staffId);
     const name = (deptNameEditValues[staffId] ?? row?.name ?? '').trim();
     const department = (deptEditValues[staffId] ?? row?.department ?? '').trim();
+    const email = (deptEmailEditValues[staffId] ?? row?.email ?? '').trim();
     try {
-      await staffDepartmentsAPI.update(staffId, name, department);
+      await staffDepartmentsAPI.update(staffId, name, department, email);
       setDeptMappings(rows => rows.map(r => r.staffId === staffId ? { ...r, name } : r));
       toast.success(`Name updated for ${staffId}.`);
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not save.');
+    }
+  };
+
+  const saveDeptEmailEdit = async (staffId) => {
+    const row = deptMappings.find(r => r.staffId === staffId);
+    const email = (deptEmailEditValues[staffId] ?? row?.email ?? '').trim();
+    const name = (deptNameEditValues[staffId] ?? row?.name ?? '').trim();
+    const department = (deptEditValues[staffId] ?? row?.department ?? '').trim();
+    try {
+      await staffDepartmentsAPI.update(staffId, name, department, email);
+      setDeptMappings(rows => rows.map(r => r.staffId === staffId ? { ...r, email } : r));
+      toast.success(`Email updated for ${staffId}.`);
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Could not save.');
     }
@@ -433,7 +454,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
     if (!row) return;
     try {
       await staffDepartmentsAPI.remove(oldStaffId);
-      const res = await staffDepartmentsAPI.create(newStaffId, row.name, row.department);
+      const res = await staffDepartmentsAPI.create(newStaffId, row.name, row.department, row.email);
       setDeptMappings(rows => rows.map(r => r.staffId === oldStaffId ? { ...r, ...res.mapping, staffId: newStaffId } : r));
       setDeptStaffIdEdits(v => { const n = { ...v }; delete n[oldStaffId]; return n; });
       toast.success(`Staff ID updated to ${newStaffId}.`);
@@ -446,20 +467,63 @@ const WorkflowBuilder = ({ onViewChange }) => {
     const staffId = newDeptRow.staffId.trim();
     const name = newDeptRow.name.trim();
     const department = newDeptRow.department.trim();
+    const email = newDeptRow.email.trim();
     if (!staffId) { toast.error('Staff ID is required.'); return; }
     setSavingNewDeptRow(true);
     try {
-      const res = await staffDepartmentsAPI.create(staffId, name, department);
+      const res = await staffDepartmentsAPI.create(staffId, name, department, email);
       setDeptMappings(rows => {
         const existing = rows.find(r => r.staffId === staffId);
         if (existing) return rows.map(r => r.staffId === staffId ? { ...r, ...res.mapping } : r);
         return [...rows, res.mapping].sort((a, b) => a.staffId.localeCompare(b.staffId));
       });
-      setNewDeptRow({ staffId: '', name: '', department: '' });
+      setNewDeptRow({ staffId: '', name: '', department: '', email: '' });
       toast.success(`Mapping saved for ${staffId}.`);
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Could not add mapping.');
     } finally { setSavingNewDeptRow(false); }
+  };
+
+  // Search across ID/Name/Department/Email, then sort by whichever column header was clicked
+  // (asc/desc toggle) — added for this table only, per the admin's request. Memoized off the raw
+  // deptMappings array + search/sort state so it recomputes only when one of those actually changes.
+  const deptSortedFiltered = React.useMemo(() => {
+    const q = deptSearch.trim().toLowerCase();
+    const filtered = !q ? deptMappings : deptMappings.filter(m =>
+      [m.staffId, m.name, m.department, m.email].some(v => String(v || '').toLowerCase().includes(q))
+    );
+    const { key, dir } = deptSort;
+    const sorted = [...filtered].sort((a, b) => {
+      let av = a[key], bv = b[key];
+      if (key === 'updatedAt') { av = av ? new Date(av).getTime() : 0; bv = bv ? new Date(bv).getTime() : 0; }
+      else { av = String(av || '').toLowerCase(); bv = String(bv || '').toLowerCase(); }
+      if (av < bv) return dir === 'asc' ? -1 : 1;
+      if (av > bv) return dir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return sorted;
+  }, [deptMappings, deptSearch, deptSort]);
+
+  const toggleDeptSort = (key) => {
+    setDeptSort(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
+  };
+
+  // CSV export — the exact same rows/columns currently on screen (respects the search filter and
+  // sort order), so what's downloaded always matches what's visible.
+  const exportDeptMappings = () => {
+    const esc = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const header = ['Staff ID', 'Name', 'Department', 'Email', 'Updated By', 'Updated At'];
+    const lines = [header.join(',')];
+    for (const m of deptSortedFiltered) {
+      lines.push([m.staffId, m.name, m.department, m.email, m.updatedBy,
+        m.updatedAt ? new Date(m.updatedAt).toISOString() : ''].map(esc).join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `staff-department-mapping-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
   };
 
   // ── Feature flags ──────────────────────────────────────────────────────────
@@ -2798,7 +2862,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   <div className="space-y-0.5">
                     <p className="text-sm font-black text-foreground">Staff Department Mapping</p>
                     <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      The ZKTeco device itself never stores Department — only a staff ID and Role — and a USB-exported .dat attendance log doesn't even have Role, just bare staff IDs. This table is the real source for both: import it once from HR's own list, and the desktop app correlates every staff ID to its department (and, when it doesn't already know one, its name) here on every check-in, so those columns are never blank. Edit any row below any time — Department always wins on the desktop's next check-in; Name only fills a gap, it never overwrites a name the desktop already has. Refreshes automatically every 20 seconds — the button forces it now.
+                      The ZKTeco device itself never stores Department — only a staff ID and Role — and a USB-exported .dat attendance log doesn't even have Role, just bare staff IDs. This table is the real source for both: import it once from HR's own list, and the desktop app correlates every staff ID to its department (and, when it doesn't already know one, its name) here on every check-in, so those columns are never blank. Edit any row below any time — Department always wins on the desktop's next check-in; Name only fills a gap, it never overwrites a name the desktop already has. Email is stored here the same way and synced to the desktop for later use (report/payslip delivery) — sending itself isn't built yet. Refreshes automatically every 20 seconds — the button forces it now.
                     </p>
                   </div>
                   <button onClick={refreshDeptMappings} disabled={deptRefreshing} title="Refresh now" className="shrink-0 flex items-center gap-1 text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:text-primary transition-all disabled:opacity-50">
@@ -2820,17 +2884,17 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   </div>
                   <div className="rounded-xl border border-border/30 bg-muted/20 p-3 space-y-1">
                     <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Supported File Format</p>
-                    <p className="text-[11px] text-muted-foreground">One row per staff, with a <span className="font-mono text-primary">Staff ID</span> column plus a <span className="font-mono text-primary">Name</span> and/or <span className="font-mono text-primary">Department</span> (or Unit) column — exact header spelling doesn't matter, just the words, and a row only needs one of Name/Department (not both). Accepts <span className="font-mono">.csv</span>, <span className="font-mono">.xlsx</span>, or <span className="font-mono">.xls</span>.</p>
+                    <p className="text-[11px] text-muted-foreground">One row per staff, with a <span className="font-mono text-primary">Staff ID</span> column plus a <span className="font-mono text-primary">Name</span>, <span className="font-mono text-primary">Department</span> (or Unit) and/or <span className="font-mono text-primary">Email</span> column — exact header spelling doesn't matter, just the words, and a row only needs one of Name/Department/Email (not all three). Re-uploading with just Staff ID + Email fills in email alone without touching an existing Name/Department. Accepts <span className="font-mono">.csv</span>, <span className="font-mono">.xlsx</span>, or <span className="font-mono">.xls</span>.</p>
                     <div className="overflow-x-auto pt-1">
                       <table className="text-[11px]">
                         <thead>
                           <tr className="text-left text-muted-foreground uppercase tracking-widest text-[9px] font-bold border-b border-border/30">
-                            <th className="py-1 pr-6">Staff ID</th><th className="py-1 pr-6">Name</th><th className="py-1 pr-6">Department</th>
+                            <th className="py-1 pr-6">Staff ID</th><th className="py-1 pr-6">Name</th><th className="py-1 pr-6">Department</th><th className="py-1 pr-6">Email</th>
                           </tr>
                         </thead>
                         <tbody className="text-muted-foreground">
-                          <tr><td className="py-1 pr-6">30225</td><td className="py-1 pr-6">Amaka Obi</td><td className="py-1 pr-6">Finance</td></tr>
-                          <tr><td className="py-1 pr-6">10534</td><td className="py-1 pr-6">Tunde Bello</td><td className="py-1 pr-6">Monitoring &amp; Eval</td></tr>
+                          <tr><td className="py-1 pr-6">30225</td><td className="py-1 pr-6">Amaka Obi</td><td className="py-1 pr-6">Finance</td><td className="py-1 pr-6">amaka.obi@cssgroup.com.ng</td></tr>
+                          <tr><td className="py-1 pr-6">10534</td><td className="py-1 pr-6">Tunde Bello</td><td className="py-1 pr-6">Monitoring &amp; Eval</td><td className="py-1 pr-6">tunde.bello@cssgroup.com.ng</td></tr>
                         </tbody>
                       </table>
                     </div>
@@ -2853,6 +2917,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
                       <label className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Department</label>
                       <input type="text" value={newDeptRow.department} onChange={e => setNewDeptRow(r => ({ ...r, department: e.target.value }))} placeholder="e.g. Finance" className="bg-muted/30 border border-border/50 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 w-48" />
                     </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Email</label>
+                      <input type="email" value={newDeptRow.email} onChange={e => setNewDeptRow(r => ({ ...r, email: e.target.value }))} placeholder="e.g. amaka.obi@cssgroup.com.ng" className="bg-muted/30 border border-border/50 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 w-56" />
+                    </div>
                     <button onClick={addDeptRow} disabled={savingNewDeptRow} className="px-4 py-2 text-xs font-black uppercase tracking-widest rounded-xl bg-primary text-primary-foreground disabled:opacity-50 transition-all">
                       {savingNewDeptRow ? 'Saving...' : 'Add'}
                     </button>
@@ -2864,6 +2932,21 @@ const WorkflowBuilder = ({ onViewChange }) => {
                     <p className="text-[11px] text-muted-foreground italic">No department mappings yet — import a file above or add a record manually.</p>
                   ) : (
                     <div className="space-y-2">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <input
+                          type="text"
+                          value={deptSearch}
+                          onChange={e => setDeptSearch(e.target.value)}
+                          placeholder="Search by ID, name, department or email..."
+                          className="flex-1 min-w-[220px] bg-muted/30 border border-border/50 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        />
+                        <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                          {deptSortedFiltered.length} of {deptMappings.length}
+                        </span>
+                        <button onClick={exportDeptMappings} className="flex items-center gap-1 text-[11px] font-black uppercase tracking-widest text-muted-foreground hover:text-primary transition-all whitespace-nowrap">
+                          Export CSV
+                        </button>
+                      </div>
                       {deptSelectedIds.size > 0 && (
                         <div className="flex items-center gap-3">
                           <span className="text-[11px] text-muted-foreground">{deptSelectedIds.size} selected</span>
@@ -2884,11 +2967,19 @@ const WorkflowBuilder = ({ onViewChange }) => {
                                   className="rounded"
                                 />
                               </th>
-                              <th className="py-2 pr-3">Staff ID</th><th className="py-2 pr-3">Name</th><th className="py-2 pr-3">Department</th><th className="py-2 pr-3">Updated By</th><th className="py-2 pr-3">Updated At</th><th className="py-2 pr-3"></th>
+                              {[
+                                ['staffId', 'Staff ID'], ['name', 'Name'], ['department', 'Department'],
+                                ['email', 'Email'], ['updatedBy', 'Updated By'], ['updatedAt', 'Updated At'],
+                              ].map(([key, label]) => (
+                                <th key={key} className="py-2 pr-3 cursor-pointer select-none hover:text-primary transition-all" onClick={() => toggleDeptSort(key)}>
+                                  {label}{deptSort.key === key ? (deptSort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                                </th>
+                              ))}
+                              <th className="py-2 pr-3"></th>
                             </tr>
                           </thead>
                           <tbody>
-                            {deptMappings.map(m => (
+                            {deptSortedFiltered.map(m => (
                               <tr key={m.staffId} className={`border-b border-border/10 ${deptSelectedIds.has(m.staffId) ? 'bg-primary/5' : ''}`}>
                                 <td className="py-2 pr-2">
                                   <input type="checkbox" checked={deptSelectedIds.has(m.staffId)}
@@ -2923,6 +3014,17 @@ const WorkflowBuilder = ({ onViewChange }) => {
                                     onChange={e => setDeptEditValues(v => ({ ...v, [m.staffId]: e.target.value }))}
                                     onBlur={() => { if ((deptEditValues[m.staffId] ?? m.department) !== m.department) saveDeptEdit(m.staffId); }}
                                     onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                                    className="w-full bg-muted/30 border border-border/50 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                  />
+                                </td>
+                                <td className="py-2 pr-3">
+                                  <input
+                                    type="email"
+                                    value={deptEmailEditValues[m.staffId] ?? m.email ?? ''}
+                                    onChange={e => setDeptEmailEditValues(v => ({ ...v, [m.staffId]: e.target.value }))}
+                                    onBlur={() => { if ((deptEmailEditValues[m.staffId] ?? m.email ?? '') !== (m.email ?? '')) saveDeptEmailEdit(m.staffId); }}
+                                    onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                                    placeholder="—"
                                     className="w-full bg-muted/30 border border-border/50 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-primary/30"
                                   />
                                 </td>

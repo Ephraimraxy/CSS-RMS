@@ -262,11 +262,11 @@ export const staffDepartmentsAPI = {
   async list() {
     return api.get('/staff-departments');
   },
-  async create(staffId, name, department) {
-    return api.post('/staff-departments', { staffId, name, department });
+  async create(staffId, name, department, email) {
+    return api.post('/staff-departments', { staffId, name, department, email });
   },
-  async update(staffId, name, department) {
-    return api.patch(`/staff-departments/${encodeURIComponent(staffId)}`, { name, department });
+  async update(staffId, name, department, email) {
+    return api.patch(`/staff-departments/${encodeURIComponent(staffId)}`, { name, department, email });
   },
   async remove(staffId) {
     return api.delete(`/staff-departments/${encodeURIComponent(staffId)}`);
