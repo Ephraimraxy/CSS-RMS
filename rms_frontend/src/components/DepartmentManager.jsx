@@ -5,13 +5,16 @@ import {
   Plus, Trash2, Building2, Briefcase, Search,
   Eye, EyeOff, Pencil, X, Save, Loader2, KeyRound,
   CheckCircle2, RotateCcw, Info, User, Mail, Phone, Hash, BadgeCheck, Download,
-  Upload, PenTool, AlertTriangle, ShieldAlert, ShieldCheck
+  Upload, PenTool, AlertTriangle, ShieldAlert, ShieldCheck, FileSpreadsheet, FileDown,
+  ChevronDown, ChevronUp, Filter
 } from 'lucide-react';
 import { getDepartments, addDepartment, deleteDepartment } from '../lib/store';
 import { deptAPI, reqAPI } from '../lib/api';
 import { loadFeatureFlag } from '../lib/featureFlag';
 import { toast } from 'react-hot-toast';
 import ConfirmModal from './ConfirmModal';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
 
 // ── Auto-generated Department Seal SVG ────────────────────────────────────────
 const DepartmentSeal = ({ name, id = '' }) => {
@@ -283,6 +286,357 @@ const EditDeptModal = ({ dept, onClose, onSaved }) => {
 };
 
 
+// ── Export Columns definition (shared) ────────────────────────────────────────
+const EXPORT_COLUMNS = [
+  { key: 'name',        label: 'Department Name',  defaultOn: true },
+  { key: 'type',        label: 'Category',         defaultOn: true },
+  { key: 'staffId',     label: 'Staff ID',         defaultOn: true },
+  { key: 'surname',     label: 'Surname',          defaultOn: true },
+  { key: 'firstName',   label: 'First Name',       defaultOn: true },
+  { key: 'otherName',   label: 'Other Name',       defaultOn: true },
+  { key: 'headTitle',   label: 'Designation',      defaultOn: true },
+  { key: 'headEmail',   label: 'Official Email',   defaultOn: true },
+  { key: 'phone',       label: 'Contact Phone',    defaultOn: true },
+  { key: 'accessCode',  label: 'Login Code',       defaultOn: false },
+  { key: 'parentName',  label: 'Parent Department', defaultOn: false },
+];
+
+// ── Export Modal ──────────────────────────────────────────────────────────────
+const ExportModal = ({ departments, onClose }) => {
+  const mainDepts = departments.filter(d => !d.isSubAccount);
+  const subAccounts = departments.filter(d => d.isSubAccount);
+
+  const [format, setFormat] = useState('excel');
+  const [includeSubAccounts, setIncludeSubAccounts] = useState(false);
+  const [colVisible, setColVisible] = useState(() =>
+    Object.fromEntries(EXPORT_COLUMNS.map(c => [c.key, c.defaultOn]))
+  );
+  const [selectedDepts, setSelectedDepts] = useState(() => new Set(mainDepts.map(d => d.id)));
+  const [deptSearch, setDeptSearch] = useState('');
+  const [deptListOpen, setDeptListOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const toggleCol = (key) => setColVisible(v => ({ ...v, [key]: !v[key] }));
+  const toggleDept = (id) => setSelectedDepts(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const selectAllDepts = () => setSelectedDepts(new Set(mainDepts.map(d => d.id)));
+  const clearAllDepts = () => setSelectedDepts(new Set());
+
+  const visibleCols = EXPORT_COLUMNS.filter(c => colVisible[c.key]);
+
+  // Build the rows to export
+  const buildRows = () => {
+    const rows = [];
+    const chosen = mainDepts.filter(d => selectedDepts.has(d.id));
+    const allRaw = includeSubAccounts
+      ? departments
+      : departments.filter(d => !d.isSubAccount);
+
+    for (const dept of chosen) {
+      const nameParts = (dept.headName || '').trim().split(/\s+/).filter(Boolean);
+      rows.push({
+        name:       dept.name,
+        type:       dept.type || '',
+        staffId:    dept.staffId || '',
+        surname:    nameParts[0] || '',
+        firstName:  nameParts[1] || '',
+        otherName:  nameParts.slice(2).join(' ') || '',
+        headTitle:  dept.headTitle || '',
+        headEmail:  dept.headEmail || '',
+        phone:      dept.phone || '',
+        accessCode: dept.accessCodeLabel || dept.accessCode || '',
+        parentName: '',
+        _isMain: true,
+      });
+      if (includeSubAccounts) {
+        const subs = subAccounts.filter(s => s.parentId === dept.id);
+        for (const sub of subs) {
+          const sp = (sub.headName || '').trim().split(/\s+/).filter(Boolean);
+          rows.push({
+            name:       `  ↳ ${sub.name}`,
+            type:       sub.type || '',
+            staffId:    sub.staffId || '',
+            surname:    sp[0] || '',
+            firstName:  sp[1] || '',
+            otherName:  sp.slice(2).join(' ') || '',
+            headTitle:  sub.headTitle || '',
+            headEmail:  sub.headEmail || '',
+            phone:      sub.phone || '',
+            accessCode: sub.accessCodeLabel || sub.accessCode || '',
+            parentName: dept.name,
+            _isMain: false,
+          });
+        }
+      }
+    }
+    return rows;
+  };
+
+  const handleExport = async () => {
+    if (visibleCols.length === 0) { toast.error('Select at least one column.'); return; }
+    if (selectedDepts.size === 0) { toast.error('Select at least one department.'); return; }
+    setExporting(true);
+    try {
+      const rows = buildRows();
+      const headers = visibleCols.map(c => c.label);
+      const data = rows.map(r => visibleCols.map(c => r[c.key] ?? ''));
+
+      if (format === 'excel') {
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+        // Column widths
+        ws['!cols'] = headers.map((h, i) => ({ wch: Math.max(h.length, ...data.map(r => String(r[i] || '').length)) + 2 }));
+        XLSX.utils.book_append_sheet(wb, ws, 'Enrolled HODs');
+        XLSX.writeFile(wb, `Dept_HOD_Export_${new Date().toISOString().slice(0,10)}.xlsx`);
+        toast.success('Excel file downloaded.');
+      } else {
+        // PDF — landscape for wide tables, portrait if few columns
+        const orientation = visibleCols.length > 6 ? 'landscape' : 'portrait';
+        const doc = new jsPDF({ orientation, unit: 'mm', format: 'a4' });
+        const pageW = doc.internal.pageSize.getWidth();
+        const pageH = doc.internal.pageSize.getHeight();
+        const margin = 12;
+        const colCount = headers.length;
+        const colW = Math.floor((pageW - margin * 2) / colCount);
+
+        // Title
+        doc.setFontSize(13);
+        doc.setFont(undefined, 'bold');
+        doc.text('Enrolled Heads of Department', margin, 14);
+        doc.setFontSize(8);
+        doc.setFont(undefined, 'normal');
+        doc.text(`Generated: ${new Date().toLocaleString()}   ·   ${rows.length} record(s)`, margin, 20);
+
+        // Table header
+        let y = 27;
+        const rowH = 7;
+        const headerH = 8;
+
+        const drawHeader = () => {
+          doc.setFillColor(30, 92, 30);
+          doc.rect(margin, y, pageW - margin * 2, headerH, 'F');
+          doc.setTextColor(255, 255, 255);
+          doc.setFontSize(7);
+          doc.setFont(undefined, 'bold');
+          headers.forEach((h, i) => {
+            doc.text(h.toUpperCase(), margin + i * colW + 2, y + 5.5, { maxWidth: colW - 3 });
+          });
+          doc.setTextColor(0, 0, 0);
+          doc.setFont(undefined, 'normal');
+          y += headerH;
+        };
+        drawHeader();
+
+        // Rows
+        data.forEach((row, ri) => {
+          if (y + rowH > pageH - margin) {
+            doc.addPage();
+            y = margin;
+            drawHeader();
+          }
+          if (ri % 2 === 0) {
+            doc.setFillColor(245, 247, 245);
+            doc.rect(margin, y, pageW - margin * 2, rowH, 'F');
+          }
+          doc.setFontSize(7);
+          row.forEach((cell, i) => {
+            doc.text(String(cell || ''), margin + i * colW + 2, y + 5, { maxWidth: colW - 3 });
+          });
+          // Light separator
+          doc.setDrawColor(220, 220, 220);
+          doc.line(margin, y + rowH, pageW - margin, y + rowH);
+          y += rowH;
+        });
+
+        doc.save(`Dept_HOD_Export_${new Date().toISOString().slice(0,10)}.pdf`);
+        toast.success('PDF file downloaded.');
+      }
+      onClose();
+    } catch (err) {
+      console.error(err);
+      toast.error('Export failed. Please try again.');
+    } finally { setExporting(false); }
+  };
+
+  const filteredMainDepts = mainDepts.filter(d =>
+    d.name.toLowerCase().includes(deptSearch.toLowerCase())
+  );
+
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border/30 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+              <FileDown size={16} />
+            </div>
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Export HOD Directory</h3>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Choose format, columns, and departments to include</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl text-muted-foreground transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 p-6 space-y-6">
+
+          {/* Format selector */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Export Format</p>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { id: 'excel', label: 'Excel (.xlsx)', icon: FileSpreadsheet, color: 'emerald' },
+                { id: 'pdf',   label: 'PDF Document',  icon: FileDown,        color: 'red' },
+              ].map(({ id, label, icon: Icon, color }) => (
+                <button
+                  key={id}
+                  onClick={() => setFormat(id)}
+                  className={`flex items-center gap-3 p-3.5 rounded-xl border transition-all ${format === id ? `border-${color}-500 bg-${color}-50 text-${color}-700` : 'border-border/50 text-muted-foreground hover:border-border'}`}
+                >
+                  <Icon size={18} className={format === id ? `text-${color}-600` : 'text-muted-foreground'} />
+                  <span className="text-xs font-bold">{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Sub-accounts toggle */}
+          <label className="flex items-center gap-3 p-3.5 rounded-xl border border-border/50 cursor-pointer hover:border-primary/30 transition-all">
+            <input
+              type="checkbox"
+              checked={includeSubAccounts}
+              onChange={e => setIncludeSubAccounts(e.target.checked)}
+              className="w-4 h-4 accent-primary rounded"
+            />
+            <div className="flex-1">
+              <p className="text-xs font-bold text-foreground">Include Sub-Accounts</p>
+              <p className="text-[10px] text-muted-foreground">Sub-accounts will appear indented beneath their parent department</p>
+            </div>
+            <span className="text-[9px] font-black text-muted-foreground/50 bg-muted px-2 py-0.5 rounded-full">{subAccounts.length} sub-accounts</span>
+          </label>
+
+          {/* Column visibility */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Columns to Export</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {EXPORT_COLUMNS.map(col => (
+                <label key={col.key} className={`flex items-center gap-2.5 px-3 py-2 rounded-xl cursor-pointer transition-all ${colVisible[col.key] ? 'bg-primary/5 border border-primary/20' : 'border border-border/40 hover:border-border'}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!colVisible[col.key]}
+                    onChange={() => toggleCol(col.key)}
+                    className="w-3.5 h-3.5 accent-primary rounded shrink-0"
+                  />
+                  <span className={`text-[11px] font-bold ${colVisible[col.key] ? 'text-foreground' : 'text-muted-foreground/50 line-through'}`}>{col.label}</span>
+                  {!col.defaultOn && <span className="ml-auto text-[8px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-1 rounded shrink-0">Sensitive</span>}
+                </label>
+              ))}
+            </div>
+            <p className="text-[9px] text-muted-foreground/60 font-medium">{visibleCols.length} of {EXPORT_COLUMNS.length} columns selected</p>
+          </div>
+
+          {/* Department filter */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Departments to Include</p>
+              <div className="flex items-center gap-2">
+                <button onClick={selectAllDepts} className="text-[9px] font-black text-primary hover:underline uppercase tracking-widest">All</button>
+                <span className="text-muted-foreground/40">·</span>
+                <button onClick={clearAllDepts} className="text-[9px] font-black text-muted-foreground hover:text-destructive hover:underline uppercase tracking-widest">None</button>
+              </div>
+            </div>
+
+            {/* Search + dropdown toggle */}
+            <div className="border border-border/50 rounded-xl overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/30">
+                <Search size={13} className="text-muted-foreground shrink-0" />
+                <input
+                  value={deptSearch}
+                  onChange={e => setDeptSearch(e.target.value)}
+                  placeholder="Search departments..."
+                  className="flex-1 text-xs bg-transparent outline-none text-foreground placeholder-muted-foreground/50"
+                />
+                <span className="text-[9px] font-black text-muted-foreground/50 bg-muted px-2 py-0.5 rounded-full shrink-0">{selectedDepts.size} selected</span>
+                <button onClick={() => setDeptListOpen(o => !o)} className="text-muted-foreground hover:text-primary transition-colors">
+                  {deptListOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                </button>
+              </div>
+              {deptListOpen && (
+                <div className="max-h-48 overflow-y-auto divide-y divide-border/20">
+                  {filteredMainDepts.map(d => {
+                    const subCount = subAccounts.filter(s => s.parentId === d.id).length;
+                    return (
+                      <label key={d.id} className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-all ${selectedDepts.has(d.id) ? 'bg-primary/5' : 'hover:bg-muted/30'}`}>
+                        <input
+                          type="checkbox"
+                          checked={selectedDepts.has(d.id)}
+                          onChange={() => toggleDept(d.id)}
+                          className="w-3.5 h-3.5 accent-primary rounded shrink-0"
+                        />
+                        <span className="flex-1 text-xs font-medium text-foreground">{d.name}</span>
+                        {d.type && <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full shrink-0 ${d.type === 'Strategic' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>{d.type}</span>}
+                        {subCount > 0 && <span className="text-[8px] text-muted-foreground/60 shrink-0">{subCount} sub</span>}
+                      </label>
+                    );
+                  })}
+                  {filteredMainDepts.length === 0 && (
+                    <p className="px-3 py-4 text-xs text-muted-foreground text-center italic">No departments match.</p>
+                  )}
+                </div>
+              )}
+              {/* Selected chips (shown when list closed) */}
+              {!deptListOpen && selectedDepts.size > 0 && selectedDepts.size < mainDepts.length && (
+                <div className="px-3 py-2 flex flex-wrap gap-1.5">
+                  {mainDepts.filter(d => selectedDepts.has(d.id)).slice(0, 8).map(d => (
+                    <span key={d.id} className="flex items-center gap-1 text-[9px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                      {d.name}
+                      <button onClick={() => toggleDept(d.id)} className="hover:text-destructive transition-colors"><X size={8} /></button>
+                    </span>
+                  ))}
+                  {selectedDepts.size > 8 && <span className="text-[9px] text-muted-foreground/60 font-medium self-center">+{selectedDepts.size - 8} more</span>}
+                </div>
+              )}
+              {!deptListOpen && selectedDepts.size === mainDepts.length && (
+                <p className="px-3 py-2 text-[10px] text-muted-foreground font-medium">All {mainDepts.length} departments selected</p>
+              )}
+              {!deptListOpen && selectedDepts.size === 0 && (
+                <p className="px-3 py-2 text-[10px] text-amber-600 font-medium">No departments selected — nothing to export</p>
+              )}
+            </div>
+          </div>
+
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-border/20 bg-muted/10 shrink-0 flex items-center justify-between gap-3">
+          <p className="text-[10px] text-muted-foreground font-medium">
+            {selectedDepts.size === 0 ? 'Select departments above' : `${(() => { let n = selectedDepts.size; if (includeSubAccounts) { mainDepts.filter(d => selectedDepts.has(d.id)).forEach(d => { n += subAccounts.filter(s => s.parentId === d.id).length; }); } return n; })()} rows · ${visibleCols.length} columns · ${format.toUpperCase()}`}
+          </p>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-xl border border-border/50 text-xs font-bold text-muted-foreground hover:bg-muted transition-all">Cancel</button>
+            <button
+              onClick={handleExport}
+              disabled={exporting || selectedDepts.size === 0 || visibleCols.length === 0}
+              className="flex items-center gap-2 px-5 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-bold text-xs uppercase tracking-widest transition-all disabled:opacity-50 shadow-sm active:scale-95"
+            >
+              {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+              {exporting ? 'Exporting...' : `Export ${format === 'excel' ? 'Excel' : 'PDF'}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 // ── Main Component ────────────────────────────────────────────────────────────
 const DepartmentManager = ({ onViewChange }) => {
   const { user } = useAuth();
@@ -295,6 +649,7 @@ const DepartmentManager = ({ onViewChange }) => {
   const [pendingDept, setPendingDept] = useState(null);
   const [editingDept, setEditingDept] = useState(null);
   const [sealDept, setSealDept] = useState(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const [newDeptData, setNewDeptData] = useState({ name: '', type: 'Operational', accessCode: '', headStaffId: '', headSurname: '', headFirstName: '', headOtherName: '', headTitle: '', headEmail: '', phone: '' });
 
   // Flash-free: default null (unknown/hidden) until the real setting resolves, so the
@@ -459,6 +814,13 @@ const DepartmentManager = ({ onViewChange }) => {
                 className="bg-white/80 border border-border/50 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 w-56 shadow-sm"
               />
             </div>
+            <button
+              onClick={() => setExportOpen(true)}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-5 rounded-xl transition-all shadow-lg shadow-emerald-500/20 text-sm"
+            >
+              <FileDown size={16} />
+              Export
+            </button>
             <button
               onClick={() => setIsAddModalOpen(true)}
               className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold py-3 px-5 rounded-xl transition-all shadow-lg shadow-primary/20 flex items-center gap-2 text-sm"
@@ -655,6 +1017,11 @@ const DepartmentManager = ({ onViewChange }) => {
         accept="image/png,image/jpeg"
         onChange={handleAdminSigUpload}
       />
+
+      {/* Export Modal */}
+      {exportOpen && (
+        <ExportModal departments={departments} onClose={() => setExportOpen(false)} />
+      )}
 
       {/* Seal View Modal */}
       {sealDept && (
