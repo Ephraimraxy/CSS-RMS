@@ -3401,6 +3401,21 @@ app.post('/api/departments', authenticateToken, requireRoles(['global_admin']), 
 });
 
 // Edit department info (Admin only)
+// Patterns that make a department system-critical — renaming one of these breaks
+// approval routing, vetting chain, or super-admin detection. Kept in sync with
+// isCriticalDeptName() in DepartmentManager.jsx on the frontend.
+const CRITICAL_DEPT_PATTERNS = [
+  /ceo|chairman/i,
+  /general\s*manager|\bgm\b/i,
+  /\bhr\b|human\s*resource/i,
+  /account/i,
+];
+function isCriticalDeptName(name) {
+  const n = (name || '').trim();
+  if (n.toLowerCase() === 'super admin') return true;
+  return CRITICAL_DEPT_PATTERNS.some(re => re.test(n));
+}
+
 app.put('/api/departments/:id', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
     const { id } = req.params;
@@ -3411,6 +3426,16 @@ app.put('/api/departments/:id', authenticateToken, requireRoles(['global_admin']
     if (!headTitle?.trim()) return sendError(res, 400, 'Head official designation/title is required — the dashboard treats a profile without one as incomplete and will keep prompting the department to set it.');
     if (!headEmail?.trim()) return sendError(res, 400, 'Head official email is required.');
     if (!phone?.trim()) return sendError(res, 400, 'Contact phone is required — used to SMS the access code.');
+
+    // Block renaming of system-critical departments — their names are matched by
+    // regex in routing logic (approval tiers, vetting chain, super-admin detection).
+    const currentDept = await prisma.department.findUnique({ where: { id: parseInt(id) }, select: { name: true } });
+    if (currentDept && isCriticalDeptName(currentDept.name)) {
+      const trimmedNew = name.trim();
+      if (trimmedNew.toLowerCase() !== currentDept.name.toLowerCase()) {
+        return res.status(403).json({ error: `"${currentDept.name}" is a system-critical department. Its name cannot be changed because approval routing and workflow logic depend on it. All other details can still be edited.` });
+      }
+    }
 
     // Reject name clashes case-insensitively (excluding this department itself),
     // regardless of Strategic/Operational type — names must be unique system-wide.

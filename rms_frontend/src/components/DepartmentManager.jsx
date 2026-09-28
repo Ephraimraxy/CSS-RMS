@@ -169,8 +169,24 @@ const SealViewModal = ({ dept, onClose }) => {
 };
 
 
+// ── Critical-name detector — kept in sync with isCriticalDeptName() in serve.js ─
+const CRITICAL_DEPT_PATTERNS = [
+  /ceo|chairman/i,
+  /general\s*manager|\bgm\b/i,
+  /\bhr\b|human\s*resource/i,
+  /account/i,
+];
+function isCriticalDeptName(name) {
+  const n = (name || '').trim();
+  if (n.toLowerCase() === 'super admin') return true;
+  return CRITICAL_DEPT_PATTERNS.some(re => re.test(n));
+}
+
+
 // ── Edit Department Modal ─────────────────────────────────────────────────────
 const EditDeptModal = ({ dept, onClose, onSaved }) => {
+  const isCritical = isCriticalDeptName(dept.name);
+
   // Parse existing headName into surname / firstName / otherName parts
   const existingParts = (dept.headName || '').trim().split(/\s+/);
   const [form, setForm] = useState({
@@ -188,7 +204,6 @@ const EditDeptModal = ({ dept, onClose, onSaved }) => {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!form.name.trim()) { toast.error('Department name is required.'); return; }
     if (!form.headStaffId.trim()) { toast.error('Staff ID is required.'); return; }
     if (!form.headSurname.trim()) { toast.error('Surname is required.'); return; }
     if (!form.headFirstName.trim()) { toast.error('First name is required.'); return; }
@@ -196,10 +211,13 @@ const EditDeptModal = ({ dept, onClose, onSaved }) => {
     if (!form.headEmail.trim()) { toast.error('Official email is required.'); return; }
     if (!form.phone.trim()) { toast.error('Contact phone is required — used to SMS the access code.'); return; }
     const combinedName = [form.headSurname, form.headFirstName, form.headOtherName].map(s => s.trim()).filter(Boolean).join(' ');
+    // Always send the original name for critical depts so the server value never drifts
+    const nameToSend = isCritical ? dept.name : form.name.trim();
+    if (!nameToSend) { toast.error('Department name is required.'); return; }
     setSaving(true);
     try {
-      await deptAPI.updateDepartment(dept.id, { ...form, headName: combinedName, staffId: form.headStaffId.trim().toUpperCase() });
-      toast.success(`${form.name} updated successfully.`);
+      await deptAPI.updateDepartment(dept.id, { ...form, name: nameToSend, headName: combinedName, staffId: form.headStaffId.trim().toUpperCase() });
+      toast.success(`${nameToSend} updated successfully.`);
       onSaved();
       onClose();
     } catch (err) {
@@ -217,12 +235,19 @@ const EditDeptModal = ({ dept, onClose, onSaved }) => {
         <div className="sticky top-0 bg-white rounded-t-3xl px-6 pt-6 pb-4 border-b border-border/30 z-10">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${isCritical ? 'bg-amber-500/10 text-amber-600' : 'bg-primary/10 text-primary'}`}>
                 <Building2 size={18} />
               </div>
               <div>
-                <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Edit Department</h3>
-                <p className="text-[10px] text-muted-foreground font-mono mt-0.5 truncate max-w-[200px]">{dept.name}</p>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Edit Department</h3>
+                  {isCritical && (
+                    <span className="flex items-center gap-1 text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                      <KeyRound size={9} /> System-Critical
+                    </span>
+                  )}
+                </div>
+                <p className="text-[10px] text-muted-foreground font-mono mt-0.5 truncate max-w-[220px]">{dept.name}</p>
               </div>
             </div>
             <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl text-muted-foreground transition-colors">
@@ -231,13 +256,37 @@ const EditDeptModal = ({ dept, onClose, onSaved }) => {
           </div>
         </div>
 
+        {/* Critical dept notice */}
+        {isCritical && (
+          <div className="mx-6 mt-4 flex items-start gap-2.5 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+            <KeyRound size={13} className="text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-amber-700 font-medium leading-relaxed">
+              <strong>Name is locked.</strong> This department's name is tied to the system's approval routing and workflow logic. You can update the Head Official's details freely, but the department name cannot be changed.
+            </p>
+          </div>
+        )}
+
         <form onSubmit={handleSave} className="p-6 space-y-6">
           {/* Basic Info */}
           <div className="space-y-4">
             <p className="text-[9px] font-black text-muted-foreground/50 uppercase tracking-[0.25em]">Basic Information</p>
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Department Name</label>
-              <input value={form.name} onChange={set('name')} className="w-full border border-border/50 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                Department Name
+                {isCritical && <KeyRound size={10} className="text-amber-500" />}
+              </label>
+              {isCritical ? (
+                <div className="flex items-center gap-2 w-full border border-amber-200 bg-amber-50/60 rounded-xl px-4 py-3">
+                  <span className="flex-1 text-sm font-bold text-foreground">{dept.name}</span>
+                  <span className="text-[9px] font-black text-amber-600 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full uppercase tracking-widest shrink-0">Locked</span>
+                </div>
+              ) : (
+                <input
+                  value={form.name}
+                  onChange={set('name')}
+                  className="w-full border border-border/50 rounded-xl px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               {['Operational', 'Strategic'].map(t => (
@@ -253,13 +302,13 @@ const EditDeptModal = ({ dept, onClose, onSaved }) => {
           <div className="space-y-4">
             <p className="text-[9px] font-black text-muted-foreground/50 uppercase tracking-[0.25em]">Head Official</p>
             {[
-              { key: 'headStaffId',   label: 'Staff ID',         icon: Hash,       placeholder: 'e.g. CSS001', required: true },
-              { key: 'headSurname',   label: 'Surname',          icon: User,       placeholder: 'e.g. Musa', required: true },
-              { key: 'headFirstName', label: 'First Name',        icon: User,       placeholder: 'e.g. Chindo', required: true },
-              { key: 'headOtherName', label: 'Other Name',        icon: User,       placeholder: 'e.g. James (optional)' },
-              { key: 'headTitle',     label: 'Designation / Title', icon: BadgeCheck, placeholder: 'General Manager', required: true },
-              { key: 'headEmail',     label: 'Official Email',    icon: Mail,       placeholder: 'head@cssgroup.internal', type: 'email', required: true },
-              { key: 'phone',         label: 'Contact Phone',     icon: Phone,      placeholder: '+234 800 000 0000', required: true },
+              { key: 'headStaffId',   label: 'Staff ID',            icon: Hash,       placeholder: 'e.g. CSS001', required: true },
+              { key: 'headSurname',   label: 'Surname',             icon: User,       placeholder: 'e.g. Musa', required: true },
+              { key: 'headFirstName', label: 'First Name',           icon: User,       placeholder: 'e.g. Chindo', required: true },
+              { key: 'headOtherName', label: 'Other Name',           icon: User,       placeholder: 'e.g. James (optional)' },
+              { key: 'headTitle',     label: 'Designation / Title',  icon: BadgeCheck, placeholder: 'General Manager', required: true },
+              { key: 'headEmail',     label: 'Official Email',       icon: Mail,       placeholder: 'head@cssgroup.internal', type: 'email', required: true },
+              { key: 'phone',         label: 'Contact Phone',        icon: Phone,      placeholder: '+234 800 000 0000', required: true },
             ].map(({ key, label, icon: Icon, placeholder, type, required }) => (
               <div key={key} className="relative">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest block mb-1">
@@ -892,10 +941,17 @@ const DepartmentManager = ({ onViewChange }) => {
                     return (
                       <tr key={dept.id} className="hover:bg-primary/[0.02] transition-colors group">
                         <td className="py-4 px-4 text-xs font-bold text-foreground border-l border-border/10">
-                          {dept.name}
-                          {dept.isDisabled && (
-                            <span className="ml-2 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 align-middle">Suspended</span>
-                          )}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span>{dept.name}</span>
+                            {isCriticalDeptName(dept.name) && (
+                              <span className="inline-flex items-center gap-0.5 text-[7px] font-black uppercase px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-200 align-middle" title="System-critical department — name is locked">
+                                <KeyRound size={8} /> Locked
+                              </span>
+                            )}
+                            {dept.isDisabled && (
+                              <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 align-middle">Suspended</span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-4 px-4">
                           <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${dept.type === 'Strategic' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
