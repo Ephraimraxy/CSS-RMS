@@ -5,6 +5,7 @@ import { reqAPI, settingsAPI, adminAPI } from '../lib/api';
 import { getEffectiveAmount, getLiveTrailDepartment, normalizeReq } from '../lib/requisitionDisplay';
 import toast from 'react-hot-toast';
 import { ArrowUpRight, Clock, CheckCircle2, XCircle, ListFilter, Eye, AlertTriangle, ShieldCheck, ArrowRight, Paperclip, ChevronDown, ChevronUp, Send, BadgeCheck, RotateCcw, FileText, MessageSquare, AlertOctagon } from 'lucide-react';
+import RequisitionFlowModal from './RequisitionFlowModal';
 
 const StatCard = ({ label, value, icon: Icon, color, onClick, title, active, activeLabel, danger }) => (
   <div onClick={onClick} title={title} className={`glass p-3.5 sm:p-5 rounded-[1.5rem] sm:rounded-[2rem] border relative overflow-hidden group transition-all bg-white/70 shadow-sm ${danger ? 'border-red-400 ring-2 ring-red-300/60 bg-red-50/60' : active ? `border-${color}-400 ring-2 ring-${color}-300/50` : 'border-border/40'} ${onClick ? 'hover:border-primary/40 cursor-pointer hover:shadow-xl hover:shadow-primary/5 active:scale-[0.98]' : ''}`}>
@@ -63,7 +64,9 @@ const matchesTypeFilter = (record, filter) => {
 
 const Dashboard = ({ onViewChange }) => {
   const { user } = useAuth();
-  const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, totalSpent: 0, memos: 0, memoPending: 0, memoPublished: 0, treated: 0, approvedByMe: 0 });
+  const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, totalSpent: 0, totalSpentIsPartial: false, memos: 0, memoPending: 0, memoPublished: 0, treated: 0, approvedByMe: 0 });
+  const [chainStats, setChainStats] = useState({ forwarded: 0, returned: 0, vetted: 0, disbursed: 0 });
+  const [flowModal, setFlowModal] = useState(null); // { reqId, deptName }
   const [partialReqs, setPartialReqs] = useState([]);
   const [recentPending, setRecentPending] = useState([]);
   const [ccReqs, setCcReqs] = useState([]);
@@ -78,6 +81,10 @@ const Dashboard = ({ onViewChange }) => {
   const loadDashboard = async () => {
     const s = await getDashboardStats(user);
     setStats(s);
+    // Fetch chain stats for dept users (forwarded/vetted counts for "Approved Reqs" card)
+    if (user?.role === 'department') {
+      reqAPI.getChainStats().then(setChainStats).catch(() => {});
+    }
     const all = await getRequisitions({ scope: 'all' });
     const userDeptId = user.deptId ? Number(user.deptId) : null;
     const userDeptName = user.departmentName || '';
@@ -157,16 +164,13 @@ const Dashboard = ({ onViewChange }) => {
       // Show last 10 sorted newest first (include drafts in the list for visibility)
       setMyReqs([...mine].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 10));
 
-      // Involvement history — all requests this dept has touched in any capacity
-      const hist = all.filter(r =>
-        Number(r.departmentId) === userDeptId ||
-        Number(r.creatorDeptId) === userDeptId ||
-        Number(r.finalApprovedByDeptId) === userDeptId ||
-        Number(r.treatedByDeptId) === userDeptId ||
-        Number(r.currentVettingDeptId) === userDeptId ||
-        Number(r.targetDepartmentId) === userDeptId
-      );
-      setHistoryReqs(hist.sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt)).slice(0, 50));
+      // Involvement history — every req the API returned for this dept is one they're involved in.
+      // The server already scopes the list using ForwardEvent + VettingEvent lookups, so we don't
+      // need to re-filter here. Sort newest-activity first, cap at 50 for display.
+      setHistoryReqs([...all]
+        .filter(isOperationalRequisition)
+        .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))
+        .slice(0, 50));
     }
   };
 
@@ -269,6 +273,20 @@ const Dashboard = ({ onViewChange }) => {
   const _isCEOChairman = /ceo|chairman/i.test(_deptName);
   const _isExecApprover = _isCEOChairman || /general\s*manager|\bgm\b/i.test(_deptName) || /^\s*hr\s*$|human.resource/i.test(_deptName);
   const _showTreatedCard = _isDept && (_isAccountDept || _isCEOChairman);
+
+  // "Approved Reqs" card — for processing depts (HR, Audit, etc.) stats.approved can be 0 even
+  // when they've forwarded reqs, because their actions live in ForwardEvent not on the req status.
+  // Use chainStats.forwarded as the count when it better reflects their activity.
+  const _useChainForApproved = _isDept && stats.approved === 0 && chainStats.forwarded > 0;
+  const _approvedDisplayVal = _useChainForApproved ? chainStats.forwarded : stats.approved;
+  const _approvedTitle = _useChainForApproved
+    ? `${chainStats.forwarded} requisition(s) forwarded/approved in processing chain`
+    : 'Requisitions that have been approved';
+
+  // "Total Spent" card — show partial indicator when total includes incomplete payments
+  const _totalSpentTitle = stats.totalSpentIsPartial
+    ? 'Total disbursed for your requests (includes partial payments — balance still outstanding)'
+    : undefined;
   const _showApprovalsCard = _isDept && _isExecApprover;
   const _extraCards = (_showTreatedCard ? 1 : 0) + (_showApprovalsCard ? 1 : 0);
   const _deptGridCols = _extraCards === 2 ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-8'
@@ -282,6 +300,7 @@ const Dashboard = ({ onViewChange }) => {
   };
 
   return (
+    <>
     <div className="max-w-full mx-auto space-y-5 pb-20 animate-slide-up px-1">
         {user?.role === 'department' && !isDeptReady && (
           <div className="glass bg-amber-500/10 border border-amber-500/30 rounded-[2rem] p-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-2xl shadow-amber-500/10">
@@ -356,9 +375,9 @@ const Dashboard = ({ onViewChange }) => {
 
         <div className={`grid gap-3 sm:gap-6 ${normalizeRole(user?.role) === 'global_admin' ? 'grid-cols-2 lg:grid-cols-4 xl:grid-cols-8' : user?.role === 'department' ? _deptGridCols : 'grid-cols-2 lg:grid-cols-5'}`}>
           <StatCard label="Pending Actions" value={String(stats.pending).padStart(2, '0')} icon={Clock} color="orange" onClick={() => onViewChange('requisitions')} />
-          <StatCard label="Approved Reqs" value={String(stats.approved).padStart(2, '0')} icon={CheckCircle2} color="emerald" onClick={() => onViewChange('requisitions')} />
+          <StatCard label="Approved Reqs" value={String(_approvedDisplayVal).padStart(2, '0')} icon={CheckCircle2} color="emerald" onClick={() => onViewChange('requisitions')} title={_approvedTitle} activeLabel={_useChainForApproved ? 'Forwarded' : undefined} active={_useChainForApproved} />
           <StatCard label="Rejected Reqs" value={String(stats.rejected).padStart(2, '0')} icon={XCircle} color="red" onClick={() => onViewChange('requisitions')} />
-          <StatCard label="Total Spent" value={formatCurrency(stats.totalSpent)} icon={ArrowUpRight} color="blue" onClick={() => onViewChange('requisitions')} />
+          <StatCard label="Total Spent" value={formatCurrency(stats.totalSpent)} icon={ArrowUpRight} color="blue" onClick={() => onViewChange('requisitions')} title={_totalSpentTitle} activeLabel={stats.totalSpentIsPartial ? 'Partial' : undefined} active={stats.totalSpentIsPartial} />
           <StatCard label="Memo Traffic" value={String(stats.memos).padStart(2, '0')} icon={FileText} color="purple" onClick={() => onViewChange('memos')} />
           {normalizeRole(user?.role) === 'global_admin' && (() => {
             const fmtProviderBalance = (p) => {
@@ -928,7 +947,7 @@ const Dashboard = ({ onViewChange }) => {
               </div>
             )}
 
-            {/* ── Involvement History — all depts, record keeping ── */}
+            {/* ── Involvement History — all depts that touched this req ── */}
             {_isDept && historyReqs.length > 0 && (
               <div className="space-y-4 pt-6 border-t border-border/20">
                 <div
@@ -943,92 +962,149 @@ const Dashboard = ({ onViewChange }) => {
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-muted-foreground/60 font-medium">All requisitions your department has been involved in</span>
+                    <span className="text-[10px] text-muted-foreground/60 font-medium hidden sm:block">All requisitions your department has been involved in</span>
                     {historyOpen ? <ChevronUp size={16} className="text-muted-foreground" /> : <ChevronDown size={16} className="text-muted-foreground" />}
                   </div>
                 </div>
-                {historyOpen && (
-                  <div className="overflow-x-auto custom-scrollbar animate-in fade-in slide-in-from-top-3 duration-300">
-                    <table className="w-full text-left border-separate border-spacing-y-2">
-                      <thead>
-                        <tr className="text-muted-foreground text-[10px] font-black uppercase tracking-[0.2em]">
-                          <th className="pb-3 px-4">Ref</th>
-                          <th className="pb-3 px-4">Title</th>
-                          <th className="pb-3 px-4">My Role</th>
-                          <th className="pb-3 px-4">Amount</th>
-                          <th className="pb-3 px-4">Status</th>
-                          <th className="pb-3 px-4 text-right">View</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {historyReqs.map(r => {
-                          const uid = Number(user.deptId);
-                          const myRole = (() => {
-                            if (Number(r.departmentId) === uid || Number(r.creatorDeptId) === uid)
-                              return { label: 'Originator', color: 'bg-blue-50 border-blue-200 text-blue-700' };
-                            if (Number(r.treatedByDeptId) === uid)
-                              return { label: 'Treated', color: 'bg-teal-50 border-teal-200 text-teal-700' };
-                            if (Number(r.finalApprovedByDeptId) === uid)
-                              return { label: 'Approver', color: 'bg-emerald-50 border-emerald-200 text-emerald-700' };
-                            if (Number(r.currentVettingDeptId) === uid)
-                              return { label: 'Processing', color: 'bg-amber-50 border-amber-200 text-amber-700' };
-                            if (Number(r.targetDepartmentId) === uid)
-                              return { label: 'Recipient', color: 'bg-violet-50 border-violet-200 text-violet-700' };
-                            return { label: 'Involved', color: 'bg-muted border-border text-muted-foreground' };
-                          })();
-                          const stateLabel = (() => {
-                            if (r.status === 'rejected') return { label: 'Rejected', color: statusColors.rejected };
-                            if (r.finalApprovalStatus === 'treated') return { label: 'Treated', color: statusColors.treated };
-                            if (r.finalApprovalStatus === 'published') return { label: 'Published', color: statusColors.published };
-                            if (r.finalApprovalStatus === 'partial') return { label: 'Partial Pay', color: 'bg-orange-50 border-orange-200 text-orange-700' };
-                            if (r.finalApprovalStatus === 'vetting') return { label: 'Vetting', color: statusColors.vetting };
-                            if (r.finalApprovalStatus === 'approved') return { label: 'Approved', color: statusColors.approved };
-                            if (r.status === 'approved') return { label: 'Approved', color: statusColors.approved };
-                            if (r.status === 'pending') return { label: 'Pending', color: statusColors.pending };
-                            return { label: r.status || '—', color: statusColors.pending };
-                          })();
-                          const isMoneyReq = r.type === 'Cash' || (r.amount && r.amount > 0);
-                          return (
-                            <tr key={r.id} onClick={() => isMemoRecord(r) ? onViewChange('memos') : onViewChange('requisitions', { reqId: r.id })} className="group cursor-pointer transition-all">
-                              <td className="py-3 px-4 bg-violet-50/30 border-y border-l border-violet-100/50 rounded-l-xl group-hover:bg-violet-50/60 transition-colors">
-                                <div className="flex flex-col">
-                                  <span className="text-[10px] font-black text-violet-600 tracking-widest">#{r.id}</span>
-                                  <span className="text-[9px] text-muted-foreground/50 font-mono italic">{new Date(r.createdAt).toLocaleDateString()}</span>
-                                </div>
-                              </td>
-                              <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors max-w-[200px]">
-                                <p className="text-[11px] font-bold text-foreground truncate">{r.title}</p>
-                                <p className="text-[9px] text-muted-foreground/60 uppercase tracking-widest">{r.type}</p>
-                              </td>
-                              <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors">
-                                <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase border tracking-widest ${myRole.color}`}>{myRole.label}</span>
-                              </td>
-                              <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors">
-                                {isMoneyReq
-                                  ? <span className="text-[11px] font-black font-mono text-foreground">₦{Number(r.amountDisbursed || r.amount || 0).toLocaleString()}</span>
-                                  : <span className="text-[9px] text-muted-foreground/50 italic">—</span>}
-                              </td>
-                              <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors">
-                                <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase border tracking-widest ${stateLabel.color}`}>{stateLabel.label}</span>
-                              </td>
-                              <td className="py-3 px-4 bg-violet-50/30 border-y border-r border-violet-100/50 rounded-r-xl group-hover:bg-violet-50/60 transition-colors text-right">
-                                <button onClick={e => { e.stopPropagation(); isMemoRecord(r) ? onViewChange('memos') : onViewChange('requisitions', { reqId: r.id }); }} className="p-2 bg-white hover:bg-violet-500 hover:text-white rounded-xl text-violet-500 transition-all border border-violet-200/60 shadow-sm active:scale-90">
-                                  <Eye size={15} />
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                {historyOpen && (() => {
+                  const TERMINAL = ['treated', 'published', 'rejected'];
+                  const activeHist = historyReqs.filter(r => !TERMINAL.includes(r.finalApprovalStatus) && r.status !== 'rejected');
+                  const doneHist   = historyReqs.filter(r => TERMINAL.includes(r.finalApprovalStatus) || r.status === 'rejected');
+
+                  const renderRow = (r) => {
+                    const uid = Number(user.deptId);
+                    const myRole = (() => {
+                      if (Number(r.departmentId) === uid || Number(r.creatorDeptId) === uid)
+                        return { label: 'Originator', color: 'bg-blue-50 border-blue-200 text-blue-700' };
+                      if (Number(r.treatedByDeptId) === uid)
+                        return { label: 'Payer', color: 'bg-teal-50 border-teal-200 text-teal-700' };
+                      if (Number(r.finalApprovedByDeptId) === uid)
+                        return { label: 'Final Approver', color: 'bg-emerald-50 border-emerald-200 text-emerald-700' };
+                      if (Number(r.currentVettingDeptId) === uid)
+                        return { label: 'Vetter', color: 'bg-amber-50 border-amber-200 text-amber-700' };
+                      if (Number(r.targetDepartmentId) === uid)
+                        return { label: 'Recipient', color: 'bg-violet-50 border-violet-200 text-violet-700' };
+                      // Appeared in processing chain (forwardEvent) — most common for HR, Audit
+                      return { label: 'Processor', color: 'bg-slate-50 border-slate-200 text-slate-600' };
+                    })();
+                    const stateLabel = (() => {
+                      if (r.status === 'rejected') return { label: 'Rejected', color: statusColors.rejected };
+                      if (r.finalApprovalStatus === 'treated') return { label: 'Treated', color: statusColors.treated };
+                      if (r.finalApprovalStatus === 'published') return { label: 'Published', color: statusColors.published };
+                      if (r.finalApprovalStatus === 'partial') return { label: 'Partial Pay', color: 'bg-orange-50 border-orange-200 text-orange-700' };
+                      if (r.finalApprovalStatus === 'vetting') return { label: 'In Vetting', color: statusColors.vetting };
+                      if (r.finalApprovalStatus === 'approved') return { label: 'Approved', color: statusColors.approved };
+                      if (r.status === 'approved') return { label: 'Approved', color: statusColors.approved };
+                      if (r.status === 'pending') return { label: 'Pending', color: statusColors.pending };
+                      return { label: r.status || '—', color: statusColors.pending };
+                    })();
+                    const isMoneyReq = r.type === 'Cash' || (r.amount && r.amount > 0);
+                    const openFlow = (e) => {
+                      e.stopPropagation();
+                      if (isMemoRecord(r)) { onViewChange('memos'); return; }
+                      setFlowModal({ reqId: r.id, deptName: user.name || user.departmentName });
+                    };
+                    return (
+                      <tr key={r.id} onClick={openFlow} className="group cursor-pointer transition-all">
+                        <td className="py-3 px-4 bg-violet-50/30 border-y border-l border-violet-100/50 rounded-l-xl group-hover:bg-violet-50/60 transition-colors">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] font-black text-violet-600 tracking-widest">#{r.id}</span>
+                            <span className="text-[9px] text-muted-foreground/50 font-mono italic">{new Date(r.createdAt).toLocaleDateString()}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors max-w-[200px]">
+                          <p className="text-[11px] font-bold text-foreground truncate">{r.title}</p>
+                          <p className="text-[9px] text-muted-foreground/60 uppercase tracking-widest">{r.type}</p>
+                        </td>
+                        <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors">
+                          <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase border tracking-widest ${myRole.color}`}>{myRole.label}</span>
+                        </td>
+                        <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors">
+                          {isMoneyReq
+                            ? <span className="text-[11px] font-black font-mono text-foreground">₦{Number(r.amountDisbursed || r.amount || 0).toLocaleString()}</span>
+                            : <span className="text-[9px] text-muted-foreground/50 italic">—</span>}
+                        </td>
+                        <td className="py-3 px-4 bg-violet-50/30 border-y border-violet-100/50 group-hover:bg-violet-50/60 transition-colors">
+                          <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase border tracking-widest ${stateLabel.color}`}>{stateLabel.label}</span>
+                        </td>
+                        <td className="py-3 px-4 bg-violet-50/30 border-y border-r border-violet-100/50 rounded-r-xl group-hover:bg-violet-50/60 transition-colors text-right">
+                          <button
+                            onClick={openFlow}
+                            title="View journey"
+                            className="p-2 bg-white hover:bg-violet-500 hover:text-white rounded-xl text-violet-500 transition-all border border-violet-200/60 shadow-sm active:scale-90"
+                          >
+                            <Eye size={15} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  };
+
+                  return (
+                    <div className="animate-in fade-in slide-in-from-top-3 duration-300 space-y-4">
+                      {/* Active involvement */}
+                      {activeHist.length > 0 && (
+                        <div>
+                          <p className="text-[9px] font-black uppercase tracking-[0.2em] text-violet-500 mb-2 px-1">Active — {activeHist.length} in progress</p>
+                          <div className="overflow-x-auto custom-scrollbar">
+                            <table className="w-full text-left border-separate border-spacing-y-2">
+                              <thead>
+                                <tr className="text-muted-foreground text-[10px] font-black uppercase tracking-[0.2em]">
+                                  <th className="pb-3 px-4">Ref</th>
+                                  <th className="pb-3 px-4">Title</th>
+                                  <th className="pb-3 px-4">My Role</th>
+                                  <th className="pb-3 px-4">Amount</th>
+                                  <th className="pb-3 px-4">Status</th>
+                                  <th className="pb-3 px-4 text-right">Journey</th>
+                                </tr>
+                              </thead>
+                              <tbody>{activeHist.map(renderRow)}</tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Completed involvement */}
+                      {doneHist.length > 0 && (
+                        <div>
+                          <p className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground/50 mb-2 px-1">Completed — {doneHist.length} resolved</p>
+                          <div className="overflow-x-auto custom-scrollbar opacity-70">
+                            <table className="w-full text-left border-separate border-spacing-y-2">
+                              <thead>
+                                <tr className="text-muted-foreground text-[10px] font-black uppercase tracking-[0.2em]">
+                                  <th className="pb-3 px-4">Ref</th>
+                                  <th className="pb-3 px-4">Title</th>
+                                  <th className="pb-3 px-4">My Role</th>
+                                  <th className="pb-3 px-4">Amount</th>
+                                  <th className="pb-3 px-4">Status</th>
+                                  <th className="pb-3 px-4 text-right">Journey</th>
+                                </tr>
+                              </thead>
+                              <tbody>{doneHist.map(renderRow)}</tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
           </div>
         </div>
       </div>
+
+      {/* ── Requisition Flow Modal ── */}
+      {flowModal && (
+        <RequisitionFlowModal
+          reqId={flowModal.reqId}
+          viewingDeptId={user?.deptId}
+          viewingDeptName={flowModal.deptName || user?.name || user?.departmentName}
+          onClose={() => setFlowModal(null)}
+        />
+      )}
+    </>
   );
 };
 

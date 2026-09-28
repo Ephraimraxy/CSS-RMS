@@ -1232,6 +1232,30 @@ async function getDepartmentLinkedRequisitionIds(deptId) {
     if (id) ids.add(id);
   };
 
+  // Resolve sub-account relationships so parent sees sub-account reqs and vice versa
+  let relatedDeptIds = [departmentId];
+  try {
+    const dept = await prisma.department.findUnique({ where: { id: departmentId }, select: { isSubAccount: true, parentId: true } });
+    if (dept?.isSubAccount && dept?.parentId) {
+      // This is a sub-account — also look up reqs from the parent dept
+      relatedDeptIds.push(dept.parentId);
+    } else {
+      // This is a parent — also look up reqs from its sub-accounts
+      const subs = await prisma.department.findMany({ where: { parentId: departmentId, isSubAccount: true }, select: { id: true } });
+      for (const s of subs) relatedDeptIds.push(s.id);
+    }
+  } catch (_) {}
+
+  for (const dId of relatedDeptIds) {
+    try {
+      const rows = await prisma.requisition.findMany({
+        where: { OR: [{ departmentId: dId }, { creatorDeptId: dId }, { targetDepartmentId: dId }] },
+        select: { id: true }
+      });
+      for (const row of rows || []) addId(row.id);
+    } catch (_) {}
+  }
+
   try {
     const rows = await prisma.$queryRaw`
       SELECT id FROM "Requisition"
@@ -8564,6 +8588,29 @@ app.get('/api/verify/:code', authenticateToken, requireRoles(['global_admin']), 
       requisitionId: record.approval?.requisitionId,
       approvedAt: record.approval?.createdAt
     });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// ── DEPARTMENT CHAIN STATS ────────────────────────────────────────────────────
+// How many times has this dept forwarded reqs (processing chain) and vetted them?
+// Used by the dashboard "Approved Reqs" stat card for non-executive depts.
+app.get('/api/department/chain-stats', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'department' || !req.user.deptId) {
+      return res.json({ forwarded: 0, returned: 0, vetted: 0, disbursed: 0 });
+    }
+    const deptId = parseInt(req.user.deptId);
+    const [forwarded, returned, vetted, disbursedRows] = await Promise.all([
+      prisma.forwardEvent.count({ where: { fromDeptId: deptId, action: 'forwarded' } }),
+      prisma.forwardEvent.count({ where: { fromDeptId: deptId, action: 'returned' } }),
+      prisma.vettingEvent.count({ where: { deptId } }),
+      prisma.vettingEvent.findMany({
+        where: { deptId, amountDisbursed: { gt: 0 } },
+        select: { amountDisbursed: true }
+      })
+    ]);
+    const disbursed = disbursedRows.reduce((s, r) => s + parseFloat(r.amountDisbursed || 0), 0);
+    res.json({ forwarded, returned, vetted, disbursed });
   } catch (error) { sendError(res, 500, error.message); }
 });
 

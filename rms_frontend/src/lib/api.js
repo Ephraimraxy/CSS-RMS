@@ -321,6 +321,9 @@ export const reqAPI = {
   async getDeptProfile() {
     return api.get('/department/profile');
   },
+  async getChainStats() {
+    return api.get('/department/chain-stats');
+  },
   async updateDeptProfile(data) {
     return api.put('/department/profile', data);
   },

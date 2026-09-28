@@ -395,7 +395,7 @@ export async function getDashboardStats(user) {
 // Admin's login is backed by a real Department row, so gating on `!userDeptId` to detect
 // "is this admin" was wrong and silently fell through to the narrow per-department branch.
 export function computeDashboardStats(all, user) {
-  const emptyStats = { pending: 0, approved: 0, rejected: 0, totalSpent: 0, memos: 0, memoPending: 0, memoPublished: 0, treated: 0, approvedByMe: 0 };
+  const emptyStats = { pending: 0, approved: 0, rejected: 0, totalSpent: 0, totalSpentIsPartial: false, memos: 0, memoPending: 0, memoPublished: 0, treated: 0, approvedByMe: 0 };
   if (!user) return emptyStats;
 
   const userDeptId = user.deptId ? Number(user.deptId) : null;
@@ -437,7 +437,14 @@ export function computeDashboardStats(all, user) {
   const memoPending = memos.filter(r => r.status === 'pending' && r.finalApprovalStatus !== 'published').length;
   const memoPublished = memos.filter(r => r.finalApprovalStatus === 'published').length;
 
-  // Account totalSpent = actual disbursed amounts; others = approved/treated amounts
+  // For originating depts (ICT, etc.): sum what has actually been disbursed for their requests,
+  // including partial payments. For Account: sum what Account itself disbursed. Others: approved totals.
+  const mySubmittedReqs = userDeptId
+    ? operational.filter(r => Number(r.departmentId) === userDeptId || Number(r.creatorDeptId) === userDeptId)
+    : [];
+  const myDisbursed = mySubmittedReqs.reduce((sum, r) => sum + parseFloat(r.amountDisbursed || 0), 0);
+  const myHasPartial = mySubmittedReqs.some(r => r.finalApprovalStatus === 'partial' && (r.amountDisbursed || 0) > 0);
+
   const totalSpent = isAccountDept && userDeptId
     ? operational
       .filter(r => !!r.amountDisbursed && (
@@ -445,9 +452,13 @@ export function computeDashboardStats(all, user) {
         (r.finalApprovalStatus === 'partial' && Number(r.currentVettingDeptId) === userDeptId)
       ))
       .reduce((sum, r) => sum + parseFloat(r.amountDisbursed || 0), 0)
-    : operational
-      .filter(r => (r.status === 'approved' || r.finalApprovalStatus === 'treated') && r.amount)
-      .reduce((sum, r) => sum + r.amount, 0);
+    : myDisbursed > 0
+      ? myDisbursed  // originating dept — show actual disbursed (includes partial payments)
+      : operational
+        .filter(r => (r.status === 'approved' || r.finalApprovalStatus === 'treated') && r.amount)
+        .reduce((sum, r) => sum + r.amount, 0);
+
+  const totalSpentIsPartial = !isAccountDept && myHasPartial;
 
   // How many requests has this dept treated (fully paid/issued)
   const treated = userDeptId
@@ -466,6 +477,7 @@ export function computeDashboardStats(all, user) {
     approved,
     rejected,
     totalSpent,
+    totalSpentIsPartial,
     memos: memos.length,
     memoPending,
     memoPublished,
