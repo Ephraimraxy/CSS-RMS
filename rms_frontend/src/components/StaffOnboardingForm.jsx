@@ -269,13 +269,14 @@ export default function StaffOnboardingForm() {
       <style>{GLOBAL_CSS}</style>
 
       {/*
-        KEY FIX: overflow-x hidden (not overflow hidden) so the page scrolls vertically.
-        The background pattern uses position:fixed so it doesn't need overflow:hidden on parent.
+        body already has overflow-x:hidden globally (index.css).
+        Never put overflow on this div — mobile WebKit blocks vertical scroll when any
+        overflow is set on a non-body div, even overflow-x:hidden.
       */}
-      <div style={{ minHeight:'100vh', background:'linear-gradient(160deg,#052e16 0%,#14532d 35%,#1a6b3c 65%,#052e16 100%)', fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', position:'relative', overflowX:'hidden' }}>
+      <div style={{ minHeight:'100vh', background:'linear-gradient(160deg,#052e16 0%,#14532d 35%,#1a6b3c 65%,#052e16 100%)', fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', position:'relative' }}>
 
-        {/* Background pattern — fixed so parent doesn't need overflow:hidden */}
-        <div style={{ position:'fixed', inset:0, opacity:0.04, backgroundImage:`url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`, pointerEvents:'none', zIndex:0 }} />
+        {/* Background pattern — absolute, contained by position:relative parent */}
+        <div style={{ position:'absolute', inset:0, opacity:0.04, backgroundImage:`url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`, pointerEvents:'none', zIndex:0 }} />
 
         <div style={{ position:'relative', zIndex:1, maxWidth:620, margin:'0 auto', padding:'28px 16px 60px', boxSizing:'border-box' }}>
 
