@@ -1,0 +1,69 @@
+# One-off: install the Ephraim Hub public key on the VPS.
+#
+# Why this exists: the VPS has PasswordAuthentication disabled and none of
+# the local workstation keys are in root's authorized_keys, so the Hub
+# cannot connect at all. GitHub Actions CAN connect (VPS_SSH_KEY is already
+# authorised there), so we borrow that access once to install the Hub key.
+#
+# Manual trigger only - it must never run on a push.
+# Safe to re-run: the append is idempotent.
+#
+# After this succeeds you can delete this file.
+name: Authorize Ephraim Hub Key
+
+on:
+  workflow_dispatch:
+    inputs:
+      public_key:
+        description: "The full public key line to install (ssh-ed25519 AAAA... comment)"
+        required: true
+        type: string
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Append key to root's authorized_keys
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          timeout: 60s
+          script: |
+            set -e
+            KEY='${{ inputs.public_key }}'
+
+            # Refuse anything that is not a public key line, so a typo cannot
+            # append junk into authorized_keys and break existing access.
+            case "$KEY" in
+              ssh-ed25519\ *|ssh-rsa\ *|ecdsa-sha2-*\ *) ;;
+              *) echo "Refusing: does not look like a public key line."; exit 1 ;;
+            esac
+
+            mkdir -p ~/.ssh
+            chmod 700 ~/.ssh
+            touch ~/.ssh/authorized_keys
+            chmod 600 ~/.ssh/authorized_keys
+
+            # Keep a copy before touching it. If anything goes wrong, the
+            # deploy key is the only way back in - do not risk it.
+            cp ~/.ssh/authorized_keys ~/.ssh/authorized_keys.bak.$(date +%s)
+
+            # Match on the key body (field 2), not the whole line: the same
+            # key with a different trailing comment is still the same key.
+            BODY=$(echo "$KEY" | awk '{print $2}')
+            if grep -qF "$BODY" ~/.ssh/authorized_keys; then
+              echo "Key already present - nothing to do."
+            else
+              echo "$KEY" >> ~/.ssh/authorized_keys
+              echo "Key installed."
+            fi
+
+            echo "--- authorized_keys now holds these keys (comments only) ---"
+            awk '{print "  " $3}' ~/.ssh/authorized_keys
+
+            echo "--- sshd auth methods ---"
+            grep -Ei '^[[:space:]]*(PasswordAuthentication|PubkeyAuthentication|PermitRootLogin)' \
+              /etc/ssh/sshd_config || echo "  (defaults in use)"
