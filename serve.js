@@ -5581,6 +5581,588 @@ app.get('/api/public/turnstile-config', async (req, res) => {
   } catch { res.json({ requiredDepts: [], globallyEnabled: true }); }
 });
 
+// ── Staff Self-Service Onboarding (public form + admin review) ───────────────
+
+const onboardingSubmitLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many submissions from this IP. Please try again later.' }
+});
+
+// Validate Nigerian phone number
+function isNigerianPhone(phone) {
+  return /^(\+234|0)[789]\d{9}$/.test((phone || '').replace(/\s+/g, ''));
+}
+
+// Normalize phone to +234 format
+function normalizeNigerianPhone(phone) {
+  const p = (phone || '').replace(/\s+/g, '');
+  if (p.startsWith('0')) return '+234' + p.slice(1);
+  return p;
+}
+
+// Auto-generate official CSS Group email: firstname.surname@cssgroup.com.ng (lowercase)
+function makeOfficialEmail(firstName, surname) {
+  const clean = s => (s || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+  return `${clean(firstName)}.${clean(surname)}@cssgroup.com.ng`;
+}
+
+// Public: list active main departments for the onboarding form dropdown
+app.get('/api/public/onboarding/departments', async (req, res) => {
+  try {
+    const depts = await prisma.department.findMany({
+      where: { isDeleted: false, isDisabled: false, isSubAccount: false },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' }
+    });
+    res.json(depts);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load departments.' });
+  }
+});
+
+// Public: check which roles are already claimed for a department
+// Returns { headTaken, assistantTaken } so form can disable those role options
+app.get('/api/public/onboarding/dept-roles', async (req, res) => {
+  try {
+    const deptId = parseInt(req.query.deptId);
+    if (!deptId) return res.json({ headTaken: false, assistantTaken: false });
+
+    // Head is taken if dept already has a staff enrolled (staffId set)
+    const dept = await prisma.department.findUnique({
+      where: { id: deptId },
+      select: { staffId: true, headName: true }
+    });
+    const deptHasHead = !!(dept?.staffId && dept?.headName);
+
+    // Also check pending/approved submissions
+    const [pendingHead, pendingAssist] = await Promise.all([
+      prisma.onboardingSubmission.findFirst({
+        where: { deptId, role: 'HEAD', status: { in: ['PENDING', 'DEPT_PENDING', 'APPROVED'] } }
+      }),
+      prisma.onboardingSubmission.findFirst({
+        where: { deptId, role: 'ASSISTANT', status: { in: ['PENDING', 'DEPT_PENDING', 'APPROVED'] } }
+      })
+    ]);
+
+    res.json({
+      headTaken: deptHasHead || !!pendingHead,
+      assistantTaken: !!pendingAssist
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to check role availability.' });
+  }
+});
+
+// Public: submit onboarding form
+app.post('/api/public/onboarding', onboardingSubmitLimiter, async (req, res) => {
+  try {
+    let { staffId, surname, firstName, middleName, phone, personalEmail, deptId, customDeptName, role } = req.body;
+
+    // ── Sanitize / capitalize ──────────────────────────────────────────────
+    staffId      = (staffId      || '').trim().toUpperCase();
+    surname      = (surname      || '').trim().toUpperCase();
+    firstName    = (firstName    || '').trim().toUpperCase();
+    middleName   = (middleName   || '').trim().toUpperCase() || null;
+    phone        = (phone        || '').trim().replace(/\s+/g, '');
+    personalEmail= (personalEmail|| '').trim().toLowerCase();
+    customDeptName= (customDeptName|| '').trim().toUpperCase() || null;
+    role         = (['HEAD','ASSISTANT','MEMBER'].includes(role)) ? role : 'MEMBER';
+    deptId       = deptId ? parseInt(deptId) : null;
+
+    // ── Required field validation ──────────────────────────────────────────
+    if (!staffId)       return res.status(400).json({ error: 'Staff ID is required.' });
+    if (!/^\d+$/.test(staffId)) return res.status(400).json({ error: 'Staff ID must contain numbers only.' });
+    if (!surname)       return res.status(400).json({ error: 'Surname is required.' });
+    if (!firstName)     return res.status(400).json({ error: 'First name is required.' });
+    if (!phone)         return res.status(400).json({ error: 'Phone number is required.' });
+    if (!personalEmail) return res.status(400).json({ error: 'Personal email is required.' });
+    if (!deptId && !customDeptName) return res.status(400).json({ error: 'Please select a department or enter your department name.' });
+
+    // ── Phone validation ───────────────────────────────────────────────────
+    if (!isNigerianPhone(phone)) {
+      return res.status(400).json({ error: 'Phone number must be a valid Nigerian number (e.g. 08012345678 or +2348012345678).' });
+    }
+    phone = normalizeNigerianPhone(phone);
+
+    // ── Email validation ───────────────────────────────────────────────────
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(personalEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+    }
+    if (/@cssgroup\./i.test(personalEmail)) {
+      return res.status(400).json({ error: 'Please use your personal email address, not your CSS Group official email.' });
+    }
+
+    // ── Auto-generate official email ───────────────────────────────────────
+    const officialEmail = makeOfficialEmail(firstName, surname);
+
+    // ── Duplicate checks ───────────────────────────────────────────────────
+    const [existingStaffId, existingEmail, existingPhone] = await Promise.all([
+      prisma.onboardingSubmission.findUnique({ where: { staffId } }),
+      prisma.onboardingSubmission.findUnique({ where: { personalEmail } }),
+      prisma.onboardingSubmission.findUnique({ where: { phone } }),
+    ]);
+    if (existingStaffId) return res.status(409).json({ field: 'staffId',      error: 'A submission with this Staff ID already exists. Contact admin if this is an error.' });
+    if (existingEmail)   return res.status(409).json({ field: 'personalEmail', error: 'A submission with this email address already exists. Contact admin if this is an error.' });
+    if (existingPhone)   return res.status(409).json({ field: 'phone',         error: 'A submission with this phone number already exists. Contact admin if this is an error.' });
+
+    // Also check against already-enrolled departments (staffId uniqueness)
+    const enrolledStaffId = await prisma.department.findFirst({ where: { staffId } });
+    if (enrolledStaffId) return res.status(409).json({ field: 'staffId', error: 'This Staff ID is already enrolled in the system.' });
+
+    // ── Fetch dept name snapshot ───────────────────────────────────────────
+    let deptName = customDeptName || null;
+    if (deptId) {
+      const dept = await prisma.department.findUnique({ where: { id: deptId }, select: { name: true } });
+      if (!dept) return res.status(400).json({ error: 'Selected department no longer exists. Please refresh and try again.' });
+      deptName = dept.name;
+    }
+
+    // ── Determine initial status ───────────────────────────────────────────
+    const status = customDeptName ? 'DEPT_PENDING' : 'PENDING';
+
+    // ── Save submission ────────────────────────────────────────────────────
+    const sub = await prisma.onboardingSubmission.create({
+      data: {
+        staffId, surname, firstName, middleName, phone, personalEmail, officialEmail,
+        deptId: deptId || null, deptName, customDeptName: customDeptName || null,
+        role, status
+      }
+    });
+
+    // ── Send acknowledgement email to personal address ─────────────────────
+    const ackSubject = 'CSS Group RMS — Onboarding Submission Received';
+    const { text: ackText, html: ackHtml } = buildEmailContent({
+      title: ackSubject,
+      lines: [
+        `Dear ${firstName} ${surname},`,
+        ``,
+        `Your onboarding submission to the CSS Group Requisition Management System has been received and is currently awaiting review by the system administrator.`,
+        ``,
+        `Submission Reference: ${sub.id.slice(0, 8).toUpperCase()}`,
+        `Staff ID: ${staffId}`,
+        `Department: ${deptName || customDeptName || 'Pending dept approval'}`,
+        `Role Applied For: ${role === 'HEAD' ? 'Head of Unit/Department' : role === 'ASSISTANT' ? 'Assistant' : 'Member'}`,
+        `Your Official Email (once enrolled): ${officialEmail}`,
+        ``,
+        `Once the administrator reviews and approves your submission, your login credentials will be sent to this email address.`,
+        ``,
+        status === 'DEPT_PENDING'
+          ? `Note: Your department "${customDeptName}" requires admin approval before your submission can proceed. You will be notified once this is resolved.`
+          : `You will be notified via this personal email once your account has been set up.`,
+      ],
+      actionLabel: 'CSS Group Portal',
+    });
+    sendEmail({ to: personalEmail, subject: ackSubject, text: ackText, html: ackHtml }).catch(() => {});
+
+    // ── Notify super admin ─────────────────────────────────────────────────
+    const adminEmail = process.env.ADMIN_NOTIFY_EMAIL;
+    if (adminEmail) {
+      const adminSubject = `[RMS Onboarding] New submission: ${firstName} ${surname} (${staffId})`;
+      const { text: aText, html: aHtml } = buildEmailContent({
+        title: adminSubject,
+        lines: [
+          `A new staff onboarding submission requires your review.`,
+          ``,
+          `Name: ${firstName} ${surname}`,
+          `Staff ID: ${staffId}`,
+          `Department: ${deptName || customDeptName}`,
+          `Role: ${role}`,
+          `Personal Email: ${personalEmail}`,
+          `Phone: ${phone}`,
+          status === 'DEPT_PENDING' ? `⚠ New department requested: "${customDeptName}" — needs approval before submission can proceed.` : ``,
+        ],
+        actionLabel: 'Open RMS Portal to Review',
+      });
+      sendEmail({ to: adminEmail, subject: adminSubject, text: aText, html: aHtml }).catch(() => {});
+    }
+
+    res.json({ success: true, refId: sub.id.slice(0, 8).toUpperCase(), officialEmail });
+  } catch (err) {
+    if (err.code === 'P2002') {
+      const field = err.meta?.target?.[0] || 'field';
+      return res.status(409).json({ error: `A submission with this ${field} already exists.` });
+    }
+    sendError(res, 500, err.message);
+  }
+});
+
+// ── Admin: list all onboarding submissions ─────────────────────────────────
+app.get('/api/admin/onboarding', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { status } = req.query;
+    const where = status && status !== 'ALL' ? { status } : {};
+    const submissions = await prisma.onboardingSubmission.findMany({
+      where,
+      orderBy: { submittedAt: 'desc' }
+    });
+    res.json(submissions);
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: approve a single submission ─────────────────────────────────────
+app.post('/api/admin/onboarding/:id/approve', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const sub = await prisma.onboardingSubmission.findUnique({ where: { id: req.params.id } });
+    if (!sub) return res.status(404).json({ error: 'Submission not found.' });
+    if (sub.status === 'APPROVED') return res.status(409).json({ error: 'Already approved.' });
+    if (sub.status === 'DEPT_PENDING') return res.status(400).json({ error: 'This submission is waiting for department approval first. Approve the department request before approving the person.' });
+
+    const adminName = req.user?.name || 'Administrator';
+    let plainCode;
+
+    if (sub.role === 'HEAD') {
+      // Update the existing department's head info
+      if (!sub.deptId) return res.status(400).json({ error: 'No department ID on this HEAD submission.' });
+      const dept = await prisma.department.findUnique({ where: { id: sub.deptId } });
+      if (!dept) return res.status(404).json({ error: 'Department not found.' });
+
+      plainCode = dept.accessCodeLabel || dept.accessCode || await generateUniqueAccessCode(dept.name);
+      const hash = await bcrypt.hash(plainCode, 10);
+
+      await prisma.department.update({
+        where: { id: sub.deptId },
+        data: {
+          headName:  `${sub.firstName} ${sub.surname}`,
+          headTitle: 'Head of Department',
+          headEmail: sub.officialEmail,
+          phone:     sub.phone,
+          staffId:   sub.staffId,
+          accessCodeHash:   hash,
+          accessCodeLabel:  plainCode,
+          codeChangedByDept: false,
+        }
+      });
+    } else {
+      // Create a sub-account under the department
+      if (!sub.deptId) return res.status(400).json({ error: 'No department ID on this submission.' });
+      const parent = await prisma.department.findUnique({ where: { id: sub.deptId } });
+      if (!parent) return res.status(404).json({ error: 'Parent department not found.' });
+
+      const fullName = `${sub.firstName} ${sub.surname}`;
+      // Check for name clash
+      const clash = await prisma.department.findFirst({
+        where: { name: { equals: fullName, mode: 'insensitive' }, isDeleted: false }
+      });
+      const subName = clash ? `${fullName} (${sub.staffId})` : fullName;
+
+      plainCode = await generateUniqueAccessCode(fullName);
+      const hash = await bcrypt.hash(plainCode, 10);
+
+      const maxRank = await prisma.department.aggregate({
+        where: { parentId: sub.deptId, isSubAccount: true, isDeleted: false },
+        _max: { seniorityRank: true },
+      });
+
+      await prisma.department.create({
+        data: {
+          name:         subName,
+          type:         'Sub-Account',
+          isSubAccount: true,
+          parentId:     sub.deptId,
+          createdByDeptId: sub.deptId,
+          headName:     fullName,
+          headTitle:    sub.role === 'ASSISTANT' ? 'Assistant' : 'Member',
+          headEmail:    sub.officialEmail,
+          phone:        sub.phone,
+          staffId:      sub.staffId,
+          accessCodeHash:  hash,
+          accessCodeLabel: plainCode,
+          seniorityRank:   (maxRank._max.seniorityRank || 0) + 1,
+        }
+      });
+    }
+
+    // Mark submission approved
+    await prisma.onboardingSubmission.update({
+      where: { id: sub.id },
+      data: { status: 'APPROVED', processedAt: new Date(), processedByName: adminName }
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId:  getNumericUserId(req.user) || null,
+        action:  'Onboarding Approved',
+        details: `${adminName} approved onboarding for ${sub.firstName} ${sub.surname} (${sub.staffId}) as ${sub.role} in ${sub.deptName}`
+      }
+    }).catch(() => {});
+
+    // Send credentials to personal email
+    const credSubject = 'CSS Group RMS — Your Account Is Ready';
+    const { text: cText, html: cHtml } = buildEmailContent({
+      title: credSubject,
+      lines: [
+        `Dear ${sub.firstName} ${sub.surname},`,
+        ``,
+        `Your onboarding has been approved. Your CSS Group RMS account is now active.`,
+        ``,
+        `Staff ID: ${sub.staffId}`,
+        `Department: ${sub.deptName}`,
+        `Role: ${sub.role === 'HEAD' ? 'Head of Department' : sub.role === 'ASSISTANT' ? 'Assistant' : 'Member'}`,
+        `Official Email: ${sub.officialEmail}`,
+        `Access Code: ${plainCode}`,
+        ``,
+        `Use this Access Code to log in for the first time. You will be prompted to create your own password — after that, only your password grants access.`,
+        ``,
+        `Your official CSS Group email address is: ${sub.officialEmail}`,
+        `Contact ICT to have your official email inbox set up.`,
+      ],
+      actionLabel: 'Log in to RMS Portal',
+    });
+    sendEmail({ to: sub.personalEmail, subject: credSubject, text: cText, html: cHtml }).catch(() => {});
+    sendSms({
+      to:      sub.phone,
+      message: `CSS RMS: Hello ${sub.firstName} ${sub.surname}, your account is ready. Staff ID: ${sub.staffId}. Access Code: ${plainCode}. Log into the portal and create your password. - RMS Admin`
+    }).catch(() => {});
+
+    res.json({ success: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: reject a single submission ──────────────────────────────────────
+app.post('/api/admin/onboarding/:id/reject', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { note } = req.body;
+    const sub = await prisma.onboardingSubmission.findUnique({ where: { id: req.params.id } });
+    if (!sub) return res.status(404).json({ error: 'Submission not found.' });
+    if (sub.status === 'APPROVED') return res.status(409).json({ error: 'Cannot reject an already-approved submission.' });
+
+    const adminName = req.user?.name || 'Administrator';
+    await prisma.onboardingSubmission.update({
+      where: { id: sub.id },
+      data: { status: 'REJECTED', rejectionNote: note || null, processedAt: new Date(), processedByName: adminName }
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId:  getNumericUserId(req.user) || null,
+        action:  'Onboarding Rejected',
+        details: `${adminName} rejected onboarding for ${sub.firstName} ${sub.surname} (${sub.staffId})${note ? ': ' + note : ''}`
+      }
+    }).catch(() => {});
+
+    // Notify the submitter
+    const rejSubject = 'CSS Group RMS — Onboarding Submission Update';
+    const { text: rText, html: rHtml } = buildEmailContent({
+      title: rejSubject,
+      lines: [
+        `Dear ${sub.firstName} ${sub.surname},`,
+        ``,
+        `Your onboarding submission (Ref: ${sub.id.slice(0, 8).toUpperCase()}) has been reviewed and could not be approved at this time.`,
+        ...(note ? [``, `Reason: ${note}`] : []),
+        ``,
+        `If you believe this is an error, please contact the ICT Department or your HR representative.`,
+      ],
+    });
+    sendEmail({ to: sub.personalEmail, subject: rejSubject, text: rText, html: rHtml }).catch(() => {});
+
+    res.json({ success: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: batch approve submissions ───────────────────────────────────────
+app.post('/api/admin/onboarding/batch-approve', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No submission IDs provided.' });
+    const results = [];
+    for (const id of ids) {
+      try {
+        // Delegate to internal approve logic via a fake sub-request
+        const sub = await prisma.onboardingSubmission.findUnique({ where: { id } });
+        if (!sub || sub.status !== 'PENDING') { results.push({ id, ok: false, error: sub ? `Status: ${sub.status}` : 'Not found' }); continue; }
+
+        const adminName = req.user?.name || 'Administrator';
+        let plainCode;
+
+        if (sub.role === 'HEAD') {
+          if (!sub.deptId) { results.push({ id, ok: false, error: 'No dept ID' }); continue; }
+          const dept = await prisma.department.findUnique({ where: { id: sub.deptId } });
+          if (!dept) { results.push({ id, ok: false, error: 'Dept not found' }); continue; }
+          plainCode = dept.accessCodeLabel || dept.accessCode || await generateUniqueAccessCode(dept.name);
+          const hash = await bcrypt.hash(plainCode, 10);
+          await prisma.department.update({
+            where: { id: sub.deptId },
+            data: {
+              headName: `${sub.firstName} ${sub.surname}`, headTitle: 'Head of Department',
+              headEmail: sub.officialEmail, phone: sub.phone, staffId: sub.staffId,
+              accessCodeHash: hash, accessCodeLabel: plainCode, codeChangedByDept: false,
+            }
+          });
+        } else {
+          if (!sub.deptId) { results.push({ id, ok: false, error: 'No dept ID' }); continue; }
+          const parent = await prisma.department.findUnique({ where: { id: sub.deptId } });
+          if (!parent) { results.push({ id, ok: false, error: 'Parent dept not found' }); continue; }
+          const fullName = `${sub.firstName} ${sub.surname}`;
+          const clash = await prisma.department.findFirst({ where: { name: { equals: fullName, mode: 'insensitive' }, isDeleted: false } });
+          const subName = clash ? `${fullName} (${sub.staffId})` : fullName;
+          plainCode = await generateUniqueAccessCode(fullName);
+          const hash = await bcrypt.hash(plainCode, 10);
+          const maxRank = await prisma.department.aggregate({ where: { parentId: sub.deptId, isSubAccount: true, isDeleted: false }, _max: { seniorityRank: true } });
+          await prisma.department.create({
+            data: {
+              name: subName, type: 'Sub-Account', isSubAccount: true, parentId: sub.deptId,
+              createdByDeptId: sub.deptId, headName: fullName,
+              headTitle: sub.role === 'ASSISTANT' ? 'Assistant' : 'Member',
+              headEmail: sub.officialEmail, phone: sub.phone, staffId: sub.staffId,
+              accessCodeHash: hash, accessCodeLabel: plainCode,
+              seniorityRank: (maxRank._max.seniorityRank || 0) + 1,
+            }
+          });
+        }
+
+        await prisma.onboardingSubmission.update({
+          where: { id: sub.id },
+          data: { status: 'APPROVED', processedAt: new Date(), processedByName: adminName }
+        });
+
+        // Send credentials
+        const credSubject = 'CSS Group RMS — Your Account Is Ready';
+        const { text: cText, html: cHtml } = buildEmailContent({
+          title: credSubject,
+          lines: [
+            `Dear ${sub.firstName} ${sub.surname},`,
+            ``,
+            `Your onboarding has been approved. Your CSS Group RMS account is now active.`,
+            ``,
+            `Staff ID: ${sub.staffId}`,
+            `Department: ${sub.deptName}`,
+            `Role: ${sub.role === 'HEAD' ? 'Head of Department' : sub.role === 'ASSISTANT' ? 'Assistant' : 'Member'}`,
+            `Official Email: ${sub.officialEmail}`,
+            `Access Code: ${plainCode}`,
+            ``,
+            `Use this Access Code to log in for the first time. You will be prompted to create your own password — after that, only your password grants access.`,
+          ],
+          actionLabel: 'Log in to RMS Portal',
+        });
+        sendEmail({ to: sub.personalEmail, subject: credSubject, text: cText, html: cHtml }).catch(() => {});
+        sendSms({ to: sub.phone, message: `CSS RMS: Hello ${sub.firstName} ${sub.surname}, your account is ready. Staff ID: ${sub.staffId}. Access Code: ${plainCode}. - RMS Admin` }).catch(() => {});
+
+        results.push({ id, ok: true });
+      } catch (e) {
+        results.push({ id, ok: false, error: e.message });
+      }
+    }
+    const approved = results.filter(r => r.ok).length;
+    const failed   = results.filter(r => !r.ok).length;
+    res.json({ success: true, approved, failed, results });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: batch reject submissions ────────────────────────────────────────
+app.post('/api/admin/onboarding/batch-reject', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { ids, note } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No submission IDs provided.' });
+    const adminName = req.user?.name || 'Administrator';
+
+    await prisma.onboardingSubmission.updateMany({
+      where: { id: { in: ids }, status: { notIn: ['APPROVED'] } },
+      data: { status: 'REJECTED', rejectionNote: note || null, processedAt: new Date(), processedByName: adminName }
+    });
+
+    // Send rejection emails
+    const subs = await prisma.onboardingSubmission.findMany({ where: { id: { in: ids } } });
+    for (const sub of subs) {
+      const { text, html } = buildEmailContent({
+        title: 'CSS Group RMS — Onboarding Submission Update',
+        lines: [
+          `Dear ${sub.firstName} ${sub.surname},`,
+          ``,
+          `Your onboarding submission could not be approved at this time.`,
+          ...(note ? [``, `Reason: ${note}`] : []),
+          ``,
+          `Contact the ICT Department for assistance.`,
+        ],
+      });
+      sendEmail({ to: sub.personalEmail, subject: 'CSS Group RMS — Onboarding Submission Update', text, html }).catch(() => {});
+    }
+
+    res.json({ success: true, count: ids.length });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: approve custom department request, then move submission to PENDING ─
+app.post('/api/admin/onboarding/:id/approve-dept', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const sub = await prisma.onboardingSubmission.findUnique({ where: { id: req.params.id } });
+    if (!sub) return res.status(404).json({ error: 'Submission not found.' });
+    if (sub.status !== 'DEPT_PENDING') return res.status(400).json({ error: 'Submission is not in DEPT_PENDING status.' });
+    if (!sub.customDeptName) return res.status(400).json({ error: 'No custom department name on this submission.' });
+
+    // Create the new department
+    const nameClash = await prisma.department.findFirst({ where: { name: { equals: sub.customDeptName, mode: 'insensitive' }, isDeleted: false } });
+    if (nameClash) {
+      // Dept already exists — link submission to it
+      await prisma.onboardingSubmission.update({
+        where: { id: sub.id },
+        data: { deptId: nameClash.id, deptName: nameClash.name, status: 'PENDING' }
+      });
+      return res.json({ success: true, deptId: nameClash.id, note: 'Department already exists; submission linked and moved to PENDING.' });
+    }
+
+    const plainCode = await generateUniqueAccessCode(sub.customDeptName);
+    const hash = await bcrypt.hash(plainCode, 10);
+    const newDept = await prisma.department.create({
+      data: {
+        name: sub.customDeptName,
+        type: 'Operational',
+        accessCodeHash: hash,
+        accessCodeLabel: plainCode,
+      }
+    });
+
+    // Move submission to PENDING with the new dept ID
+    await prisma.onboardingSubmission.update({
+      where: { id: sub.id },
+      data: { deptId: newDept.id, deptName: newDept.name, status: 'PENDING' }
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId: getNumericUserId(req.user) || null,
+        action: 'Onboarding Dept Approved',
+        details: `New department "${newDept.name}" created from onboarding request by ${sub.firstName} ${sub.surname}`
+      }
+    }).catch(() => {});
+
+    res.json({ success: true, deptId: newDept.id });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: reject custom department request ─────────────────────────────────
+app.post('/api/admin/onboarding/:id/reject-dept', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { note } = req.body;
+    const sub = await prisma.onboardingSubmission.findUnique({ where: { id: req.params.id } });
+    if (!sub) return res.status(404).json({ error: 'Submission not found.' });
+    if (sub.status !== 'DEPT_PENDING') return res.status(400).json({ error: 'Submission is not in DEPT_PENDING status.' });
+
+    const adminName = req.user?.name || 'Administrator';
+    await prisma.onboardingSubmission.update({
+      where: { id: sub.id },
+      data: { status: 'REJECTED', rejectionNote: note || 'Department request was not approved.', processedAt: new Date(), processedByName: adminName }
+    });
+
+    const { text, html } = buildEmailContent({
+      title: 'CSS Group RMS — Department Request Update',
+      lines: [
+        `Dear ${sub.firstName} ${sub.surname},`,
+        ``,
+        `Your request for a new department "${sub.customDeptName}" could not be approved.`,
+        ...(note ? [``, `Reason: ${note}`] : []),
+        ``,
+        `Please contact the ICT Department or HR for assistance.`,
+      ],
+    });
+    sendEmail({ to: sub.personalEmail, subject: 'CSS Group RMS — Department Request Update', text, html }).catch(() => {});
+
+    res.json({ success: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
 // ── System Settings ───────────────────────────────────────────────────────────
 // GET /api/system-settings/:key  — read one setting (public for dept-level reads like chairman access)
 app.get('/api/system-settings/:key', authenticateToken, async (req, res) => {

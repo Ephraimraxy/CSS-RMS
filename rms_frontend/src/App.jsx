@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, createContext, useContext, Sus
 import Login from './components/Login'
 import LoginPagePremium from './components/LoginPagePremium'
 import PublicVerify from './components/PublicVerify'
+const StaffOnboardingForm = React.lazy(() => import('./components/StaffOnboardingForm'))
 import DepartmentHeadModal from './components/DepartmentHeadModal'
 import Layout from './components/Layout'
 
@@ -491,6 +492,19 @@ const AppContent = () => {
 };
 
 function App() {
+  if (window.location.pathname.startsWith('/onboarding')) {
+    return (
+      <Suspense fallback={
+        <div className="min-h-screen bg-gradient-to-br from-[#f0f7f0] via-white to-[#e8f5e8] flex items-center justify-center">
+          <div className="w-10 h-10 border-4 border-green-200 border-t-green-600 rounded-full animate-spin" />
+        </div>
+      }>
+        <Toaster position="top-center" toastOptions={{ style: { borderRadius: '12px', fontSize: '13px', fontWeight: '600' } }} />
+        <StaffOnboardingForm />
+      </Suspense>
+    )
+  }
+
   if (window.location.pathname.startsWith('/verify')) {
     return (
       <>

@@ -681,3 +681,28 @@ model RevokedToken {
 
   @@index([expiresAt])
 }
+
+// Staff self-service onboarding submissions — awaiting admin review before enrollment
+model OnboardingSubmission {
+  id              String    @id @default(cuid())
+  staffId         String    @unique // one active submission per staff ID
+  surname         String
+  firstName       String
+  middleName      String?
+  phone           String    @unique // one submission per phone number
+  personalEmail   String    @unique // one submission per personal email
+  officialEmail   String
+  deptId          Int?      // FK to existing Department (null if customDeptName used)
+  deptName        String?   // snapshot of selected dept name at submission time
+  customDeptName  String?   // non-null when dept not in list; status = DEPT_PENDING
+  role            String    @default("MEMBER") // HEAD | ASSISTANT | MEMBER
+  status          String    @default("PENDING")
+  // PENDING       — awaiting admin review
+  // DEPT_PENDING  — custom dept request needs approval first
+  // APPROVED      — enrolled; account created
+  // REJECTED      — rejected by admin
+  rejectionNote   String?
+  submittedAt     DateTime  @default(now())
+  processedAt     DateTime?
+  processedByName String?
+}

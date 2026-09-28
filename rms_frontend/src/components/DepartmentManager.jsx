@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useRef } from 'react';
 import {
@@ -831,6 +831,130 @@ const DepartmentManager = ({ onViewChange }) => {
     } finally { setResendingDeptId(null); }
   };
 
+  // ── Onboarding review state ────────────────────────────────────────────────
+  const [activeTab, setActiveTab]               = useState('departments');
+  const [onboardingSubs, setOnboardingSubs]     = useState([]);
+  const [onboardingLoading, setOnboardingLoading] = useState(false);
+  const [onboardingFilter, setOnboardingFilter] = useState('PENDING');
+  const [selectedIds, setSelectedIds]           = useState([]);
+  const [rejectModal, setRejectModal]           = useState(null); // { id, name } or null
+  const [rejectNote, setRejectNote]             = useState('');
+  const [actioningId, setActioningId]           = useState(null);
+  const [batchActioning, setBatchActioning]     = useState(false);
+  const [pendingCount, setPendingCount]         = useState(0);
+
+  const loadOnboarding = useCallback(async (filter) => {
+    setOnboardingLoading(true);
+    try {
+      const res = await fetch(`/api/admin/onboarding?status=${filter || onboardingFilter}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}` }
+      });
+      const data = await res.json();
+      setOnboardingSubs(Array.isArray(data) ? data : []);
+    } catch { setOnboardingSubs([]); }
+    finally { setOnboardingLoading(false); }
+  }, [onboardingFilter]);
+
+  const loadPendingCount = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/onboarding?status=PENDING`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}` }
+      });
+      const data = await res.json();
+      const deptPendingRes = await fetch(`/api/admin/onboarding?status=DEPT_PENDING`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}` }
+      });
+      const deptData = await deptPendingRes.json();
+      setPendingCount((Array.isArray(data) ? data.length : 0) + (Array.isArray(deptData) ? deptData.length : 0));
+    } catch {}
+  }, []);
+
+  useEffect(() => { loadPendingCount(); }, [loadPendingCount]);
+
+  useEffect(() => {
+    if (activeTab === 'onboarding') loadOnboarding(onboardingFilter);
+  }, [activeTab, onboardingFilter]);
+
+  const handleApprove = async (id) => {
+    setActioningId(id);
+    try {
+      const res = await fetch(`/api/admin/onboarding/${id}/approve`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' }
+      });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.error || 'Approval failed.'); return; }
+      toast.success('Submission approved — credentials sent.');
+      loadOnboarding(onboardingFilter); loadPendingCount();
+    } catch { toast.error('Network error.'); }
+    finally { setActioningId(null); }
+  };
+
+  const handleReject = async () => {
+    if (!rejectModal) return;
+    setActioningId(rejectModal.id);
+    try {
+      const res = await fetch(`/api/admin/onboarding/${rejectModal.id}/reject`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: rejectNote.trim() || null })
+      });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.error || 'Rejection failed.'); return; }
+      toast.success('Submission rejected — submitter notified.');
+      setRejectModal(null); setRejectNote('');
+      loadOnboarding(onboardingFilter); loadPendingCount();
+    } catch { toast.error('Network error.'); }
+    finally { setActioningId(null); }
+  };
+
+  const handleApproveDept = async (id) => {
+    setActioningId(id);
+    try {
+      const res = await fetch(`/api/admin/onboarding/${id}/approve-dept`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' }
+      });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.error || 'Dept approval failed.'); return; }
+      toast.success('Department approved — submission moved to Pending.');
+      loadOnboarding(onboardingFilter); loadDepts(); loadPendingCount();
+    } catch { toast.error('Network error.'); }
+    finally { setActioningId(null); }
+  };
+
+  const handleBatchApprove = async () => {
+    if (!selectedIds.length) return;
+    setBatchActioning(true);
+    try {
+      const res = await fetch('/api/admin/onboarding/batch-approve', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds })
+      });
+      const d = await res.json();
+      toast.success(`${d.approved} approved${d.failed ? `, ${d.failed} failed` : ''}.`);
+      setSelectedIds([]); loadOnboarding(onboardingFilter); loadPendingCount();
+    } catch { toast.error('Batch approve failed.'); }
+    finally { setBatchActioning(false); }
+  };
+
+  const handleBatchReject = async () => {
+    if (!selectedIds.length) return;
+    setBatchActioning(true);
+    try {
+      const res = await fetch('/api/admin/onboarding/batch-reject', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds, note: null })
+      });
+      const d = await res.json();
+      toast.success(`${d.count} rejected — submitters notified.`);
+      setSelectedIds([]); loadOnboarding(onboardingFilter); loadPendingCount();
+    } catch { toast.error('Batch reject failed.'); }
+    finally { setBatchActioning(false); }
+  };
+
+  const onboardingToken = localStorage.getItem('rms_token');
+
   // This table manages departments themselves, not individual staff under them —
   // sub-accounts already have their own dedicated Sub-Accounts page.
   const mainDepartments = departments.filter(d => !d.isSubAccount);
@@ -890,6 +1014,276 @@ const DepartmentManager = ({ onViewChange }) => {
             </button>
           </div>
         </div>
+
+        {/* ── Tab bar ── */}
+        <div className="flex items-center gap-2 border-b border-border/30 pb-1">
+          {[
+            { key: 'departments', label: 'Departments' },
+            { key: 'onboarding',  label: 'Onboarding', badge: pendingCount || null },
+          ].map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-t-xl text-[11px] font-black uppercase tracking-widest transition-all border-b-2 ${
+                activeTab === tab.key
+                  ? 'border-primary text-primary bg-primary/5'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
+              }`}
+            >
+              {tab.label}
+              {tab.badge ? (
+                <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full min-w-[18px] text-center leading-none">
+                  {tab.badge}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Onboarding Review Panel ── */}
+        {activeTab === 'onboarding' && (
+          <div className="space-y-5">
+            {/* Status filter tabs */}
+            <div className="flex flex-wrap gap-2">
+              {[
+                { value: 'PENDING',      label: 'Pending' },
+                { value: 'DEPT_PENDING', label: 'Dept Pending' },
+                { value: 'APPROVED',     label: 'Approved' },
+                { value: 'REJECTED',     label: 'Rejected' },
+                { value: 'ALL',          label: 'All' },
+              ].map(f => (
+                <button
+                  key={f.value}
+                  onClick={() => { setOnboardingFilter(f.value); setSelectedIds([]); }}
+                  className={`px-4 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
+                    onboardingFilter === f.value
+                      ? f.value === 'PENDING' ? 'bg-amber-500/10 border-amber-500/30 text-amber-700'
+                        : f.value === 'DEPT_PENDING' ? 'bg-purple-500/10 border-purple-500/30 text-purple-700'
+                        : f.value === 'APPROVED' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700'
+                        : f.value === 'REJECTED' ? 'bg-red-500/10 border-red-500/30 text-red-700'
+                        : 'bg-primary/10 border-primary/30 text-primary'
+                      : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Batch actions */}
+            {selectedIds.length > 0 && (
+              <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-2xl">
+                <span className="text-xs font-bold text-primary">{selectedIds.length} selected</span>
+                <button
+                  onClick={handleBatchApprove}
+                  disabled={batchActioning}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-[11px] font-black hover:bg-emerald-700 transition-all disabled:opacity-50"
+                >
+                  {batchActioning ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
+                  Approve Selected
+                </button>
+                <button
+                  onClick={handleBatchReject}
+                  disabled={batchActioning}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 text-white text-[11px] font-black hover:bg-red-700 transition-all disabled:opacity-50"
+                >
+                  {batchActioning ? <Loader2 size={11} className="animate-spin" /> : <X size={11} />}
+                  Reject Selected
+                </button>
+                <button onClick={() => setSelectedIds([])} className="ml-auto text-[11px] text-muted-foreground hover:text-foreground font-bold">
+                  Clear
+                </button>
+              </div>
+            )}
+
+            {/* Link to share */}
+            <div className="flex items-center gap-3 p-3 bg-blue-500/5 border border-blue-500/20 rounded-2xl">
+              <Info size={14} className="text-blue-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-bold text-blue-700">Onboarding Form Link</p>
+                <p className="text-[10px] text-blue-500 font-mono truncate">{window.location.origin}/onboarding</p>
+              </div>
+              <button
+                onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/onboarding`).catch(() => {}); toast.success('Link copied!'); }}
+                className="text-[10px] font-black text-blue-600 hover:text-blue-700 px-3 py-1.5 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 transition-all whitespace-nowrap"
+              >
+                Copy Link
+              </button>
+            </div>
+
+            {/* Table */}
+            {onboardingLoading ? (
+              <div className="py-16 text-center">
+                <Loader2 size={24} className="animate-spin text-primary mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground font-medium">Loading submissions…</p>
+              </div>
+            ) : onboardingSubs.length === 0 ? (
+              <div className="py-16 text-center bg-white/70 rounded-3xl border border-border/50">
+                <p className="text-sm text-muted-foreground italic">No submissions in this category.</p>
+              </div>
+            ) : (
+              <div className="bg-white/70 rounded-3xl border border-border/50 overflow-hidden shadow-sm">
+                <div className="overflow-x-auto custom-scrollbar">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-muted/30 text-[9px] font-black uppercase tracking-[0.18em] text-muted-foreground border-b border-border/20">
+                        <th className="py-3 px-3">
+                          <input type="checkbox"
+                            checked={selectedIds.length === onboardingSubs.filter(s => s.status === 'PENDING').length && onboardingSubs.filter(s => s.status === 'PENDING').length > 0}
+                            onChange={e => {
+                              const pending = onboardingSubs.filter(s => s.status === 'PENDING').map(s => s.id);
+                              setSelectedIds(e.target.checked ? pending : []);
+                            }}
+                            className="rounded"
+                          />
+                        </th>
+                        <th className="py-3 px-3">Name</th>
+                        <th className="py-3 px-3">Staff ID</th>
+                        <th className="py-3 px-3">Department</th>
+                        <th className="py-3 px-3">Role</th>
+                        <th className="py-3 px-3">Phone</th>
+                        <th className="py-3 px-3">Personal Email</th>
+                        <th className="py-3 px-3">Official Email</th>
+                        <th className="py-3 px-3">Status</th>
+                        <th className="py-3 px-3">Submitted</th>
+                        <th className="py-3 px-3 text-center">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/10">
+                      {onboardingSubs.map(sub => {
+                        const isPending   = sub.status === 'PENDING';
+                        const isDeptPend  = sub.status === 'DEPT_PENDING';
+                        const isApproved  = sub.status === 'APPROVED';
+                        const isRejected  = sub.status === 'REJECTED';
+                        const fullName    = `${sub.firstName} ${sub.surname}${sub.middleName ? ' ' + sub.middleName : ''}`;
+                        const submittedAt = new Date(sub.submittedAt).toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' });
+                        return (
+                          <tr key={sub.id} className={`hover:bg-muted/20 transition-colors ${selectedIds.includes(sub.id) ? 'bg-primary/[0.03]' : ''}`}>
+                            <td className="py-3 px-3">
+                              {isPending && (
+                                <input type="checkbox" checked={selectedIds.includes(sub.id)}
+                                  onChange={e => setSelectedIds(prev => e.target.checked ? [...prev, sub.id] : prev.filter(i => i !== sub.id))}
+                                  className="rounded"
+                                />
+                              )}
+                            </td>
+                            <td className="py-3 px-3">
+                              <p className="text-xs font-bold text-foreground">{fullName}</p>
+                              <p className="text-[10px] text-muted-foreground font-mono">{sub.id.slice(0,8).toUpperCase()}</p>
+                            </td>
+                            <td className="py-3 px-3 text-xs font-bold font-mono text-foreground">{sub.staffId}</td>
+                            <td className="py-3 px-3">
+                              <p className="text-xs font-semibold text-foreground">{sub.deptName || sub.customDeptName || '—'}</p>
+                              {sub.customDeptName && <p className="text-[10px] text-purple-600 font-bold">Custom request</p>}
+                            </td>
+                            <td className="py-3 px-3">
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                                sub.role === 'HEAD' ? 'bg-blue-100 text-blue-700'
+                                : sub.role === 'ASSISTANT' ? 'bg-indigo-100 text-indigo-700'
+                                : 'bg-gray-100 text-gray-600'
+                              }`}>{sub.role}</span>
+                            </td>
+                            <td className="py-3 px-3 text-[11px] font-mono text-foreground">{sub.phone}</td>
+                            <td className="py-3 px-3 text-[10px] text-foreground max-w-[160px] truncate">{sub.personalEmail}</td>
+                            <td className="py-3 px-3 text-[10px] text-blue-600 font-mono max-w-[160px] truncate">{sub.officialEmail}</td>
+                            <td className="py-3 px-3">
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                                isPending   ? 'bg-amber-100 text-amber-700'
+                                : isDeptPend ? 'bg-purple-100 text-purple-700'
+                                : isApproved ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-red-100 text-red-700'
+                              }`}>
+                                {sub.status.replace('_', ' ')}
+                              </span>
+                              {isRejected && sub.rejectionNote && (
+                                <p className="text-[9px] text-muted-foreground mt-0.5 max-w-[100px] truncate" title={sub.rejectionNote}>{sub.rejectionNote}</p>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 text-[10px] text-muted-foreground whitespace-nowrap">{submittedAt}</td>
+                            <td className="py-3 px-3">
+                              <div className="flex items-center gap-1 justify-center">
+                                {isDeptPend && (
+                                  <button
+                                    onClick={() => handleApproveDept(sub.id)}
+                                    disabled={actioningId === sub.id}
+                                    className="px-2.5 py-1.5 rounded-xl bg-purple-600 text-white text-[10px] font-black hover:bg-purple-700 transition-all disabled:opacity-50 whitespace-nowrap"
+                                    title="Approve department request — creates the dept and moves submission to Pending"
+                                  >
+                                    {actioningId === sub.id ? <Loader2 size={10} className="animate-spin" /> : 'Approve Dept'}
+                                  </button>
+                                )}
+                                {isPending && (
+                                  <button
+                                    onClick={() => handleApprove(sub.id)}
+                                    disabled={actioningId === sub.id}
+                                    className="p-1.5 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition-all disabled:opacity-50"
+                                    title="Approve — create account and send credentials"
+                                  >
+                                    {actioningId === sub.id ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+                                  </button>
+                                )}
+                                {(isPending || isDeptPend) && (
+                                  <button
+                                    onClick={() => { setRejectModal({ id: sub.id, name: fullName }); setRejectNote(''); }}
+                                    disabled={actioningId === sub.id}
+                                    className="p-1.5 rounded-xl bg-red-500 text-white hover:bg-red-600 transition-all disabled:opacity-50"
+                                    title="Reject submission"
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Reject Modal ── */}
+        {rejectModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="text-base font-black text-foreground">Reject Submission</h3>
+                  <p className="text-sm text-muted-foreground mt-1">{rejectModal.name}</p>
+                </div>
+                <button onClick={() => setRejectModal(null)} className="p-2 hover:bg-muted rounded-xl"><X size={16} /></button>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">Rejection Reason (Optional)</label>
+                <textarea
+                  value={rejectNote}
+                  onChange={e => setRejectNote(e.target.value)}
+                  placeholder="e.g. Duplicate entry, incorrect department, etc."
+                  rows={3}
+                  className="w-full px-4 py-3 rounded-xl border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-red-500/20 resize-none"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">The submitter will be notified by email.</p>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => setRejectModal(null)} className="flex-1 py-2.5 rounded-xl border border-border text-sm font-bold text-muted-foreground hover:bg-muted transition-all">Cancel</button>
+                <button
+                  onClick={handleReject}
+                  disabled={actioningId === rejectModal.id}
+                  className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-black hover:bg-red-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {actioningId === rejectModal.id ? <Loader2 size={14} className="animate-spin" /> : null}
+                  Confirm Reject
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Departments tab content (only shown when that tab is active) ── */}
+        {activeTab === 'departments' && <>
 
         {/* Info box — seal vs signature */}
         <div className="flex flex-col sm:flex-row gap-3">
@@ -1079,6 +1473,9 @@ const DepartmentManager = ({ onViewChange }) => {
             )}
           </div>
         </div>
+
+        </>}
+        {/* End departments tab */}
 
       </div>
 
