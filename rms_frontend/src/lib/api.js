@@ -180,7 +180,10 @@ export const deptAPI = {
   },
   async toggleDisable(deptId) {
     return api.patch(`/departments/${deptId}/toggle-disable`);
-  }
+  },
+  async resendWelcome(deptId) {
+    return api.post(`/departments/${deptId}/resend-welcome`);
+  },
 };
 
 export const forwardAPI = {

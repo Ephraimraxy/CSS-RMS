@@ -3571,6 +3571,59 @@ app.put('/api/departments/:id', authenticateToken, requireRoles(['global_admin']
   } catch (error) { sendError(res, 500, error.message); }
 });
 
+// POST /api/departments/:id/resend-welcome
+// Super Admin only. Resends the full welcome email + SMS to whatever email/phone
+// is currently stored on the department — useful after correcting a typo in any
+// field (name, email, phone). Works regardless of activation status.
+app.post('/api/departments/:id/resend-welcome', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const dept = await prisma.department.findUnique({
+      where: { id: parseInt(req.params.id) },
+      select: { id: true, name: true, headName: true, headTitle: true, headEmail: true, phone: true, staffId: true, accessCodeLabel: true, accessCode: true }
+    });
+    if (!dept) return sendError(res, 404, 'Department not found.');
+    if (!dept.headEmail) return sendError(res, 400, 'No email address on file for this department. Please edit the department and add one first.');
+
+    const accessCode = dept.accessCodeLabel || dept.accessCode || null;
+    const subject = 'Account Activated — Welcome to RMS Portal';
+    const { text, html } = buildEmailContent({
+      title: subject,
+      lines: [
+        `Your department account has been activated on the RMS Portal by the RMS Administrator.`,
+        ``,
+        `Staff ID: ${dept.staffId || 'Not set'}`,
+        `Name: ${dept.headName || 'Not set'}`,
+        `Position/Title: ${dept.headTitle || 'Not set'}`,
+        `Department: ${dept.name}`,
+        `Email: ${dept.headEmail}`,
+        `Phone: ${dept.phone || 'Not set'}`,
+        ...(accessCode ? [`Access Code: ${accessCode}`, ``, `Use this access code to log in for the first time. You will be asked to create your own password — once set, the access code no longer works.`] : [``, `Your access code has already been changed. Use your current password to log in.`]),
+      ],
+      actionLabel: 'Open RMS Portal',
+    });
+
+    await sendEmail({ to: dept.headEmail, subject, text, html });
+    if (dept.phone) {
+      sendSms({
+        to: dept.phone,
+        message: accessCode
+          ? `HELLO ${dept.headName}: Welcome to RMS portal, ${dept.name} department. Staff ID: ${dept.staffId || 'N/A'}. Access Code: ${accessCode}. Use the access code to login then create your personal password.`
+          : `HELLO ${dept.headName}: Your RMS Portal details for ${dept.name} have been updated. Log in with your existing password.`,
+      }).catch(() => {});
+    }
+
+    await prisma.activityLog.create({
+      data: {
+        userId: getNumericUserId(req.user) || null,
+        action: 'Welcome Resent',
+        details: `Admin resent welcome credentials to ${dept.name} (${dept.headEmail})`
+      }
+    }).catch(() => {});
+
+    res.json({ success: true, sentTo: dept.headEmail, hasSms: !!dept.phone });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
 app.delete('/api/departments/:id', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
     const { id } = req.params;

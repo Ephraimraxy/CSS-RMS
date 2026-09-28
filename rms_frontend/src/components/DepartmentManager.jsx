@@ -6,7 +6,7 @@ import {
   Eye, EyeOff, Pencil, X, Save, Loader2, KeyRound,
   CheckCircle2, RotateCcw, Info, User, Mail, Phone, Hash, BadgeCheck, Download,
   Upload, PenTool, AlertTriangle, ShieldAlert, ShieldCheck, FileSpreadsheet, FileDown,
-  ChevronDown, ChevronUp, Filter
+  ChevronDown, ChevronUp, Filter, Send
 } from 'lucide-react';
 import { getDepartments, addDepartment, deleteDepartment } from '../lib/store';
 import { deptAPI, reqAPI } from '../lib/api';
@@ -820,6 +820,17 @@ const DepartmentManager = ({ onViewChange }) => {
     } finally { setTogglingDeptId(null); }
   };
 
+  const [resendingDeptId, setResendingDeptId] = useState(null);
+  const handleResendWelcome = async (dept) => {
+    setResendingDeptId(dept.id);
+    try {
+      const res = await deptAPI.resendWelcome(dept.id);
+      toast.success(`Welcome message resent to ${dept.headEmail}${res.hasSms ? ' + SMS' : ''}`);
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to resend welcome message.');
+    } finally { setResendingDeptId(null); }
+  };
+
   // This table manages departments themselves, not individual staff under them —
   // sub-accounts already have their own dedicated Sub-Accounts page.
   const mainDepartments = departments.filter(d => !d.isSubAccount);
@@ -1027,6 +1038,14 @@ const DepartmentManager = ({ onViewChange }) => {
                             </button>
                             <button onClick={() => setSealDept(dept)} className="p-2 text-indigo-500 hover:bg-indigo-50 rounded-lg transition-all" title="View Seal">
                               <Eye size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleResendWelcome(dept)}
+                              disabled={resendingDeptId === dept.id}
+                              className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-all disabled:opacity-40"
+                              title="Resend welcome email + SMS with current credentials"
+                            >
+                              {resendingDeptId === dept.id ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                             </button>
                             <button
                               onClick={() => handleToggleDisable(dept)}
