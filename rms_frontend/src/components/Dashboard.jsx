@@ -5,7 +5,6 @@ import { reqAPI, settingsAPI, adminAPI } from '../lib/api';
 import { getEffectiveAmount, getLiveTrailDepartment, normalizeReq } from '../lib/requisitionDisplay';
 import toast from 'react-hot-toast';
 import { ArrowUpRight, Clock, CheckCircle2, XCircle, ListFilter, Eye, AlertTriangle, ShieldCheck, ArrowRight, Paperclip, ChevronDown, ChevronUp, Send, BadgeCheck, RotateCcw, FileText, MessageSquare, AlertOctagon } from 'lucide-react';
-import RequisitionFlowModal from './RequisitionFlowModal';
 
 const StatCard = ({ label, value, icon: Icon, color, onClick, title, active, activeLabel, danger }) => (
   <div onClick={onClick} title={title} className={`glass p-3.5 sm:p-5 rounded-[1.5rem] sm:rounded-[2rem] border relative overflow-hidden group transition-all bg-white/70 shadow-sm ${danger ? 'border-red-400 ring-2 ring-red-300/60 bg-red-50/60' : active ? `border-${color}-400 ring-2 ring-${color}-300/50` : 'border-border/40'} ${onClick ? 'hover:border-primary/40 cursor-pointer hover:shadow-xl hover:shadow-primary/5 active:scale-[0.98]' : ''}`}>
@@ -66,7 +65,7 @@ const Dashboard = ({ onViewChange }) => {
   const { user } = useAuth();
   const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0, totalSpent: 0, totalSpentIsPartial: false, memos: 0, memoPending: 0, memoPublished: 0, treated: 0, approvedByMe: 0 });
   const [chainStats, setChainStats] = useState({ forwarded: 0, returned: 0, vetted: 0, disbursed: 0 });
-  const [flowModal, setFlowModal] = useState(null); // { reqId, deptName }
+  // flowModal state removed — now navigates to req_flow page
   const [partialReqs, setPartialReqs] = useState([]);
   const [recentPending, setRecentPending] = useState([]);
   const [ccReqs, setCcReqs] = useState([]);
@@ -1002,7 +1001,7 @@ const Dashboard = ({ onViewChange }) => {
                     const openFlow = (e) => {
                       e.stopPropagation();
                       if (isMemoRecord(r)) { onViewChange('memos'); return; }
-                      setFlowModal({ reqId: r.id, deptName: user.name || user.departmentName });
+                      onViewChange('req_flow', { reqId: r.id });
                     };
                     return (
                       <tr key={r.id} onClick={openFlow} className="group cursor-pointer transition-all">
@@ -1095,15 +1094,6 @@ const Dashboard = ({ onViewChange }) => {
         </div>
       </div>
 
-      {/* ── Requisition Flow Modal ── */}
-      {flowModal && (
-        <RequisitionFlowModal
-          reqId={flowModal.reqId}
-          viewingDeptId={user?.deptId}
-          viewingDeptName={flowModal.deptName || user?.name || user?.departmentName}
-          onClose={() => setFlowModal(null)}
-        />
-      )}
     </>
   );
 };

@@ -60,6 +60,7 @@ const MemoManagement = React.lazy(() => import('./components/MemoManagement'))
 const DepartmentProfile = React.lazy(() => import('./components/DepartmentProfile'))
 const SubAccountsPage = React.lazy(() => import('./components/SubAccountsPanel'))
 const MyActivity = React.lazy(() => import('./components/MyActivity'))
+const RequisitionFlowPage = React.lazy(() => import('./components/RequisitionFlowPage'))
 
 // ── Store Records ──────────────────────────────────────────────────────────────
 const StoreRecordsPage = React.lazy(() => import('./components/StoreRecordsPage'))
@@ -196,7 +197,7 @@ const NetworkProvider = ({ children }) => {
 
 // Valid view names — used to validate hash on load and popstate
 const VALID_VIEWS = [
-  'dashboard', 'requisitions', 'memos', 'activity',
+  'dashboard', 'requisitions', 'memos', 'activity', 'req_flow',
   'workflow_builder', 'department_manager', 'audit_logs', 'documentation',
   'document_studio', 'dept_profile', 'sub_accounts',
   // HR Portal views
@@ -443,6 +444,8 @@ const AppContent = () => {
         </div>
       </div>
     ),
+    // Requisition journey flow page
+    req_flow: <RequisitionFlowPage reqId={deepLinkReqId} onBack={() => navigate('dashboard')} />,
     // Store Records
     store_records: <StoreRecordsPage onViewChange={navigate} />,
     // ICC Oversight Console
