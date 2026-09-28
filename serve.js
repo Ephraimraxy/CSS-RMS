@@ -47,6 +47,7 @@ const {
   generateVerificationCode
 } = require('./lib/signing');
 const { sendEmail } = require('./lib/mailer');
+const whatsapp = require('./lib/whatsapp');
 const webpush = require('web-push');
 
 
@@ -5916,6 +5917,20 @@ app.post('/api/admin/onboarding/:id/approve', authenticateToken, requireRoles(['
       to:      sub.phone,
       message: `CSS RMS: Hello ${sub.firstName} ${sub.surname}, your account is ready. Staff ID: ${sub.staffId}. Access Code: ${plainCode}. Log into the portal and create your password. - RMS Admin`
     }).catch(() => {});
+    if (process.env.WHATSAPP_ENABLED === 'true') {
+      whatsapp.sendWhatsApp(
+        sub.phone,
+        `Hello ${sub.firstName} ${sub.surname} 👋\n\nYour *CSS Group RMS* account is now active!\n\n` +
+        `*Staff ID:* ${sub.staffId}\n` +
+        `*Department:* ${sub.deptName}\n` +
+        `*Role:* ${sub.role === 'HEAD' ? 'Head of Department' : sub.role === 'ASSISTANT' ? 'Assistant' : 'Member'}\n` +
+        `*Access Code:* ${plainCode}\n\n` +
+        `Use this code to log in for the first time, then create your personal password.\n\n` +
+        `_Your official CSS Group email: ${sub.officialEmail}_\n` +
+        `_Contact ICT to get your email inbox activated._\n\n` +
+        `— CSS Group Administrator`
+      ).catch(() => {});
+    }
 
     res.json({ success: true });
   } catch (err) { sendError(res, 500, err.message); }
@@ -6039,6 +6054,16 @@ app.post('/api/admin/onboarding/batch-approve', authenticateToken, requireRoles(
         });
         sendEmail({ to: sub.personalEmail, subject: credSubject, text: cText, html: cHtml }).catch(() => {});
         sendSms({ to: sub.phone, message: `CSS RMS: Hello ${sub.firstName} ${sub.surname}, your account is ready. Staff ID: ${sub.staffId}. Access Code: ${plainCode}. - RMS Admin` }).catch(() => {});
+        if (process.env.WHATSAPP_ENABLED === 'true') {
+          whatsapp.sendWhatsApp(
+            sub.phone,
+            `Hello ${sub.firstName} ${sub.surname} 👋\n\nYour *CSS Group RMS* account is now active!\n\n` +
+            `*Staff ID:* ${sub.staffId}\n` +
+            `*Department:* ${sub.deptName}\n` +
+            `*Access Code:* ${plainCode}\n\n` +
+            `Log in and create your personal password.\n— CSS Group Administrator`
+          ).catch(() => {});
+        }
 
         results.push({ id, ok: true });
       } catch (e) {
@@ -6082,6 +6107,19 @@ app.post('/api/admin/onboarding/batch-reject', authenticateToken, requireRoles([
 
     res.json({ success: true, count: ids.length });
   } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: WhatsApp status + QR code ───────────────────────────────────────
+app.get('/api/admin/whatsapp/status', authenticateToken, requireRoles(['global_admin']), async (_req, res) => {
+  const status = whatsapp.getStatus();
+  const qr = status === 'qr_ready' ? await whatsapp.getQrDataUrl() : null;
+  res.json({ status, qr });
+});
+
+app.post('/api/admin/whatsapp/reconnect', authenticateToken, requireRoles(['global_admin']), async (_req, res) => {
+  whatsapp.setPrisma(prisma);
+  await whatsapp.connect().catch(() => {});
+  res.json({ status: whatsapp.getStatus() });
 });
 
 // ── Admin: approve custom department request, then move submission to PENDING ─
@@ -12536,6 +12574,13 @@ const server = app.listen(PORT, async () => {
 
       isSystemReady = true;
       logger.info('✅ [SYSTEM READY] Requisition Management Service fully operational.');
+
+      // ── WhatsApp (Baileys) — start after DB is ready ─────────────────────
+      if (process.env.WHATSAPP_ENABLED === 'true') {
+        whatsapp.setPrisma(prisma);
+        whatsapp.connect().catch(e => logger.warn('[WA] Startup connect failed:', e.message));
+        logger.info('[WA] WhatsApp client initialising — check /api/admin/whatsapp/status');
+      }
 
       // ── Priority escalation background job ──────────────────────────────────
       // Runs every 60 seconds. Only fires alerts when the admin has configured
