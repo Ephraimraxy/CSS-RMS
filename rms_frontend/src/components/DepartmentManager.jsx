@@ -871,9 +871,22 @@ const DepartmentManager = ({ onViewChange }) => {
 
   useEffect(() => { loadPendingCount(); }, [loadPendingCount]);
 
+  // Load submissions on tab switch / filter change, then poll every 20s for live updates
   useEffect(() => {
-    if (activeTab === 'onboarding') loadOnboarding(onboardingFilter);
-  }, [activeTab, onboardingFilter]);
+    if (activeTab !== 'onboarding') return;
+    loadOnboarding(onboardingFilter);
+    const interval = setInterval(() => {
+      loadOnboarding(onboardingFilter);
+      loadPendingCount();
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [activeTab, onboardingFilter, loadOnboarding, loadPendingCount]);
+
+  // Also poll the pending badge (tab label count) every 30s regardless of active tab
+  useEffect(() => {
+    const interval = setInterval(loadPendingCount, 30000);
+    return () => clearInterval(interval);
+  }, [loadPendingCount]);
 
   const handleApprove = async (id) => {
     setActioningId(id);
