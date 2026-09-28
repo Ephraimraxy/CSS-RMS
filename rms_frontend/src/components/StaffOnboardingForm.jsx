@@ -228,8 +228,8 @@ export default function StaffOnboardingForm() {
     return (
       <>
         <style>{GLOBAL_CSS}</style>
-        {/* min-height + padding-bottom ensures full scroll on short phones */}
-        <div style={{ minHeight:'100vh', background:'linear-gradient(135deg,#052e16 0%,#14532d 40%,#166534 100%)', display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'24px 16px 60px', fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', boxSizing:'border-box' }}>
+        {/* Same internal-scroll pattern as the form — bypasses body scroll entirely */}
+        <div style={{ height:'100dvh', overflowY:'auto', WebkitOverflowScrolling:'touch', background:'linear-gradient(135deg,#052e16 0%,#14532d 40%,#166534 100%)', display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'24px 16px 60px', fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', boxSizing:'border-box' }}>
           <div style={{ width:'100%', maxWidth:480, background:'#fff', borderRadius:24, overflow:'hidden', boxShadow:'0 32px 80px rgba(0,0,0,0.45)', marginTop:16 }}>
             <div style={{ background:'linear-gradient(135deg,#15803d,#14532d)', padding:'32px 24px', textAlign:'center' }}>
               <img src="/CSS_Group.png" alt="CSS Group" style={{ height:40, objectFit:'contain', marginBottom:16, opacity:0.95 }} />
@@ -269,14 +269,23 @@ export default function StaffOnboardingForm() {
       <style>{GLOBAL_CSS}</style>
 
       {/*
-        body already has overflow-x:hidden globally (index.css).
-        Never put overflow on this div — mobile WebKit blocks vertical scroll when any
-        overflow is set on a non-body div, even overflow-x:hidden.
+        The body in index.css has background-attachment:fixed which prevents mobile Chrome
+        from establishing the document scroll chain (classic Android Chrome bug). The main
+        app avoids this via Layout's <main overflow-y-auto>. We do the same here: make
+        THIS div the scroll container so body scroll is never needed.
+        height:100dvh + overflow-y:auto = internal scroll, bypasses body entirely.
       */}
-      <div style={{ minHeight:'100vh', background:'linear-gradient(160deg,#052e16 0%,#14532d 35%,#1a6b3c 65%,#052e16 100%)', fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', position:'relative' }}>
+      <div style={{
+        height: '100dvh',
+        overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        background: 'linear-gradient(160deg,#052e16 0%,#14532d 35%,#1a6b3c 65%,#052e16 100%)',
+        fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+        position: 'relative',
+      }}>
 
-        {/* Background pattern — absolute, contained by position:relative parent */}
-        <div style={{ position:'absolute', inset:0, opacity:0.04, backgroundImage:`url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`, pointerEvents:'none', zIndex:0 }} />
+        {/* Background pattern — fixed to viewport, doesn't scroll with content */}
+        <div style={{ position:'fixed', inset:0, opacity:0.04, backgroundImage:`url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`, pointerEvents:'none', zIndex:0 }} />
 
         <div style={{ position:'relative', zIndex:1, maxWidth:620, margin:'0 auto', padding:'28px 16px 60px', boxSizing:'border-box' }}>
 
