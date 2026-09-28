@@ -107,6 +107,7 @@ const Dashboard = ({ onViewChange }) => {
       }
       if (isAdmin) {
         return r.status === 'pending' || r.finalApprovalStatus === 'vetting' ||
+          r.finalApprovalStatus === 'partial' ||
           (r.status === 'approved' && (!r.finalApprovalStatus || r.finalApprovalStatus === 'none'));
       }
       const isTargeted = Number(r.targetDepartmentId) === userDeptId &&
@@ -114,7 +115,10 @@ const Dashboard = ({ onViewChange }) => {
         (!r.finalApprovalStatus || r.finalApprovalStatus === 'none');
       const needsFinal = isExecutive && r.status === 'approved' && (!r.finalApprovalStatus || r.finalApprovalStatus === 'none');
       const isVetting = Number(r.currentVettingDeptId) === userDeptId && r.finalApprovalStatus === 'vetting';
-      return isTargeted || needsFinal || isVetting;
+      // Partial payment — balance still outstanding; the dept that disbursed must see it
+      const isPartialBalance = r.finalApprovalStatus === 'partial' &&
+        (Number(r.currentVettingDeptId) === userDeptId || Number(r.treatedByDeptId) === userDeptId);
+      return isTargeted || needsFinal || isVetting || isPartialBalance;
     });
     setRecentPending(pendingForMe.slice(0, 10));
 
