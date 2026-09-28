@@ -668,3 +668,16 @@ model HRAttendanceRecord {
   @@unique([staffId, date])
   @@index([date])
 }
+
+// ── Persisted JWT revocation list ─────────────────────────────────────────────
+// Keeps logout effective across server restarts. tokenHash is SHA-256 of the
+// raw JWT; expiresAt matches the token's own exp so rows self-expire and can
+// be cleaned up. In-memory Set in serve.js pre-loads from this table at startup
+// for O(1) per-request checks.
+model RevokedToken {
+  tokenHash String   @id
+  expiresAt DateTime
+  revokedAt DateTime @default(now())
+
+  @@index([expiresAt])
+}

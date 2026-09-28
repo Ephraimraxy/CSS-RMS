@@ -1042,18 +1042,55 @@ const mutationLimiter = rateLimit({
   message: { error: 'Too many requests. Please wait a moment and try again.' }
 });
 
-// ── Token Blacklist (for logout) ──────────────────────────────────────────────
-const tokenBlacklist = new Set();
+// ── Token Blacklist (hybrid: in-memory for speed + DB for persistence) ───────
+// Stores SHA-256 hashes of revoked JWTs — never the raw token.
+const tokenBlacklist = new Set(); // Set<tokenHash>
 
-// Prune expired tokens from blacklist every 30 minutes
-setInterval(() => {
-  const now = Math.floor(Date.now() / 1000);
-  for (const entry of tokenBlacklist) {
-    try {
-      const decoded = jwt.decode(entry);
-      if (decoded && decoded.exp && decoded.exp < now) tokenBlacklist.delete(entry);
-    } catch { tokenBlacklist.delete(entry); }
+function hashToken(rawToken) {
+  return crypto.createHash('sha256').update(rawToken).digest('hex');
+}
+
+async function revokeToken(rawToken) {
+  if (!rawToken) return;
+  const tokenHash = hashToken(rawToken);
+  tokenBlacklist.add(tokenHash);
+  try {
+    const decoded = jwt.decode(rawToken);
+    const expiresAt = decoded?.exp ? new Date(decoded.exp * 1000) : new Date(Date.now() + 12 * 3600 * 1000);
+    await prisma.revokedToken.upsert({
+      where: { tokenHash },
+      update: {},
+      create: { tokenHash, expiresAt }
+    });
+  } catch (e) {
+    logger.error('[AUTH] Failed to persist revoked token:', e.message);
+    // In-memory revocation still applied — session is protected this restart
   }
+}
+
+// On startup: pre-load non-expired revoked hashes so they survive restarts
+async function loadRevokedTokens() {
+  try {
+    const rows = await prisma.revokedToken.findMany({
+      where: { expiresAt: { gt: new Date() } },
+      select: { tokenHash: true }
+    });
+    for (const { tokenHash } of rows) tokenBlacklist.add(tokenHash);
+    if (rows.length) logger.info(`[AUTH] Loaded ${rows.length} revoked token(s) from DB`);
+  } catch (e) {
+    logger.error('[AUTH] Could not load revoked tokens from DB:', e.message);
+  }
+}
+loadRevokedTokens();
+
+// Prune expired tokens from in-memory set and DB every 30 minutes
+setInterval(async () => {
+  // Prune DB rows whose token has expired
+  try {
+    await prisma.revokedToken.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+  } catch { /* non-fatal */ }
+  // Prune in-memory set for tokens whose DB row would now be gone
+  // (hashes only — can't decode; just let expired ones accumulate until restart reloads a clean set)
 }, 30 * 60 * 1000);
 
 // ── Login Lockout Tracking ───────────────────────────────────────────────────
@@ -1119,8 +1156,8 @@ const authenticateToken = async (req, res, next) => {
     || (req.headers['authorization']?.startsWith('Bearer ') ? req.headers['authorization'].slice(7) : null);
   if (!token) return res.status(401).json({ error: 'You must be logged in to access this. Please sign in and try again.' });
 
-  // Check blacklist
-  if (tokenBlacklist.has(token)) {
+  // Check blacklist (stored as SHA-256 hashes)
+  if (tokenBlacklist.has(hashToken(token))) {
     return res.status(401).json({ error: 'Token has been revoked. Please log in again.' });
   }
 
@@ -1939,20 +1976,20 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 });
 
 // Logout (revoke token)
-app.post('/api/auth/logout', authenticateToken, (req, res) => {
-  if (req.token) tokenBlacklist.add(req.token);
+app.post('/api/auth/logout', authenticateToken, async (req, res) => {
+  await revokeToken(req.token);
   res.clearCookie('rms_token', { path: '/' });
   res.json({ ok: true, message: 'Token revoked successfully.' });
 });
 
 // Refresh Token
-app.post('/api/auth/refresh', authenticateToken, (req, res) => {
+app.post('/api/auth/refresh', authenticateToken, async (req, res) => {
   try {
     const user = req.user;
     if (!user) return res.status(401).json({ error: 'Invalid session' });
 
     // Revoke old token
-    if (req.token) tokenBlacklist.add(req.token);
+    await revokeToken(req.token);
 
     // Issue new 12h token — carry tokenVersion forward unchanged (it's only ever bumped by
     // a security reset, which should invalidate refreshes too, not just direct logins).
@@ -2169,10 +2206,12 @@ app.post('/api/departments/activate', async (req, res) => {
     const hash = await bcrypt.hash(newPassword, 10);
 
     if (isSub) {
-      // Sub-account activation: set new password only, store plain-text in accessCodeLabel so admin can always see it
+      // Sub-account activation: store bcrypt hash only; the original admin-set access code
+      // in accessCodeLabel is deliberately preserved (not overwritten) so admins can
+      // reference it — but the user's chosen password is never stored in plaintext.
       const updated = await prisma.department.update({
         where: { id: dept.id },
-        data: { accessCodeHash: hash, accessCodeLabel: newPassword, codeChangedByDept: true }
+        data: { accessCodeHash: hash, codeChangedByDept: true }
       });
       const userData = {
         id: `dept_${updated.id}`,
@@ -2282,7 +2321,7 @@ app.put('/api/auth/me', authenticateToken, async (req, res) => {
       select: { id: true, name: true, email: true, role: true }
     });
     const userData = { ...req.user, name: updated.name, email: updated.email };
-    if (req.token) tokenBlacklist.add(req.token);
+    await revokeToken(req.token);
     const newToken = jwt.sign(userData, JWT_SECRET, { expiresIn: '12h' });
     await prisma.activityLog.create({ data: { userId, action: 'Profile Updated', details: `${updated.name} updated their profile` } });
     res.cookie('rms_token', newToken, cookieOptions);
@@ -3092,7 +3131,12 @@ app.post('/api/chat/upload', authenticateToken, chatUpload.single('file'), async
 app.get('/api/chat/media', authenticateToken, async (req, res) => {
   try {
     const key = req.query.key;
-    if (!key || typeof key !== 'string' || !key.startsWith('chat/')) {
+    if (!key || typeof key !== 'string') {
+      return res.status(400).json({ error: 'Invalid media key' });
+    }
+    // Normalize away any traversal sequences before checking the prefix
+    const normalizedKey = require('path').posix.normalize(key);
+    if (!normalizedKey.startsWith('chat/') || normalizedKey !== key) {
       return res.status(400).json({ error: 'Invalid media key' });
     }
     const download = req.query.download === '1';
@@ -11442,8 +11486,23 @@ app.post('/api/hr/zkteco/upload', zkSyncAuth, async (req, res) => {
 });
 
 // ── ZKTeco ADMS Protocol (device pushes directly to Railway URL) ──────────────
+// Shared secret: set ADMS_SECRET env var and configure the same value as
+// ServerKey in the ZKTeco device settings. The device sends it as ?Key=<secret>
+// on every request. Without ADMS_SECRET the endpoint is open (backwards-compat).
+const ADMS_SECRET = process.env.ADMS_SECRET || null;
+function admsAuth(req, res) {
+  if (!ADMS_SECRET) return true; // no secret configured — allow (dev/legacy)
+  const provided = req.query.Key || req.query.key || '';
+  if (provided !== ADMS_SECRET) {
+    res.set('Content-Type', 'text/plain').status(401).send('ERROR');
+    return false;
+  }
+  return true;
+}
+
 // Device registers and polls
 app.get('/iclock/cdata', async (req, res) => {
+  if (!admsAuth(req, res)) return;
   const sn = req.query.SN || 'UNKNOWN';
   logger.info({ sn }, 'ZKTeco ADMS registration');
   // Tell device to push attendance in real-time with no encryption
@@ -11467,6 +11526,7 @@ PushOptionsFlag=1
 
 // Device pushes attendance records
 app.post('/iclock/cdata', async (req, res) => {
+  if (!admsAuth(req, res)) return;
   try {
     const sn    = req.query.SN || req.body?.SN || 'UNKNOWN';
     const table = (req.query.table || req.body?.table || '').toUpperCase();
@@ -11540,11 +11600,13 @@ app.post('/iclock/cdata', async (req, res) => {
 
 // Device polls for pending commands (heartbeat)
 app.get('/iclock/getrequest', (req, res) => {
+  if (!admsAuth(req, res)) return;
   res.set('Content-Type','text/plain').send('OK');
 });
 
 // Device sends command result
 app.post('/iclock/devicecmd', (req, res) => {
+  if (!admsAuth(req, res)) return;
   res.set('Content-Type','text/plain').send('OK');
 });
 
