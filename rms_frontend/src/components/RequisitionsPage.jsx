@@ -3510,7 +3510,7 @@ const KIVWarningBanner = ({ req, detail, canResume, onRefresh, departments = [] 
 };
 
 // ── Detail Modal ─────────────────────────────────────────────────────────────
-const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onEditDraft, canPrint }) => {
+const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onEditDraft, canPrint, onViewChange }) => {
   const [detail, setDetail]         = useState(null);
   const [loading, setLoading]       = useState(true);
   const [acting, setActing]         = useState(false);
@@ -3845,7 +3845,7 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
 
         {canPrint && (
           <button
-            onClick={() => setPrintModal(true)}
+            onClick={() => onViewChange ? onViewChange('print_record', { reqId: req.id }) : setPrintModal(true)}
             title="Print Stage Report"
             className="px-4 py-2 bg-primary text-white hover:bg-primary/90 rounded-xl transition-all shadow-md shadow-primary/20 flex items-center gap-2 font-bold text-xs uppercase tracking-wider"
           >
@@ -5932,6 +5932,7 @@ const RequisitionsPage = ({ onViewChange, initialReqId, onDeepLinkConsumed }) =>
           user={user}
           departments={departments}
           canPrint={canPrint}
+          onViewChange={onViewChange}
           onClose={() => setSelectedReq(null)}
           onAction={(actionType, updatedReq) => {
             if (actionType === 'refreshed' && updatedReq) {

@@ -70,7 +70,9 @@ const Dashboard = ({ onViewChange }) => {
   const [recentPending, setRecentPending] = useState([]);
   const [ccReqs, setCcReqs] = useState([]);
   const [ccOpen, setCcOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(true);
+  const [incomingOpen, setIncomingOpen] = useState(true);
+  const [outgoingOpen, setOutgoingOpen] = useState(true);
   const [historyReqs, setHistoryReqs] = useState([]);
   const [typeFilter, setTypeFilter] = useState('All');
   const [myReqs, setMyReqs] = useState([]);
@@ -598,7 +600,7 @@ const Dashboard = ({ onViewChange }) => {
             {/* Pending Queue */}
             <div className="space-y-8">
               <div className="flex items-center justify-between border-b border-border/20 pb-6">
-                <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-4 flex-wrap gap-y-2">
                   <div className="w-1.5 h-6 bg-primary rounded-full" />
                   <h3 className="text-xl font-bold text-foreground tracking-tight">{normalizeRole(user?.role) === 'global_admin' ? 'All System Records' : 'My Incoming Records'}</h3>
                   {recentPending.length > 0 && (
@@ -606,6 +608,13 @@ const Dashboard = ({ onViewChange }) => {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIncomingOpen(o => !o)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 ${incomingOpen ? 'bg-primary/10 border-primary/30 text-primary hover:bg-primary/20' : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'}`}
+                  >
+                    {incomingOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                    {incomingOpen ? 'Collapse' : 'Expand'}
+                  </button>
                   <button onClick={() => onViewChange('requisitions')} className="px-4 py-2 rounded-xl bg-white border border-border/50 text-[10px] font-black text-muted-foreground uppercase tracking-widest hover:bg-primary hover:text-white hover:border-primary transition-all flex items-center gap-2 active:scale-95">
                     <ListFilter size={14} />
                     Requisitions
@@ -617,6 +626,7 @@ const Dashboard = ({ onViewChange }) => {
                 </div>
               </div>
 
+              {incomingOpen && <>
               {/* Type filter tabs */}
               <div className="flex gap-2 flex-wrap -mt-2">
                 {TYPE_FILTERS.map(f => (
@@ -782,13 +792,14 @@ const Dashboard = ({ onViewChange }) => {
                 </div>
               );
               })()}
+              </>}
             </div>
 
             {/* ── My Outgoing Requests — department users only ── */}
             {user?.role === 'department' && (
               <div className="space-y-6 pt-6 border-t border-border/20">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap gap-y-2">
                     <div className="w-1.5 h-6 bg-blue-500 rounded-full" />
                     <h3 className="text-xl font-bold text-foreground tracking-tight">My Outgoing Records</h3>
                     <span className="bg-blue-500/10 text-blue-600 border border-blue-500/20 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-[0.15em]">
@@ -799,6 +810,13 @@ const Dashboard = ({ onViewChange }) => {
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setOutgoingOpen(o => !o)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 ${outgoingOpen ? 'bg-blue-500/10 border-blue-400/30 text-blue-600 hover:bg-blue-500/20' : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'}`}
+                    >
+                      {outgoingOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                      {outgoingOpen ? 'Collapse' : 'Expand'}
+                    </button>
                     <button onClick={() => onViewChange('requisitions')} className="px-4 py-1.5 rounded-xl bg-white border border-border/50 text-[10px] font-black text-muted-foreground uppercase tracking-widest hover:bg-blue-500 hover:text-white hover:border-blue-500 transition-all flex items-center gap-2 active:scale-95">
                       <ListFilter size={12} /> Reqs
                     </button>
@@ -808,6 +826,7 @@ const Dashboard = ({ onViewChange }) => {
                   </div>
                 </div>
 
+                {outgoingOpen && <>
                 {/* Mini stats row */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                   {[
@@ -947,27 +966,28 @@ const Dashboard = ({ onViewChange }) => {
                     </table>
                   </div>
                 )}
+                </>}
               </div>
             )}
 
             {/* ── Involvement History — all depts that touched this req ── */}
             {_isDept && historyReqs.length > 0 && (
               <div className="space-y-4 pt-6 border-t border-border/20">
-                <div
-                  className="flex items-center justify-between cursor-pointer"
-                  onClick={() => setHistoryOpen(o => !o)}
-                >
-                  <div className="flex items-center gap-3">
+                <div className="flex items-center justify-between border-b border-border/20 pb-4">
+                  <div className="flex items-center gap-3 flex-wrap gap-y-2">
                     <div className="w-1.5 h-6 bg-violet-500 rounded-full" />
                     <h3 className="text-xl font-bold text-foreground tracking-tight">Involvement History</h3>
                     <span className="bg-violet-500/10 text-violet-600 border border-violet-500/20 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-[0.15em]">
                       {historyReqs.length} records
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-muted-foreground/60 font-medium hidden sm:block">All requisitions your department has been involved in</span>
-                    {historyOpen ? <ChevronUp size={16} className="text-muted-foreground" /> : <ChevronDown size={16} className="text-muted-foreground" />}
-                  </div>
+                  <button
+                    onClick={() => setHistoryOpen(o => !o)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 ${historyOpen ? 'bg-violet-500/10 border-violet-400/30 text-violet-600 hover:bg-violet-500/20' : 'bg-muted border-border text-muted-foreground hover:bg-muted/80'}`}
+                  >
+                    {historyOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                    {historyOpen ? 'Collapse' : 'Expand'}
+                  </button>
                 </div>
                 {historyOpen && (() => {
                   const TERMINAL = ['treated', 'published', 'rejected'];
