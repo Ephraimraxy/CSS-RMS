@@ -6118,6 +6118,7 @@ app.get('/api/admin/whatsapp/status', authenticateToken, requireRoles(['global_a
 
 app.post('/api/admin/whatsapp/reconnect', authenticateToken, requireRoles(['global_admin']), async (_req, res) => {
   whatsapp.setPrisma(prisma);
+  await whatsapp.disconnect().catch(() => {}); // clear any hung state first
   await whatsapp.connect().catch(() => {});
   res.json({ status: whatsapp.getStatus() });
 });
