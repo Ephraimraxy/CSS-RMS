@@ -5657,6 +5657,20 @@ app.get('/api/public/onboarding/dept-roles', async (req, res) => {
   }
 });
 
+// Public: live duplicate check for staffId / phone / personalEmail
+app.get('/api/public/onboarding/check', async (req, res) => {
+  const { field, value } = req.query;
+  if (!field || !value || !['staffId', 'phone', 'personalEmail'].includes(field)) {
+    return res.json({ taken: false });
+  }
+  try {
+    const existing = await prisma.onboardingSubmission.findFirst({ where: { [field]: value.trim() } });
+    res.json({ taken: !!existing });
+  } catch {
+    res.json({ taken: false });
+  }
+});
+
 // Public: submit onboarding form
 app.post('/api/public/onboarding', onboardingSubmitLimiter, async (req, res) => {
   try {
@@ -6211,6 +6225,46 @@ app.post('/api/admin/onboarding/:id/reject-dept', authenticateToken, requireRole
     sendEmail({ to: sub.personalEmail, subject: 'CSS Group RMS — Department Request Update', text, html }).catch(() => {});
 
     res.json({ success: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: delete a single onboarding submission ─────────────────────────────
+app.delete('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const sub = await prisma.onboardingSubmission.findUnique({ where: { id: req.params.id } });
+    if (!sub) return res.status(404).json({ error: 'Submission not found.' });
+    await prisma.onboardingSubmission.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: batch delete onboarding submissions ────────────────────────────────
+app.post('/api/admin/onboarding/batch-delete', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids array required.' });
+    const { count } = await prisma.onboardingSubmission.deleteMany({ where: { id: { in: ids } } });
+    res.json({ success: true, count });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: edit an onboarding submission ──────────────────────────────────────
+app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const sub = await prisma.onboardingSubmission.findUnique({ where: { id: req.params.id } });
+    if (!sub) return res.status(404).json({ error: 'Submission not found.' });
+    const allowed = ['firstName', 'surname', 'middleName', 'staffId', 'phone', 'personalEmail', 'role', 'status'];
+    const data = {};
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) data[key] = req.body[key];
+    }
+    // If staffId or name changed, regenerate officialEmail
+    const newFirst = data.firstName ?? sub.firstName;
+    const newSurname = data.surname ?? sub.surname;
+    const cleanEmail = s => (s || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+    data.officialEmail = `${cleanEmail(newFirst)}.${cleanEmail(newSurname)}@cssgroup.com.ng`;
+    const updated = await prisma.onboardingSubmission.update({ where: { id: req.params.id }, data });
+    res.json({ success: true, submission: updated });
   } catch (err) { sendError(res, 500, err.message); }
 });
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const toUpper = (s) => (s || '').toUpperCase();
@@ -32,9 +32,9 @@ const GLOBAL_CSS = `
 `;
 
 // ── Field Wrapper ──────────────────────────────────────────────────────────
-function Field({ label, required, error, hint, children }) {
+function Field({ label, required, error, hint, children, fieldId }) {
   return (
-    <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+    <div data-ob-field={fieldId} style={{ display:'flex', flexDirection:'column', gap:6 }}>
       <label style={{ display:'block', fontSize:'13px', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.12em', color: error ? '#dc2626' : '#374151' }}>
         {label}{required && <span style={{ color:'#dc2626', marginLeft:3 }}>*</span>}
       </label>
@@ -98,6 +98,8 @@ function Section({ number, title, children }) {
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function StaffOnboardingForm() {
+  const scrollRef = useRef(null);
+
   const [departments, setDepartments] = useState([]);
   const [deptLoading, setDeptLoading] = useState(true);
   const [roleAvail, setRoleAvail] = useState({ headTaken: false, assistantTaken: false });
@@ -114,6 +116,33 @@ export default function StaffOnboardingForm() {
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(null);
   const [serverError, setServerError] = useState('');
+
+  // ── Live duplicate check state ─────────────────────────────────────────────
+  const [taken, setTaken] = useState({ staffId: null, phone: null, personalEmail: null });
+  const checkTimers = useRef({});
+
+  const scrollToFirstError = useCallback((errorObj) => {
+    setTimeout(() => {
+      const container = scrollRef.current;
+      if (!container) return;
+      const firstKey = Object.keys(errorObj).find(k => errorObj[k]);
+      if (!firstKey) return;
+      const el = container.querySelector(`[data-ob-field="${firstKey}"]`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 60);
+  }, []);
+
+  const liveCheck = useCallback((field, value) => {
+    clearTimeout(checkTimers.current[field]);
+    if (!value || value.length < 3) { setTaken(prev => ({ ...prev, [field]: null })); return; }
+    checkTimers.current[field] = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/public/onboarding/check?field=${field}&value=${encodeURIComponent(value)}`);
+        const d = await r.json();
+        setTaken(prev => ({ ...prev, [field]: d.taken }));
+      } catch { /* silent */ }
+    }, 600);
+  }, []);
 
   useEffect(() => {
     fetch('/api/public/onboarding/departments')
@@ -176,22 +205,26 @@ export default function StaffOnboardingForm() {
     const e = {};
     if (!form.staffId.trim()) e.staffId = 'Staff ID is required.';
     else if (!/^\d+$/.test(form.staffId.trim())) e.staffId = 'Staff ID must be numbers only (e.g. 12345).';
+    else if (taken.staffId) e.staffId = 'This Staff ID is already registered. Contact admin if this is an error.';
     if (!form.surname.trim()) e.surname = 'Surname is required.';
     if (!form.firstName.trim()) e.firstName = 'First name is required.';
     if (!form.phone.trim()) e.phone = 'Phone number is required.';
     else if (!isNigerianPhone(form.phone)) e.phone = 'Enter a valid Nigerian number (e.g. 08012345678).';
+    else if (taken.phone) e.phone = 'This phone number is already registered.';
     if (!form.personalEmail.trim()) e.personalEmail = 'Personal email is required.';
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.personalEmail.trim())) e.personalEmail = 'Enter a valid email address.';
     else if (/@cssgroup\./i.test(form.personalEmail)) e.personalEmail = 'Use your personal email — not your CSS Group official email.';
+    else if (taken.personalEmail) e.personalEmail = 'This email address is already registered.';
     if (!form.deptId && !form.customDeptName.trim()) e.deptId = 'Select your department or enter a custom department name.';
     if (!form.role) e.role = 'Select your role in the department.';
     setErrors(e);
+    if (Object.keys(e).length > 0) scrollToFirstError(e);
     return Object.keys(e).length === 0;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!validate()) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    if (!validate()) return;
     setSubmitting(true); setServerError('');
     try {
       const payload = {
@@ -212,8 +245,13 @@ export default function StaffOnboardingForm() {
       });
       const data = await res.json();
       if (!res.ok) {
-        if (data.field) setErrors(prev => ({ ...prev, [data.field]: data.error }));
-        else setServerError(data.error || 'Submission failed. Please try again.');
+        if (data.field) {
+          const newErrors = { [data.field]: data.error };
+          setErrors(prev => ({ ...prev, ...newErrors }));
+          scrollToFirstError(newErrors);
+        } else {
+          setServerError(data.error || 'Submission failed. Please try again.');
+        }
         return;
       }
       setSuccess({
@@ -363,7 +401,7 @@ export default function StaffOnboardingForm() {
         THIS div the scroll container so body scroll is never needed.
         height:100dvh + overflow-y:auto = internal scroll, bypasses body entirely.
       */}
-      <div style={{
+      <div ref={scrollRef} style={{
         height: '100dvh',
         overflowY: 'auto',
         WebkitOverflowScrolling: 'touch',
@@ -393,29 +431,48 @@ export default function StaffOnboardingForm() {
 
             {/* ── Section 1: Personal Details ── */}
             <Section number="1" title="Personal Details">
-              <Field label="Staff ID" required error={errors.staffId} hint="Numbers only — e.g. 12345">
+              <Field label="Staff ID" required error={errors.staffId}
+                hint={taken.staffId === false ? null : taken.staffId === true ? null : 'Numbers only — e.g. 12345'}
+                fieldId="staffId">
                 <input
                   type="text"
                   inputMode="numeric"
                   value={form.staffId}
-                  onChange={e => setField('staffId', e.target.value.replace(/\D/g, ''))}
+                  onChange={e => {
+                    const v = e.target.value.replace(/\D/g, '');
+                    setField('staffId', v);
+                    setTaken(prev => ({ ...prev, staffId: null }));
+                    liveCheck('staffId', v);
+                  }}
                   placeholder="Enter your staff ID number"
-                  style={inputStyle(errors.staffId)}
+                  style={inputStyle(errors.staffId || taken.staffId)}
                   maxLength={20}
-                  onFocus={e => e.target.style.borderColor = errors.staffId ? '#fca5a5' : '#16a34a'}
-                  onBlur={e => e.target.style.borderColor = errors.staffId ? '#fca5a5' : '#e5e7eb'}
+                  onFocus={e => e.target.style.borderColor = (errors.staffId || taken.staffId) ? '#fca5a5' : '#16a34a'}
+                  onBlur={e => e.target.style.borderColor = (errors.staffId || taken.staffId) ? '#fca5a5' : '#e5e7eb'}
                 />
+                {!errors.staffId && taken.staffId === true && (
+                  <div style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 12px', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:10 }}>
+                    <span style={{ fontSize:13 }}>❌</span>
+                    <span style={{ fontSize:13, fontWeight:700, color:'#dc2626' }}>This Staff ID is already registered</span>
+                  </div>
+                )}
+                {!errors.staffId && taken.staffId === false && form.staffId.length >= 1 && (
+                  <div style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 12px', background:'#f0fdf4', border:'1px solid #86efac', borderRadius:10 }}>
+                    <span style={{ fontSize:13 }}>✅</span>
+                    <span style={{ fontSize:13, fontWeight:700, color:'#15803d' }}>Staff ID is available</span>
+                  </div>
+                )}
               </Field>
 
               {/* KEY FIX: CSS class handles responsive collapse, not inline style */}
               <div className="ob-name-grid">
-                <Field label="Surname" required error={errors.surname}>
+                <Field label="Surname" required error={errors.surname} fieldId="surname">
                   <input type="text" value={form.surname} onChange={e => setField('surname', toUpper(e.target.value))}
                     placeholder="SURNAME" style={inputStyle(errors.surname)} maxLength={60}
                     onFocus={e => e.target.style.borderColor = errors.surname ? '#fca5a5' : '#16a34a'}
                     onBlur={e => e.target.style.borderColor = errors.surname ? '#fca5a5' : '#e5e7eb'} />
                 </Field>
-                <Field label="First Name" required error={errors.firstName}>
+                <Field label="First Name" required error={errors.firstName} fieldId="firstName">
                   <input type="text" value={form.firstName} onChange={e => setField('firstName', toUpper(e.target.value))}
                     placeholder="FIRST NAME" style={inputStyle(errors.firstName)} maxLength={60}
                     onFocus={e => e.target.style.borderColor = errors.firstName ? '#fca5a5' : '#16a34a'}
@@ -433,19 +490,54 @@ export default function StaffOnboardingForm() {
 
             {/* ── Section 2: Contact Details ── */}
             <Section number="2" title="Contact Details">
-              <Field label="Phone Number" required error={errors.phone} hint="e.g. 08012345678 or +2348012345678">
-                <input type="tel" value={form.phone} onChange={e => setField('phone', e.target.value)}
-                  placeholder="08012345678" style={inputStyle(errors.phone)} maxLength={16}
-                  onFocus={e => e.target.style.borderColor = errors.phone ? '#fca5a5' : '#16a34a'}
-                  onBlur={e => e.target.style.borderColor = errors.phone ? '#fca5a5' : '#e5e7eb'} />
+              <Field label="Phone Number" required error={errors.phone}
+                hint="e.g. 08012345678 or +2348012345678" fieldId="phone">
+                <input type="tel" value={form.phone}
+                  onChange={e => {
+                    setField('phone', e.target.value);
+                    setTaken(prev => ({ ...prev, phone: null }));
+                    liveCheck('phone', e.target.value.replace(/\s+/g, ''));
+                  }}
+                  placeholder="08012345678" style={inputStyle(errors.phone || taken.phone)} maxLength={16}
+                  onFocus={e => e.target.style.borderColor = (errors.phone || taken.phone) ? '#fca5a5' : '#16a34a'}
+                  onBlur={e => e.target.style.borderColor = (errors.phone || taken.phone) ? '#fca5a5' : '#e5e7eb'} />
+                {!errors.phone && taken.phone === true && (
+                  <div style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 12px', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:10 }}>
+                    <span style={{ fontSize:13 }}>❌</span>
+                    <span style={{ fontSize:13, fontWeight:700, color:'#dc2626' }}>This phone number is already registered</span>
+                  </div>
+                )}
+                {!errors.phone && taken.phone === false && isNigerianPhone(form.phone) && (
+                  <div style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 12px', background:'#f0fdf4', border:'1px solid #86efac', borderRadius:10 }}>
+                    <span style={{ fontSize:13 }}>✅</span>
+                    <span style={{ fontSize:13, fontWeight:700, color:'#15803d' }}>Phone number is available</span>
+                  </div>
+                )}
               </Field>
 
               <Field label="Personal Email Address" required error={errors.personalEmail}
-                hint="Your personal/private email — NOT a CSS Group official email">
-                <input type="email" value={form.personalEmail} onChange={e => setField('personalEmail', e.target.value.toLowerCase())}
-                  placeholder="yourname@gmail.com" style={inputStyle(errors.personalEmail)} maxLength={120}
-                  onFocus={e => e.target.style.borderColor = errors.personalEmail ? '#fca5a5' : '#16a34a'}
-                  onBlur={e => e.target.style.borderColor = errors.personalEmail ? '#fca5a5' : '#e5e7eb'} />
+                hint="Your personal/private email — NOT a CSS Group official email" fieldId="personalEmail">
+                <input type="email" value={form.personalEmail}
+                  onChange={e => {
+                    setField('personalEmail', e.target.value.toLowerCase());
+                    setTaken(prev => ({ ...prev, personalEmail: null }));
+                    liveCheck('personalEmail', e.target.value.toLowerCase().trim());
+                  }}
+                  placeholder="yourname@gmail.com" style={inputStyle(errors.personalEmail || taken.personalEmail)} maxLength={120}
+                  onFocus={e => e.target.style.borderColor = (errors.personalEmail || taken.personalEmail) ? '#fca5a5' : '#16a34a'}
+                  onBlur={e => e.target.style.borderColor = (errors.personalEmail || taken.personalEmail) ? '#fca5a5' : '#e5e7eb'} />
+                {!errors.personalEmail && taken.personalEmail === true && (
+                  <div style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 12px', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:10 }}>
+                    <span style={{ fontSize:13 }}>❌</span>
+                    <span style={{ fontSize:13, fontWeight:700, color:'#dc2626' }}>This email is already registered</span>
+                  </div>
+                )}
+                {!errors.personalEmail && taken.personalEmail === false && form.personalEmail.includes('@') && (
+                  <div style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 12px', background:'#f0fdf4', border:'1px solid #86efac', borderRadius:10 }}>
+                    <span style={{ fontSize:13 }}>✅</span>
+                    <span style={{ fontSize:13, fontWeight:700, color:'#15803d' }}>Email is available</span>
+                  </div>
+                )}
               </Field>
 
               {/* Official email preview */}

@@ -842,6 +842,11 @@ const DepartmentManager = ({ onViewChange }) => {
   const [actioningId, setActioningId]           = useState(null);
   const [batchActioning, setBatchActioning]     = useState(false);
   const [pendingCount, setPendingCount]         = useState(0);
+  const [deletingId, setDeletingId]             = useState(null);
+  const [deleteAllModal, setDeleteAllModal]     = useState(false);
+  const [editModal, setEditModal]               = useState(null); // submission object or null
+  const [editForm, setEditForm]                 = useState({});
+  const [editSaving, setEditSaving]             = useState(false);
 
   const loadOnboarding = useCallback(async (filter) => {
     setOnboardingLoading(true);
@@ -897,7 +902,7 @@ const DepartmentManager = ({ onViewChange }) => {
       const d = await res.json();
       if (!res.ok) { toast.error(d.error || 'Approval failed.'); return; }
       toast.success('Submission approved — credentials sent.');
-      loadOnboarding(onboardingFilter); loadPendingCount();
+      loadOnboarding(onboardingFilter); loadPendingCount(); loadDepts();
     } catch { toast.error('Network error.'); }
     finally { setActioningId(null); }
   };
@@ -945,7 +950,7 @@ const DepartmentManager = ({ onViewChange }) => {
       });
       const d = await res.json();
       toast.success(`${d.approved} approved${d.failed ? `, ${d.failed} failed` : ''}.`);
-      setSelectedIds([]); loadOnboarding(onboardingFilter); loadPendingCount();
+      setSelectedIds([]); loadOnboarding(onboardingFilter); loadPendingCount(); loadDepts();
     } catch { toast.error('Batch approve failed.'); }
     finally { setBatchActioning(false); }
   };
@@ -964,6 +969,86 @@ const DepartmentManager = ({ onViewChange }) => {
       setSelectedIds([]); loadOnboarding(onboardingFilter); loadPendingCount();
     } catch { toast.error('Batch reject failed.'); }
     finally { setBatchActioning(false); }
+  };
+
+  const handleDeleteSub = async (id) => {
+    if (!window.confirm('Delete this submission? This cannot be undone.')) return;
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/admin/onboarding/${id}`, {
+        method: 'DELETE', headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}` }
+      });
+      if (!res.ok) { const d = await res.json(); toast.error(d.error || 'Delete failed.'); return; }
+      toast.success('Submission deleted.');
+      loadOnboarding(onboardingFilter); loadPendingCount();
+    } catch { toast.error('Network error.'); }
+    finally { setDeletingId(null); }
+  };
+
+  const handleDeleteAll = async () => {
+    const ids = onboardingSubs.map(s => s.id);
+    if (!ids.length) return;
+    setBatchActioning(true);
+    try {
+      const res = await fetch('/api/admin/onboarding/batch-delete', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids })
+      });
+      const d = await res.json();
+      toast.success(`${d.count} submission(s) deleted.`);
+      setDeleteAllModal(false); setSelectedIds([]);
+      loadOnboarding(onboardingFilter); loadPendingCount();
+    } catch { toast.error('Batch delete failed.'); }
+    finally { setBatchActioning(false); }
+  };
+
+  const handleBatchDelete = async () => {
+    if (!selectedIds.length) return;
+    setBatchActioning(true);
+    try {
+      const res = await fetch('/api/admin/onboarding/batch-delete', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds })
+      });
+      const d = await res.json();
+      toast.success(`${d.count} deleted.`);
+      setSelectedIds([]); loadOnboarding(onboardingFilter); loadPendingCount();
+    } catch { toast.error('Batch delete failed.'); }
+    finally { setBatchActioning(false); }
+  };
+
+  const openEdit = (sub) => {
+    setEditForm({
+      firstName: sub.firstName || '',
+      surname: sub.surname || '',
+      middleName: sub.middleName || '',
+      staffId: sub.staffId || '',
+      phone: sub.phone || '',
+      personalEmail: sub.personalEmail || '',
+      role: sub.role || 'MEMBER',
+      status: sub.status || 'PENDING',
+    });
+    setEditModal(sub);
+  };
+
+  const handleEditSave = async () => {
+    if (!editModal) return;
+    setEditSaving(true);
+    try {
+      const res = await fetch(`/api/admin/onboarding/${editModal.id}`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm)
+      });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.error || 'Save failed.'); return; }
+      toast.success('Submission updated.');
+      setEditModal(null);
+      loadOnboarding(onboardingFilter);
+    } catch { toast.error('Network error.'); }
+    finally { setEditSaving(false); }
   };
 
   const onboardingToken = localStorage.getItem('rms_token');
@@ -1084,30 +1169,38 @@ const DepartmentManager = ({ onViewChange }) => {
             </div>
 
             {/* Batch actions */}
-            {selectedIds.length > 0 && (
-              <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-2xl">
-                <span className="text-xs font-bold text-primary">{selectedIds.length} selected</span>
-                <button
-                  onClick={handleBatchApprove}
-                  disabled={batchActioning}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-[11px] font-black hover:bg-emerald-700 transition-all disabled:opacity-50"
-                >
-                  {batchActioning ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
-                  Approve Selected
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedIds.length > 0 && (
+                <div className="flex items-center gap-2 p-3 bg-primary/5 border border-primary/20 rounded-2xl flex-wrap">
+                  <span className="text-xs font-bold text-primary">{selectedIds.length} selected</span>
+                  <button onClick={handleBatchApprove} disabled={batchActioning}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-[11px] font-black hover:bg-emerald-700 transition-all disabled:opacity-50">
+                    {batchActioning ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
+                    Approve
+                  </button>
+                  <button onClick={handleBatchReject} disabled={batchActioning}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 text-white text-[11px] font-black hover:bg-amber-700 transition-all disabled:opacity-50">
+                    {batchActioning ? <Loader2 size={11} className="animate-spin" /> : <X size={11} />}
+                    Reject
+                  </button>
+                  <button onClick={handleBatchDelete} disabled={batchActioning}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 text-white text-[11px] font-black hover:bg-red-700 transition-all disabled:opacity-50">
+                    {batchActioning ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                    Delete
+                  </button>
+                  <button onClick={() => setSelectedIds([])} className="text-[11px] text-muted-foreground hover:text-foreground font-bold">
+                    Clear
+                  </button>
+                </div>
+              )}
+              {onboardingSubs.length > 0 && (
+                <button onClick={() => setDeleteAllModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-[11px] font-black hover:bg-red-100 transition-all ml-auto">
+                  <Trash2 size={11} />
+                  Delete All ({onboardingSubs.length})
                 </button>
-                <button
-                  onClick={handleBatchReject}
-                  disabled={batchActioning}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 text-white text-[11px] font-black hover:bg-red-700 transition-all disabled:opacity-50"
-                >
-                  {batchActioning ? <Loader2 size={11} className="animate-spin" /> : <X size={11} />}
-                  Reject Selected
-                </button>
-                <button onClick={() => setSelectedIds([])} className="ml-auto text-[11px] text-muted-foreground hover:text-foreground font-bold">
-                  Clear
-                </button>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Link to share */}
             <div className="flex items-center gap-3 p-3 bg-blue-500/5 border border-blue-500/20 rounded-2xl">
@@ -1245,6 +1338,21 @@ const DepartmentManager = ({ onViewChange }) => {
                                     <X size={12} />
                                   </button>
                                 )}
+                                <button
+                                  onClick={() => openEdit(sub)}
+                                  className="p-1.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-all"
+                                  title="Edit submission"
+                                >
+                                  <Pencil size={12} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteSub(sub.id)}
+                                  disabled={deletingId === sub.id}
+                                  className="p-1.5 rounded-xl bg-gray-200 text-gray-600 hover:bg-red-100 hover:text-red-600 transition-all disabled:opacity-50"
+                                  title="Delete submission"
+                                >
+                                  {deletingId === sub.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                </button>
                               </div>
                             </td>
                           </tr>
@@ -1255,6 +1363,92 @@ const DepartmentManager = ({ onViewChange }) => {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Edit Submission Modal ── */}
+        {editModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+              <div className="flex items-start justify-between px-6 pt-6 pb-4 border-b border-border/30">
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-widest">Edit Submission</h3>
+                  <p className="text-[10px] text-muted-foreground mt-0.5 font-mono">{editModal.id.slice(0,8).toUpperCase()}</p>
+                </div>
+                <button onClick={() => setEditModal(null)} className="p-2 hover:bg-muted rounded-xl"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                {[
+                  { key: 'surname',       label: 'Surname' },
+                  { key: 'firstName',     label: 'First Name' },
+                  { key: 'middleName',    label: 'Middle Name' },
+                  { key: 'staffId',       label: 'Staff ID' },
+                  { key: 'phone',         label: 'Phone' },
+                  { key: 'personalEmail', label: 'Personal Email', type: 'email' },
+                ].map(({ key, label, type }) => (
+                  <div key={key}>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">{label}</label>
+                    <input
+                      type={type || 'text'}
+                      value={editForm[key] || ''}
+                      onChange={e => setEditForm(f => ({ ...f, [key]: e.target.value }))}
+                      className="w-full px-4 py-2.5 rounded-xl border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                ))}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">Role</label>
+                    <select value={editForm.role || 'MEMBER'} onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))}
+                      className="w-full px-4 py-2.5 rounded-xl border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                      {['HEAD', 'ASSISTANT', 'MEMBER'].map(r => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">Status</label>
+                    <select value={editForm.status || 'PENDING'} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))}
+                      className="w-full px-4 py-2.5 rounded-xl border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20">
+                      {['PENDING', 'DEPT_PENDING', 'APPROVED', 'REJECTED'].map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button onClick={() => setEditModal(null)} className="flex-1 py-2.5 rounded-xl border border-border text-sm font-bold text-muted-foreground hover:bg-muted transition-all">Cancel</button>
+                  <button onClick={handleEditSave} disabled={editSaving}
+                    className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-black hover:bg-primary/90 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                    {editSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    {editSaving ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Delete All Confirmation ── */}
+        {deleteAllModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-5">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
+                  <Trash2 size={18} className="text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-foreground">Delete All Submissions</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    This will permanently delete all <strong>{onboardingSubs.length}</strong> submission(s) currently visible (filtered as <strong>{onboardingFilter}</strong>). This cannot be undone.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => setDeleteAllModal(false)} className="flex-1 py-2.5 rounded-xl border border-border text-sm font-bold text-muted-foreground hover:bg-muted transition-all">Cancel</button>
+                <button onClick={handleDeleteAll} disabled={batchActioning}
+                  className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-black hover:bg-red-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                  {batchActioning ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  {batchActioning ? 'Deleting…' : 'Delete All'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
