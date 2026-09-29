@@ -8,6 +8,7 @@ const makeOfficialEmail = (firstName, surname) => {
   return f && l ? `${f}.${l}@cssgroup.com.ng` : '';
 };
 const isNigerianPhone = (p) => /^(\+234|0)[789]\d{9}$/.test((p || '').replace(/\s+/g, ''));
+const isCompanyEmail = (e) => /cssgroup\.com\.ng|cssgrouprms\.com/i.test(e || '');
 
 // ── CSS injected once ──────────────────────────────────────────────────────
 const GLOBAL_CSS = `
@@ -213,7 +214,7 @@ export default function StaffOnboardingForm() {
     else if (taken.phone) e.phone = 'This phone number is already registered.';
     if (!form.personalEmail.trim()) e.personalEmail = 'Personal email is required.';
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.personalEmail.trim())) e.personalEmail = 'Enter a valid email address.';
-    else if (/@cssgroup\./i.test(form.personalEmail)) e.personalEmail = 'Use your personal email — not your CSS Group official email.';
+    else if (isCompanyEmail(form.personalEmail)) e.personalEmail = 'Use your personal email — not your CSS Group official email. The system will generate your company email automatically.';
     else if (taken.personalEmail) e.personalEmail = 'This email address is already registered.';
     if (!form.deptId && !form.customDeptName.trim()) e.deptId = 'Select your department or enter a custom department name.';
     if (!form.role) e.role = 'Select your role in the department.';
@@ -523,16 +524,28 @@ export default function StaffOnboardingForm() {
                     setTaken(prev => ({ ...prev, personalEmail: null }));
                     liveCheck('personalEmail', e.target.value.toLowerCase().trim());
                   }}
-                  placeholder="yourname@gmail.com" style={inputStyle(errors.personalEmail || taken.personalEmail)} maxLength={120}
-                  onFocus={e => e.target.style.borderColor = (errors.personalEmail || taken.personalEmail) ? '#fca5a5' : '#16a34a'}
-                  onBlur={e => e.target.style.borderColor = (errors.personalEmail || taken.personalEmail) ? '#fca5a5' : '#e5e7eb'} />
-                {!errors.personalEmail && taken.personalEmail === true && (
+                  placeholder="yourname@gmail.com"
+                  style={inputStyle(errors.personalEmail || taken.personalEmail || isCompanyEmail(form.personalEmail))} maxLength={120}
+                  onFocus={e => e.target.style.borderColor = (errors.personalEmail || taken.personalEmail || isCompanyEmail(form.personalEmail)) ? '#fca5a5' : '#16a34a'}
+                  onBlur={e => e.target.style.borderColor = (errors.personalEmail || taken.personalEmail || isCompanyEmail(form.personalEmail)) ? '#fca5a5' : '#e5e7eb'} />
+                {isCompanyEmail(form.personalEmail) && (
+                  <div style={{ display:'flex', alignItems:'flex-start', gap:8, padding:'10px 12px', background:'#fff7ed', border:'2px solid #fb923c', borderRadius:10 }}>
+                    <span style={{ fontSize:16, flexShrink:0 }}>🚫</span>
+                    <div>
+                      <p style={{ margin:0, fontSize:13, fontWeight:800, color:'#c2410c' }}>Company email detected</p>
+                      <p style={{ margin:'3px 0 0', fontSize:12, color:'#ea580c', lineHeight:1.5 }}>
+                        Do not enter a CSS Group email here. The system automatically generates your official email once you are enrolled — enter your personal email (Gmail, Yahoo, etc.) instead.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {!errors.personalEmail && !isCompanyEmail(form.personalEmail) && taken.personalEmail === true && (
                   <div style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 12px', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:10 }}>
                     <span style={{ fontSize:13 }}>❌</span>
                     <span style={{ fontSize:13, fontWeight:700, color:'#dc2626' }}>This email is already registered</span>
                   </div>
                 )}
-                {!errors.personalEmail && taken.personalEmail === false && form.personalEmail.includes('@') && (
+                {!errors.personalEmail && !isCompanyEmail(form.personalEmail) && taken.personalEmail === false && form.personalEmail.includes('@') && (
                   <div style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 12px', background:'#f0fdf4', border:'1px solid #86efac', borderRadius:10 }}>
                     <span style={{ fontSize:13 }}>✅</span>
                     <span style={{ fontSize:13, fontWeight:700, color:'#15803d' }}>Email is available</span>
