@@ -585,7 +585,7 @@ export default function StaffOnboardingForm() {
                     onBlur={e => e.target.style.borderColor = errors.deptId ? '#fca5a5' : '#e5e7eb'}
                   >
                     <option value="">{deptLoading ? 'Loading departments…' : '— Select your department —'}</option>
-                    {departments.map(d => (
+                    {departments.filter(d => !/^super\s*admin$/i.test(d.name)).map(d => (
                       <option key={d.id} value={d.id}>{d.name}</option>
                     ))}
                   </select>

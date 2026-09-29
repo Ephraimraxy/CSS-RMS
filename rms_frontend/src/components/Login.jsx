@@ -566,7 +566,7 @@ const Login = () => {
   const deptDropRef = useRef(null);
   const { deptLogin, loginWithData } = useAuth();
 
-  const mainDepts = departments.filter(d => d.type !== 'Sub-Account' && !d.isSubAccount);
+  const mainDepts = departments.filter(d => d.type !== 'Sub-Account' && !d.isSubAccount && !/^super\s*admin$/i.test(d.name));
 
   useEffect(() => {
     if (deptDropOpen) {
