@@ -6268,18 +6268,52 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
   } catch (err) { sendError(res, 500, err.message); }
 });
 
+// ── Admin: check import rows for pending-submission conflicts ─────────────────
+app.post('/api/admin/departments/import-conflicts', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { deptNames } = req.body;
+    if (!Array.isArray(deptNames) || !deptNames.length) return res.json({ conflicts: {} });
+
+    const conflicts = {};
+    for (const name of deptNames) {
+      const dept = await prisma.department.findFirst({
+        where: { name: { equals: name.trim(), mode: 'insensitive' }, isDeleted: false, isSubAccount: false }
+      });
+      if (!dept) continue;
+
+      const pending = await prisma.onboardingSubmission.findMany({
+        where: { deptId: dept.id, status: { in: ['PENDING', 'DEPT_PENDING'] } },
+        select: { id: true, firstName: true, surname: true, staffId: true, status: true, role: true }
+      });
+
+      if (pending.length > 0) {
+        conflicts[name.trim()] = pending.map(s => ({
+          id: s.id,
+          name: [s.surname, s.firstName].filter(Boolean).join(' '),
+          staffId: s.staffId || '',
+          status: s.status,
+          role: s.role || '',
+        }));
+      }
+    }
+
+    res.json({ conflicts });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
 // ── Admin: bulk import HOD records from Excel (parsed on frontend, sent as JSON) ──
 app.post('/api/admin/departments/import-hods', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
     // Ensure normalEmail column exists (self-healing — idempotent)
     await prisma.$executeRawUnsafe(`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "normalEmail" TEXT`);
 
-    const { rows, notify } = req.body;
+    const { rows, notify, conflictResolutions = {} } = req.body;
     // rows: [{ deptName, staffId, surname, firstName, otherName, headTitle, headEmail, normalEmail, phone, type }]
     // notify: boolean — send welcome email+SMS after updating
+    // conflictResolutions: { [deptName]: 'skip' | 'reject_pending' }
     if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'No rows provided.' });
 
-    const results = { updated: [], skipped: [], notFound: [], errors: [], notified: 0 };
+    const results = { updated: [], skipped: [], notFound: [], errors: [], notified: 0, conflictRejected: 0 };
 
     for (const row of rows) {
       const deptName = (row.deptName || '').trim();
@@ -6294,6 +6328,24 @@ app.post('/api/admin/departments/import-hods', authenticateToken, requireRoles([
         where: { name: { equals: deptName, mode: 'insensitive' }, isDeleted: false, isSubAccount: false }
       });
       if (!dept) { results.notFound.push({ name: deptName, reason: 'Department not found in system' }); continue; }
+
+      // Check for pending onboarding submissions that would conflict
+      const pendingCount = await prisma.onboardingSubmission.count({
+        where: { deptId: dept.id, status: { in: ['PENDING', 'DEPT_PENDING'] } }
+      });
+      if (pendingCount > 0) {
+        const resolution = conflictResolutions[deptName] || conflictResolutions[deptName.toLowerCase()] || 'skip';
+        if (resolution === 'skip') {
+          results.skipped.push({ name: deptName, reason: `Has ${pendingCount} pending onboarding submission(s) — skipped by choice` });
+          continue;
+        }
+        // resolution === 'reject_pending' — reject all pending/dept_pending submissions then proceed
+        await prisma.onboardingSubmission.updateMany({
+          where: { deptId: dept.id, status: { in: ['PENDING', 'DEPT_PENDING'] } },
+          data: { status: 'REJECTED' }
+        });
+        results.conflictRejected += pendingCount;
+      }
 
       try {
         const headName = [row.surname, row.firstName, row.otherName].map(s => (s || '').trim()).filter(Boolean).join(' ');

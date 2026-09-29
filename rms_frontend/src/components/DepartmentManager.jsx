@@ -742,6 +742,10 @@ const ImportHODModal = ({ onClose, onDone }) => {
   const [result, setResult] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const [notify, setNotify] = useState(false);
+  const [conflicts, setConflicts] = useState({});         // { deptName: [{id,name,staffId,status,role}] }
+  const [conflictChoices, setConflictChoices] = useState({}); // { deptName: 'skip' | 'reject_pending' }
+  const [checkingConflicts, setCheckingConflicts] = useState(false);
+  const [conflictError, setConflictError] = useState(null);
   const fileRef = React.useRef(null);
 
   const TEMPLATE_HEADERS = ['Department Name', 'Category', 'Staff ID', 'Surname', 'First Name', 'Other Name', 'Designation', 'Official Email', 'Contact Phone', 'Email'];
@@ -785,6 +789,11 @@ const ImportHODModal = ({ onClose, onDone }) => {
       }
       if (colMap.deptName === undefined) { toast.error('Could not find a "Department Name" column in the file.'); return; }
 
+      // Reset conflict state for fresh parse
+      setConflicts({});
+      setConflictChoices({});
+      setConflictError(null);
+
       const rows = raw.slice(1).map((row, ri) => {
         const get = (field) => (colMap[field] !== undefined ? String(row[colMap[field]] || '').trim() : '');
         const deptName = get('deptName');
@@ -808,6 +817,31 @@ const ImportHODModal = ({ onClose, onDone }) => {
 
       setPreview(rows);
       setStep('preview');
+
+      // Async conflict check for all ready rows
+      const readyNames = rows.filter(r => r.status === 'ready').map(r => r.deptName);
+      if (readyNames.length > 0) {
+        setCheckingConflicts(true);
+        try {
+          const cr = await fetch('/api/admin/departments/import-conflicts', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deptNames: readyNames }),
+          });
+          if (!cr.ok) throw new Error(`Server error ${cr.status}`);
+          const cd = await cr.json();
+          const detected = cd.conflicts || {};
+          setConflicts(detected);
+          // Default all conflicts to 'skip' (safe)
+          const defaults = {};
+          Object.keys(detected).forEach(k => { defaults[k] = 'skip'; });
+          setConflictChoices(defaults);
+        } catch (e) {
+          setConflictError('Could not check for pending submission conflicts: ' + e.message);
+        } finally {
+          setCheckingConflicts(false);
+        }
+      }
     } catch (err) {
       toast.error('Failed to read file: ' + err.message);
     }
@@ -819,14 +853,26 @@ const ImportHODModal = ({ onClose, onDone }) => {
   const readyRows = preview.filter(r => r.status === 'ready');
   const skipRows  = preview.filter(r => r.status !== 'ready');
 
+  const conflictNames = Object.keys(conflicts);
+  const unresolvedConflicts = conflictNames.filter(n => !conflictChoices[n]);
+  const willUpdateCount = readyRows.filter(r => !conflicts[r.deptName] || conflictChoices[r.deptName] === 'reject_pending').length;
+  const willSkipConflictCount = conflictNames.filter(n => conflictChoices[n] === 'skip').length;
+  const willRejectPendingCount = conflictNames.filter(n => conflictChoices[n] === 'reject_pending').length;
+
+  const setAllConflicts = (choice) => {
+    const next = {};
+    conflictNames.forEach(k => { next[k] = choice; });
+    setConflictChoices(next);
+  };
+
   const handleImport = async () => {
-    if (!readyRows.length) return;
+    if (willUpdateCount === 0 && willSkipConflictCount === conflictNames.length && readyRows.length === 0) return;
     setImporting(true);
     try {
       const res = await fetch('/api/admin/departments/import-hods', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: readyRows, notify })
+        body: JSON.stringify({ rows: readyRows, notify, conflictResolutions: conflictChoices })
       });
       const d = await res.json();
       if (!res.ok) { toast.error(d.error || 'Import failed.'); return; }
@@ -935,21 +981,106 @@ const ImportHODModal = ({ onClose, onDone }) => {
           {/* Step 2: Preview */}
           {step === 'preview' && (
             <div className="p-6 space-y-4">
-              <div className="flex flex-wrap gap-3">
-                <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl">
-                  <CheckCircle2 size={13} className="text-emerald-600" />
-                  <span className="text-[11px] font-bold text-emerald-700">{readyRows.length} will be updated</span>
-                </div>
-                {skipRows.length > 0 && (
-                  <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-border rounded-xl">
-                    <Info size={13} className="text-muted-foreground" />
-                    <span className="text-[11px] font-bold text-muted-foreground">{skipRows.length} skipped</span>
+              {/* Summary badges */}
+              <div className="flex flex-wrap gap-2 items-center">
+                {checkingConflicts ? (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-xl">
+                    <Loader2 size={12} className="text-blue-500 animate-spin" />
+                    <span className="text-[11px] font-bold text-blue-700">Checking for conflicts…</span>
                   </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl">
+                      <CheckCircle2 size={13} className="text-emerald-600" />
+                      <span className="text-[11px] font-bold text-emerald-700">{willUpdateCount} will update</span>
+                    </div>
+                    {conflictNames.length > 0 && (
+                      <div className="flex items-center gap-2 px-3 py-2 bg-orange-50 border border-orange-200 rounded-xl">
+                        <AlertTriangle size={13} className="text-orange-500" />
+                        <span className="text-[11px] font-bold text-orange-700">{conflictNames.length} conflict{conflictNames.length !== 1 ? 's' : ''} — needs review</span>
+                      </div>
+                    )}
+                    {skipRows.length > 0 && (
+                      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-border rounded-xl">
+                        <Info size={13} className="text-muted-foreground" />
+                        <span className="text-[11px] font-bold text-muted-foreground">{skipRows.length} skipped</span>
+                      </div>
+                    )}
+                  </>
                 )}
-                <button onClick={() => { setPreview([]); setStep('pick'); }} className="ml-auto text-[11px] font-bold text-muted-foreground hover:text-foreground px-3 py-2 rounded-xl hover:bg-muted transition-all">
+                <button onClick={() => { setPreview([]); setConflicts({}); setConflictChoices({}); setStep('pick'); }} className="ml-auto text-[11px] font-bold text-muted-foreground hover:text-foreground px-3 py-2 rounded-xl hover:bg-muted transition-all">
                   ← Choose different file
                 </button>
               </div>
+
+              {/* Conflict error */}
+              {conflictError && (
+                <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
+                  <X size={13} className="text-red-500 shrink-0 mt-0.5" />
+                  <span className="text-[11px] text-red-700">{conflictError} — you can still import but conflicts won't be detected automatically.</span>
+                </div>
+              )}
+
+              {/* Conflict resolution panel */}
+              {!checkingConflicts && conflictNames.length > 0 && (
+                <div className="rounded-2xl border-2 border-orange-200 bg-orange-50/50 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 bg-orange-100/60 border-b border-orange-200">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle size={14} className="text-orange-600" />
+                      <span className="text-[11px] font-black text-orange-800 uppercase tracking-widest">
+                        {conflictNames.length} Conflict{conflictNames.length !== 1 ? 's' : ''} — Pending Onboarding Submissions Found
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <span className="text-[10px] text-orange-600 font-bold mr-1">Resolve all:</span>
+                      <button onClick={() => setAllConflicts('skip')} className="px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-white border border-orange-300 text-orange-700 hover:bg-orange-100 transition-all">Skip All</button>
+                      <button onClick={() => setAllConflicts('reject_pending')} className="px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-orange-600 text-white hover:bg-orange-700 transition-all">Import + Reject All</button>
+                    </div>
+                  </div>
+                  <div className="divide-y divide-orange-200/60">
+                    {conflictNames.map(deptName => {
+                      const subs = conflicts[deptName] || [];
+                      const choice = conflictChoices[deptName] || 'skip';
+                      return (
+                        <div key={deptName} className="px-4 py-3 flex flex-wrap items-start gap-3">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-black text-orange-900">{deptName}</p>
+                            <div className="mt-1 space-y-1">
+                              {subs.map(s => (
+                                <div key={s.id} className="flex items-center gap-2 text-[10px] text-orange-700">
+                                  <span className={`px-1.5 py-0.5 rounded-full font-black text-[8px] ${s.status === 'DEPT_PENDING' ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'}`}>{s.status}</span>
+                                  <span className="font-bold">{s.name || '(no name)'}</span>
+                                  {s.staffId && <span className="font-mono text-orange-500">#{s.staffId}</span>}
+                                  {s.role && <span className="text-orange-400">· {s.role}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex gap-1.5 shrink-0">
+                            <button
+                              onClick={() => setConflictChoices(c => ({ ...c, [deptName]: 'skip' }))}
+                              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border ${choice === 'skip' ? 'bg-gray-700 text-white border-gray-700' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'}`}
+                            >
+                              Skip
+                            </button>
+                            <button
+                              onClick={() => setConflictChoices(c => ({ ...c, [deptName]: 'reject_pending' }))}
+                              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border ${choice === 'reject_pending' ? 'bg-orange-600 text-white border-orange-600' : 'bg-white text-orange-600 border-orange-200 hover:border-orange-400'}`}
+                            >
+                              Import + Reject
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="px-4 py-2 bg-orange-100/40 border-t border-orange-200 flex flex-wrap gap-4 text-[10px] text-orange-700">
+                    {willRejectPendingCount > 0 && <span>✓ <strong>{willRejectPendingCount}</strong> dept{willRejectPendingCount !== 1 ? 's' : ''} will import + pending submissions will be rejected</span>}
+                    {willSkipConflictCount > 0 && <span>⊘ <strong>{willSkipConflictCount}</strong> dept{willSkipConflictCount !== 1 ? 's' : ''} will be skipped (pending submission kept)</span>}
+                  </div>
+                </div>
+              )}
+
 
               <div className="rounded-2xl border border-border/50 overflow-hidden">
                 <div className="overflow-x-auto">
@@ -967,9 +1098,18 @@ const ImportHODModal = ({ onClose, onDone }) => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/10">
-                      {preview.map((row, i) => (
-                        <tr key={i} className={`${row.status === 'ready' ? '' : 'opacity-40'}`}>
-                          <td className="py-2 px-3">{statusBadge(row.status)}</td>
+                      {preview.map((row, i) => {
+                        const isConflict = row.status === 'ready' && !!conflicts[row.deptName];
+                        const choice = isConflict ? (conflictChoices[row.deptName] || 'skip') : null;
+                        return (
+                        <tr key={i} className={`${row.status === 'ready' && !isConflict ? '' : isConflict ? 'bg-orange-50/40' : 'opacity-40'}`}>
+                          <td className="py-2 px-3">
+                            {isConflict ? (
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${choice === 'reject_pending' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-500'}`}>
+                                {choice === 'reject_pending' ? 'IMPORT + REJECT' : 'SKIP — conflict'}
+                              </span>
+                            ) : statusBadge(row.status)}
+                          </td>
                           <td className="py-2 px-3 text-xs font-bold text-foreground">{row.deptName || '—'}</td>
                           <td className="py-2 px-3 text-xs font-mono text-foreground">{row.staffId || '—'}</td>
                           <td className="py-2 px-3 text-xs text-foreground">{[row.surname, row.firstName, row.otherName].filter(Boolean).join(' ') || '—'}</td>
@@ -978,7 +1118,8 @@ const ImportHODModal = ({ onClose, onDone }) => {
                           <td className="py-2 px-3 text-[10px] text-purple-600 max-w-[160px] truncate">{row.normalEmail || '—'}</td>
                           <td className="py-2 px-3 text-[10px] font-mono text-muted-foreground">{row.phone || '—'}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -998,6 +1139,12 @@ const ImportHODModal = ({ onClose, onDone }) => {
                   <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
                     <CheckCircle2 size={14} className="text-blue-600" />
                     <span className="text-sm font-black text-blue-700">{result.notified} notifications sent</span>
+                  </div>
+                )}
+                {result.conflictRejected > 0 && (
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-orange-50 border border-orange-200 rounded-xl">
+                    <AlertTriangle size={14} className="text-orange-600" />
+                    <span className="text-sm font-black text-orange-700">{result.conflictRejected} pending submission{result.conflictRejected !== 1 ? 's' : ''} auto-rejected</span>
                   </div>
                 )}
                 {result.notFound.length > 0 && (
@@ -1072,16 +1219,21 @@ const ImportHODModal = ({ onClose, onDone }) => {
           )}
           {step === 'preview' && (
             <>
-              <p className="text-[10px] text-muted-foreground">Review the rows above, then confirm to apply all updates</p>
+              <p className="text-[10px] text-muted-foreground">
+                {checkingConflicts ? 'Checking for conflicts…' :
+                  conflictNames.length > 0
+                    ? `${willUpdateCount} will update · ${willRejectPendingCount} import+reject · ${willSkipConflictCount} skip`
+                    : 'Review the rows above, then confirm to apply all updates'}
+              </p>
               <div className="flex gap-2">
                 <button onClick={onClose} className="px-4 py-2 rounded-xl border border-border text-xs font-bold text-muted-foreground hover:bg-muted transition-all">Cancel</button>
                 <button
                   onClick={handleImport}
-                  disabled={importing || readyRows.length === 0}
+                  disabled={importing || checkingConflicts || (willUpdateCount === 0 && willRejectPendingCount === 0)}
                   className="flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-widest transition-all disabled:opacity-50 shadow-sm active:scale-95"
                 >
-                  {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                  {importing ? 'Importing…' : `Import ${readyRows.length} Records`}
+                  {importing ? <Loader2 size={13} className="animate-spin" /> : checkingConflicts ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  {importing ? 'Importing…' : checkingConflicts ? 'Checking…' : `Import ${willUpdateCount + willRejectPendingCount} Record${willUpdateCount + willRejectPendingCount !== 1 ? 's' : ''}`}
                 </button>
               </div>
             </>
