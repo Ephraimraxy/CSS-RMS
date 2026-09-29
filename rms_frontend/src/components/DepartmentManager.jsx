@@ -1611,6 +1611,7 @@ const DepartmentManager = ({ onViewChange }) => {
       toast.success('Submission updated.');
       setEditModal(null);
       loadOnboarding(onboardingFilter);
+      loadDepts(); // sync Departments tab if HEAD role/status changed
     } catch { toast.error('Network error.'); }
     finally { setEditSaving(false); }
   };

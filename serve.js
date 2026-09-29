@@ -6258,12 +6258,56 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
     for (const key of allowed) {
       if (req.body[key] !== undefined) data[key] = req.body[key];
     }
-    // If staffId or name changed, regenerate officialEmail
+    // Regenerate officialEmail from name
     const newFirst = data.firstName ?? sub.firstName;
     const newSurname = data.surname ?? sub.surname;
     const cleanEmail = s => (s || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
     data.officialEmail = `${cleanEmail(newFirst)}.${cleanEmail(newSurname)}@cssgroup.com.ng`;
+
     const updated = await prisma.onboardingSubmission.update({ where: { id: req.params.id }, data });
+
+    // Sync the Department table if this edit affects a HEAD assignment
+    if (sub.deptId) {
+      const oldRole   = sub.role;
+      const oldStatus = sub.status;
+      const newRole   = data.role   ?? oldRole;
+      const newStatus = data.status ?? oldStatus;
+      const wasApprovedHead = oldStatus === 'APPROVED' && oldRole   === 'HEAD';
+      const isApprovedHead  = newStatus === 'APPROVED' && newRole   === 'HEAD';
+
+      if (wasApprovedHead && !isApprovedHead) {
+        // HEAD was demoted or un-approved — clear department head fields so the
+        // role appears available again in the onboarding form
+        await prisma.department.update({
+          where: { id: sub.deptId },
+          data: { headName: null, headTitle: null, headEmail: null, phone: null, staffId: null }
+        });
+      } else if (!wasApprovedHead && isApprovedHead) {
+        // Newly made an approved HEAD via edit — stamp the dept head fields
+        await prisma.department.update({
+          where: { id: sub.deptId },
+          data: {
+            headName:  `${newFirst} ${newSurname}`,
+            headTitle: 'Head of Department',
+            headEmail: data.officialEmail,
+            phone:     data.phone  ?? sub.phone  ?? null,
+            staffId:   (data.staffId ?? sub.staffId ?? '')?.toUpperCase() || null,
+          }
+        });
+      } else if (wasApprovedHead && isApprovedHead) {
+        // Still an approved HEAD — keep dept head fields in sync with changed data
+        await prisma.department.update({
+          where: { id: sub.deptId },
+          data: {
+            headName:  `${newFirst} ${newSurname}`,
+            headEmail: data.officialEmail,
+            phone:     data.phone  ?? sub.phone  ?? null,
+            staffId:   (data.staffId ?? sub.staffId ?? '')?.toUpperCase() || null,
+          }
+        });
+      }
+    }
+
     res.json({ success: true, submission: updated });
   } catch (err) { sendError(res, 500, err.message); }
 });
