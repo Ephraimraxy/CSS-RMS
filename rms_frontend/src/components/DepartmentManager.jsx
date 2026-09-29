@@ -1854,6 +1854,7 @@ const DepartmentManager = ({ onViewChange }) => {
       personalEmail: sub.personalEmail || '',
       role: sub.role || 'MEMBER',
       status: sub.status || 'PENDING',
+      deptId: sub.deptId || '',
     });
     setEditModal(sub);
   };
@@ -2236,6 +2237,23 @@ const DepartmentManager = ({ onViewChange }) => {
                     />
                   </div>
                 ))}
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">Department</label>
+                  <select
+                    value={editForm.deptId || ''}
+                    onChange={e => setEditForm(f => ({ ...f, deptId: e.target.value }))}
+                    className="w-full px-4 py-2.5 rounded-xl border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="">— Select Department —</option>
+                    {[...departments]
+                      .filter(d => !d.isSubAccount)
+                      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                      .map(d => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))
+                    }
+                  </select>
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">Role</label>

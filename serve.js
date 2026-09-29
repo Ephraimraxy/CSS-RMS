@@ -6254,11 +6254,21 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
   try {
     const sub = await prisma.onboardingSubmission.findUnique({ where: { id: req.params.id } });
     if (!sub) return res.status(404).json({ error: 'Submission not found.' });
-    const allowed = ['firstName', 'surname', 'middleName', 'staffId', 'phone', 'personalEmail', 'role', 'status'];
+
+    const allowed = ['firstName', 'surname', 'middleName', 'staffId', 'phone', 'personalEmail', 'role', 'status', 'deptId'];
     const data = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) data[key] = req.body[key];
     }
+
+    // If department changed, fetch new dept name and update deptName
+    const deptChanged = data.deptId && data.deptId !== sub.deptId;
+    if (deptChanged) {
+      const newDept = await prisma.department.findUnique({ where: { id: data.deptId } });
+      if (!newDept) return res.status(400).json({ error: 'Selected department not found.' });
+      data.deptName = newDept.name;
+    }
+
     // Regenerate officialEmail from name
     const newFirst = data.firstName ?? sub.firstName;
     const newSurname = data.surname ?? sub.surname;
@@ -6267,46 +6277,37 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
 
     const updated = await prisma.onboardingSubmission.update({ where: { id: req.params.id }, data });
 
-    // Sync the Department table if this edit affects a HEAD assignment
-    if (sub.deptId) {
-      const oldRole   = sub.role;
-      const oldStatus = sub.status;
-      const newRole   = data.role   ?? oldRole;
-      const newStatus = data.status ?? oldStatus;
-      const wasApprovedHead = oldStatus === 'APPROVED' && oldRole   === 'HEAD';
-      const isApprovedHead  = newStatus === 'APPROVED' && newRole   === 'HEAD';
+    // Sync Department head fields based on old/new state
+    const oldDeptId       = sub.deptId;
+    const effectiveDeptId = data.deptId ?? oldDeptId;
+    const oldRole         = sub.role;
+    const oldStatus       = sub.status;
+    const newRole         = data.role   ?? oldRole;
+    const newStatus       = data.status ?? oldStatus;
+    const wasApprovedHead = oldStatus === 'APPROVED' && oldRole   === 'HEAD';
+    const isApprovedHead  = newStatus === 'APPROVED' && newRole   === 'HEAD';
 
-      if (wasApprovedHead && !isApprovedHead) {
-        // HEAD was demoted or un-approved — clear department head fields so the
-        // role appears available again in the onboarding form
-        await prisma.department.update({
-          where: { id: sub.deptId },
-          data: { headName: null, headTitle: null, headEmail: null, phone: null, staffId: null }
-        });
-      } else if (!wasApprovedHead && isApprovedHead) {
-        // Newly made an approved HEAD via edit — stamp the dept head fields
-        await prisma.department.update({
-          where: { id: sub.deptId },
-          data: {
-            headName:  `${newFirst} ${newSurname}`,
-            headTitle: 'Head of Department',
-            headEmail: data.officialEmail,
-            phone:     data.phone  ?? sub.phone  ?? null,
-            staffId:   (data.staffId ?? sub.staffId ?? '')?.toUpperCase() || null,
-          }
-        });
-      } else if (wasApprovedHead && isApprovedHead) {
-        // Still an approved HEAD — keep dept head fields in sync with changed data
-        await prisma.department.update({
-          where: { id: sub.deptId },
-          data: {
-            headName:  `${newFirst} ${newSurname}`,
-            headEmail: data.officialEmail,
-            phone:     data.phone  ?? sub.phone  ?? null,
-            staffId:   (data.staffId ?? sub.staffId ?? '')?.toUpperCase() || null,
-          }
-        });
-      }
+    // Clear old dept head if this submission was the head there and it's being
+    // moved out or demoted
+    if (wasApprovedHead && oldDeptId && (deptChanged || !isApprovedHead)) {
+      await prisma.department.update({
+        where: { id: oldDeptId },
+        data: { headName: null, headTitle: null, headEmail: null, phone: null, staffId: null }
+      });
+    }
+
+    // Stamp (or update) head on the effective department if submission is now an approved HEAD
+    if (isApprovedHead && effectiveDeptId) {
+      await prisma.department.update({
+        where: { id: effectiveDeptId },
+        data: {
+          headName:  `${newFirst} ${newSurname}`,
+          headTitle: 'Head of Department',
+          headEmail: data.officialEmail,
+          phone:     data.phone  ?? sub.phone  ?? null,
+          staffId:   (data.staffId ?? sub.staffId ?? '')?.toUpperCase() || null,
+        }
+      });
     }
 
     res.json({ success: true, submission: updated });
