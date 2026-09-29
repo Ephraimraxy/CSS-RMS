@@ -55,7 +55,7 @@ const WorkflowStage = ({ stage, onUpdate, onDelete, isFirst }) => {
 };
 
 import { getWorkflows, updateWorkflows, getRequisitionTypes, addRequisitionType, deleteRequisitionType } from '../lib/store';
-import { settingsAPI, adminAPI, attendanceCorrectionsAPI, staffDepartmentsAPI } from '../lib/api';
+import { settingsAPI, adminAPI, attendanceCorrectionsAPI, staffDepartmentsAPI, whatsappAPI } from '../lib/api';
 import { useAIFeatures } from '../context/AIFeaturesContext';
 import { toast } from 'react-hot-toast';
 import ConfirmModal from './ConfirmModal';
@@ -127,6 +127,12 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('features');
+
+  // ── WhatsApp state ─────────────────────────────────────────────────────────
+  const [waStatus,      setWaStatus]      = useState('disconnected');
+  const [waQr,          setWaQr]          = useState(null);
+  const [waLoading,     setWaLoading]     = useState(false);
+  const [waActionBusy,  setWaActionBusy]  = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [pendingStage, setPendingStage] = useState(null);
   const [pendingType, setPendingType] = useState(null);
@@ -1149,6 +1155,37 @@ const WorkflowBuilder = ({ onViewChange }) => {
     if (activeTab === 'images') loadMedia();
   }, [activeTab]);
 
+  // ── WhatsApp tab polling ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (activeTab !== 'whatsapp') return;
+    let cancelled = false;
+    const load = async () => {
+      setWaLoading(true);
+      try {
+        const res = await whatsappAPI.status();
+        if (!cancelled) {
+          setWaStatus(res.data.status);
+          setWaQr(res.data.qr || null);
+        }
+      } catch {
+        if (!cancelled) setWaStatus('error');
+      } finally {
+        if (!cancelled) setWaLoading(false);
+      }
+    };
+    load();
+    // Poll every 5s when waiting for QR/connection; slow down once connected
+    const interval = setInterval(() => {
+      whatsappAPI.status().then(res => {
+        if (!cancelled) {
+          setWaStatus(res.data.status);
+          setWaQr(res.data.qr || null);
+        }
+      }).catch(() => {});
+    }, 5000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [activeTab]);
+
   const [isProcessing, setIsProcessing] = useState(false);
 
   const addStage = async () => {
@@ -1246,6 +1283,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
               { id: 'images',    label: 'Images' },
               { id: 'zkteco',     label: 'ZKTeco & Desktop Sync' },
               { id: 'onboarding', label: 'Staff Onboarding SMS' },
+              { id: 'whatsapp',   label: 'WhatsApp' },
               { id: 'bin',        label: 'Deleted Records & Danger Zone' },
             ].map(({ id, label }) => (
               <button
@@ -3524,6 +3562,151 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        ) : activeTab === 'whatsapp' ? (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+            {/* Header */}
+            <div className="glass bg-white/70 rounded-3xl border border-border/50 p-6 shadow-sm">
+              <div className="flex items-center gap-3 mb-1">
+                <div className="w-10 h-10 rounded-2xl bg-green-100 flex items-center justify-center text-xl">💬</div>
+                <div>
+                  <h2 className="text-xl font-bold text-foreground">WhatsApp Notifications</h2>
+                  <p className="text-sm text-muted-foreground">Send approval messages to staff via WhatsApp</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Status card */}
+            <div className="glass bg-white/70 rounded-3xl border border-border/50 p-6 shadow-sm">
+              <h3 className="text-base font-semibold text-foreground mb-4">Connection Status</h3>
+
+              {waLoading ? (
+                <div className="flex items-center gap-3 text-muted-foreground">
+                  <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                  </svg>
+                  Checking status…
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {/* Badge */}
+                  <div className="flex items-center gap-3">
+                    {waStatus === 'connected' && (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-100 text-green-800 text-sm font-semibold">
+                        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse inline-block"/> Connected
+                      </span>
+                    )}
+                    {waStatus === 'qr_ready' && (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-sm font-semibold">
+                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse inline-block"/> Scan QR Code
+                      </span>
+                    )}
+                    {waStatus === 'connecting' && (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-sm font-semibold">
+                        <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse inline-block"/> Connecting…
+                      </span>
+                    )}
+                    {(waStatus === 'disconnected' || waStatus === 'error' || !waStatus) && (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-800 text-sm font-semibold">
+                        <span className="w-2 h-2 rounded-full bg-red-500 inline-block"/> Disconnected
+                      </span>
+                    )}
+                  </div>
+
+                  {/* QR code */}
+                  {waStatus === 'qr_ready' && waQr && (
+                    <div className="flex flex-col items-center gap-3 p-5 bg-white rounded-2xl border border-amber-200 max-w-xs">
+                      <p className="text-sm font-medium text-amber-800 text-center">
+                        Open WhatsApp on your phone → Linked Devices → Link a Device, then scan:
+                      </p>
+                      <img src={waQr} alt="WhatsApp QR" className="w-56 h-56 rounded-xl border border-border"/>
+                      <p className="text-xs text-muted-foreground">QR expires in ~60 seconds. It refreshes automatically.</p>
+                    </div>
+                  )}
+
+                  {waStatus === 'connected' && (
+                    <p className="text-sm text-green-700">
+                      WhatsApp is live. Staff will receive a message automatically when you approve their onboarding.
+                    </p>
+                  )}
+
+                  {(waStatus === 'disconnected' || waStatus === 'error') && (
+                    <p className="text-sm text-muted-foreground">
+                      Click <strong>Connect WhatsApp</strong> below. A QR code will appear — scan it with your phone to link this account.
+                    </p>
+                  )}
+
+                  {/* Action buttons */}
+                  <div className="flex flex-wrap gap-3">
+                    {waStatus !== 'connected' && (
+                      <button
+                        onClick={async () => {
+                          setWaActionBusy(true);
+                          try {
+                            await whatsappAPI.reconnect();
+                            setWaStatus('connecting');
+                          } catch { toast.error('Failed to connect'); }
+                          finally { setWaActionBusy(false); }
+                        }}
+                        disabled={waActionBusy || waStatus === 'connecting'}
+                        className="px-4 py-2 rounded-xl bg-green-600 hover:bg-green-700 text-white text-sm font-semibold disabled:opacity-50 transition-colors"
+                      >
+                        {waActionBusy ? 'Connecting…' : 'Connect WhatsApp'}
+                      </button>
+                    )}
+                    {waStatus === 'connected' && (
+                      <button
+                        onClick={async () => {
+                          setWaActionBusy(true);
+                          try {
+                            await whatsappAPI.disconnect();
+                            setWaStatus('disconnected');
+                            setWaQr(null);
+                            toast.success('WhatsApp disconnected');
+                          } catch { toast.error('Failed to disconnect'); }
+                          finally { setWaActionBusy(false); }
+                        }}
+                        disabled={waActionBusy}
+                        className="px-4 py-2 rounded-xl bg-red-100 hover:bg-red-200 text-red-800 text-sm font-semibold disabled:opacity-50 transition-colors"
+                      >
+                        {waActionBusy ? 'Disconnecting…' : 'Disconnect'}
+                      </button>
+                    )}
+                    <button
+                      onClick={async () => {
+                        setWaLoading(true);
+                        try {
+                          const res = await whatsappAPI.status();
+                          setWaStatus(res.data.status);
+                          setWaQr(res.data.qr || null);
+                        } catch { setWaStatus('error'); }
+                        finally { setWaLoading(false); }
+                      }}
+                      disabled={waLoading}
+                      className="px-4 py-2 rounded-xl bg-muted hover:bg-muted/80 text-foreground text-sm font-semibold disabled:opacity-50 transition-colors"
+                    >
+                      Refresh Status
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Provider info */}
+            <div className="glass bg-white/70 rounded-3xl border border-border/50 p-6 shadow-sm">
+              <h3 className="text-base font-semibold text-foreground mb-3">Provider</h3>
+              <p className="text-sm text-muted-foreground mb-2">
+                Active provider: <span className="font-mono font-semibold text-foreground">{process.env.WHATSAPP_PROVIDER || 'baileys'}</span>
+              </p>
+              <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                <li><strong>baileys</strong> — Scan a QR code with your phone. Works now, no Meta approval needed.</li>
+                <li><strong>meta</strong> — Official Meta Cloud API. Set <code className="font-mono bg-muted px-1 rounded">WHATSAPP_PROVIDER=meta</code> + credentials when ready.</li>
+              </ul>
+              <p className="text-xs text-muted-foreground mt-3">
+                To switch providers, change <code className="font-mono bg-muted px-1 rounded">WHATSAPP_PROVIDER</code> in Railway → Variables, then redeploy.
+              </p>
             </div>
           </div>
         ) : activeTab === 'bin' ? (

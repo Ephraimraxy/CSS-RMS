@@ -655,4 +655,10 @@ export const subAccountAPI = {
   },
 };
 
+export const whatsappAPI = {
+  status:     () => api.get('/admin/whatsapp/status'),
+  reconnect:  () => api.post('/admin/whatsapp/reconnect'),
+  disconnect: () => api.post('/admin/whatsapp/disconnect'),
+};
+
 export default api;

@@ -6122,6 +6122,11 @@ app.post('/api/admin/whatsapp/reconnect', authenticateToken, requireRoles(['glob
   res.json({ status: whatsapp.getStatus() });
 });
 
+app.post('/api/admin/whatsapp/disconnect', authenticateToken, requireRoles(['global_admin']), async (_req, res) => {
+  await whatsapp.disconnect().catch(() => {});
+  res.json({ status: whatsapp.getStatus() });
+});
+
 // ── Admin: approve custom department request, then move submission to PENDING ─
 app.post('/api/admin/onboarding/:id/approve-dept', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
