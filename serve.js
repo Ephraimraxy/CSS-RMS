@@ -5690,6 +5690,7 @@ app.post('/api/public/onboarding', onboardingSubmitLimiter, async (req, res) => 
     // ── Required field validation ──────────────────────────────────────────
     if (!staffId)       return res.status(400).json({ error: 'Staff ID is required.' });
     if (!/^\d+$/.test(staffId)) return res.status(400).json({ error: 'Staff ID must contain numbers only.' });
+    if (staffId.length < 5) return res.status(400).json({ error: 'Staff ID must be at least 5 digits.' });
     if (!surname)       return res.status(400).json({ error: 'Surname is required.' });
     if (!firstName)     return res.status(400).json({ error: 'First name is required.' });
     if (!phone)         return res.status(400).json({ error: 'Phone number is required.' });

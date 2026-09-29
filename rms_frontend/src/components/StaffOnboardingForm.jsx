@@ -206,6 +206,7 @@ export default function StaffOnboardingForm() {
     const e = {};
     if (!form.staffId.trim()) e.staffId = 'Staff ID is required.';
     else if (!/^\d+$/.test(form.staffId.trim())) e.staffId = 'Staff ID must be numbers only (e.g. 12345).';
+    else if (form.staffId.trim().length < 5) e.staffId = 'Staff ID must be at least 5 digits.';
     else if (taken.staffId) e.staffId = 'This Staff ID is already registered. Contact admin if this is an error.';
     if (!form.surname.trim()) e.surname = 'Surname is required.';
     if (!form.firstName.trim()) e.firstName = 'First name is required.';
@@ -433,7 +434,7 @@ export default function StaffOnboardingForm() {
             {/* ── Section 1: Personal Details ── */}
             <Section number="1" title="Personal Details">
               <Field label="Staff ID" required error={errors.staffId}
-                hint={taken.staffId === false ? null : taken.staffId === true ? null : 'Numbers only — e.g. 12345'}
+                hint={taken.staffId === false ? null : taken.staffId === true ? null : 'Numbers only, minimum 5 digits — e.g. 12345'}
                 fieldId="staffId">
                 <input
                   type="text"
