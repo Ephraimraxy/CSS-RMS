@@ -741,18 +741,30 @@ const ImportHODModal = ({ onClose, onDone }) => {
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [notify, setNotify] = useState(false);
   const fileRef = React.useRef(null);
 
+  const TEMPLATE_HEADERS = ['Department Name', 'Category', 'Staff ID', 'Surname', 'First Name', 'Other Name', 'Designation', 'Official Email', 'Contact Phone', 'Email'];
+
   const EXPECTED_COLS = {
-    deptName:   ['department name', 'department', 'dept', 'unit name'],
-    type:       ['category', 'type'],
-    staffId:    ['staff id', 'staffid', 'id'],
-    surname:    ['surname', 'last name', 'lastname'],
-    firstName:  ['first name', 'firstname'],
-    otherName:  ['other name', 'othername', 'middle name'],
-    headTitle:  ['designation', 'title', 'position'],
-    headEmail:  ['official email', 'email'],
-    phone:      ['contact phone', 'phone', 'mobile'],
+    deptName:    ['department name', 'department', 'dept', 'unit name'],
+    type:        ['category', 'type'],
+    staffId:     ['staff id', 'staffid', 'id'],
+    surname:     ['surname', 'last name', 'lastname'],
+    firstName:   ['first name', 'firstname'],
+    otherName:   ['other name', 'othername', 'middle name'],
+    headTitle:   ['designation', 'title', 'position'],
+    headEmail:   ['official email'],
+    phone:       ['contact phone', 'phone', 'mobile'],
+    normalEmail: ['email'],
+  };
+
+  const downloadTemplate = () => {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS]);
+    ws['!cols'] = TEMPLATE_HEADERS.map(() => ({ wch: 22 }));
+    XLSX.utils.book_append_sheet(wb, ws, 'HOD Template');
+    XLSX.writeFile(wb, 'HOD_Import_Template.xlsx');
   };
 
   const parseFile = async (file) => {
@@ -784,13 +796,14 @@ const ImportHODModal = ({ onClose, onDone }) => {
         const headEmail = get('headEmail');
         const phone    = get('phone');
         const type     = get('type');
+        const normalEmail = get('normalEmail');
         const hasData  = staffId || surname || firstName || headEmail || phone || headTitle;
         const isProtected = /^super\s*admin$/i.test(deptName);
         let status = 'ready';
         if (!deptName)    status = 'skip-empty';
         else if (isProtected) status = 'skip-protected';
         else if (!hasData)    status = 'skip-nodata';
-        return { _ri: ri, deptName, staffId, surname, firstName, otherName, headTitle, headEmail, phone, type, status };
+        return { _ri: ri, deptName, staffId, surname, firstName, otherName, headTitle, headEmail, phone, type, normalEmail, status };
       }).filter(r => r.deptName || r.status === 'skip-empty');
 
       setPreview(rows);
@@ -813,7 +826,7 @@ const ImportHODModal = ({ onClose, onDone }) => {
       const res = await fetch('/api/admin/departments/import-hods', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: readyRows })
+        body: JSON.stringify({ rows: readyRows, notify })
       });
       const d = await res.json();
       if (!res.ok) { toast.error(d.error || 'Import failed.'); return; }
@@ -873,7 +886,16 @@ const ImportHODModal = ({ onClose, onDone }) => {
               </div>
 
               <div className="w-full max-w-lg space-y-3 text-[11px] text-muted-foreground">
-                <p className="font-black text-[9px] uppercase tracking-widest text-foreground/50">Expected column headers (any order):</p>
+                <div className="flex items-center justify-between">
+                  <p className="font-black text-[9px] uppercase tracking-widest text-foreground/50">Expected column headers (any order):</p>
+                  <button
+                    onClick={downloadTemplate}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase tracking-widest transition-all shadow-sm active:scale-95"
+                  >
+                    <FileSpreadsheet size={11} />
+                    Download Template
+                  </button>
+                </div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {[
                     ['Department Name', 'required — matches the department'],
@@ -883,8 +905,9 @@ const ImportHODModal = ({ onClose, onDone }) => {
                     ['First Name', 'head\'s first name'],
                     ['Other Name', 'optional'],
                     ['Designation', 'job title / position'],
-                    ['Official Email', 'head\'s email address'],
+                    ['Official Email', 'head\'s official/company email'],
                     ['Contact Phone', 'phone number'],
+                    ['Email', 'personal email (for unactivated accounts)'],
                   ].map(([col, desc]) => (
                     <div key={col} className="flex items-start gap-1.5 p-2 rounded-xl bg-muted/30">
                       <span className="font-bold text-foreground">{col}</span>
@@ -892,7 +915,14 @@ const ImportHODModal = ({ onClose, onDone }) => {
                     </div>
                   ))}
                 </div>
-                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl mt-2">
+                <label className="flex items-center gap-2.5 p-3 rounded-xl border border-border bg-muted/20 cursor-pointer hover:bg-muted/40 transition-all">
+                  <input type="checkbox" checked={notify} onChange={e => setNotify(e.target.checked)} className="w-4 h-4 rounded accent-blue-600" />
+                  <div>
+                    <p className="font-bold text-foreground text-[11px]">Send notifications to all HODs after import</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Email (official + personal) and SMS will be sent to each updated record</p>
+                  </div>
+                </label>
+                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
                   <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
                   <p className="text-[11px] text-amber-700 font-medium">
                     <strong>Super Admin</strong> rows are automatically protected and will never be modified, even if present in the file. Rows with no head data (no name, staff ID, or email) are also skipped automatically.
@@ -932,6 +962,7 @@ const ImportHODModal = ({ onClose, onDone }) => {
                         <th className="py-2.5 px-3">Name</th>
                         <th className="py-2.5 px-3">Designation</th>
                         <th className="py-2.5 px-3">Official Email</th>
+                        <th className="py-2.5 px-3">Personal Email</th>
                         <th className="py-2.5 px-3">Phone</th>
                       </tr>
                     </thead>
@@ -943,7 +974,8 @@ const ImportHODModal = ({ onClose, onDone }) => {
                           <td className="py-2 px-3 text-xs font-mono text-foreground">{row.staffId || '—'}</td>
                           <td className="py-2 px-3 text-xs text-foreground">{[row.surname, row.firstName, row.otherName].filter(Boolean).join(' ') || '—'}</td>
                           <td className="py-2 px-3 text-[10px] text-muted-foreground max-w-[150px] truncate">{row.headTitle || '—'}</td>
-                          <td className="py-2 px-3 text-[10px] text-blue-600 max-w-[180px] truncate">{row.headEmail || '—'}</td>
+                          <td className="py-2 px-3 text-[10px] text-blue-600 max-w-[160px] truncate">{row.headEmail || '—'}</td>
+                          <td className="py-2 px-3 text-[10px] text-purple-600 max-w-[160px] truncate">{row.normalEmail || '—'}</td>
                           <td className="py-2 px-3 text-[10px] font-mono text-muted-foreground">{row.phone || '—'}</td>
                         </tr>
                       ))}
@@ -962,6 +994,12 @@ const ImportHODModal = ({ onClose, onDone }) => {
                   <CheckCircle2 size={14} className="text-emerald-600" />
                   <span className="text-sm font-black text-emerald-700">{result.updated.length} departments updated</span>
                 </div>
+                {result.notified > 0 && (
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
+                    <CheckCircle2 size={14} className="text-blue-600" />
+                    <span className="text-sm font-black text-blue-700">{result.notified} notifications sent</span>
+                  </div>
+                )}
                 {result.notFound.length > 0 && (
                   <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
                     <AlertTriangle size={14} className="text-amber-600" />
