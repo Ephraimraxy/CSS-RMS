@@ -357,6 +357,7 @@ const ExportModal = ({ departments, onClose }) => {
 
   const [format, setFormat] = useState('excel');
   const [includeSubAccounts, setIncludeSubAccounts] = useState(false);
+  const [excludeEmpty, setExcludeEmpty] = useState(false);
   const [colVisible, setColVisible] = useState(() =>
     Object.fromEntries(EXPORT_COLUMNS.map(c => [c.key, c.defaultOn]))
   );
@@ -364,6 +365,8 @@ const ExportModal = ({ departments, onClose }) => {
   const [deptSearch, setDeptSearch] = useState('');
   const [deptListOpen, setDeptListOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+
+  const hasRecords = (d) => !!(d.headName?.trim() || d.staffId?.trim() || d.headEmail?.trim());
 
   const toggleCol = (key) => setColVisible(v => ({ ...v, [key]: !v[key] }));
   const toggleDept = (id) => setSelectedDepts(prev => {
@@ -373,13 +376,14 @@ const ExportModal = ({ departments, onClose }) => {
   });
   const selectAllDepts = () => setSelectedDepts(new Set(mainDepts.map(d => d.id)));
   const clearAllDepts = () => setSelectedDepts(new Set());
+  const selectWithRecords = () => setSelectedDepts(new Set(mainDepts.filter(hasRecords).map(d => d.id)));
 
   const visibleCols = EXPORT_COLUMNS.filter(c => colVisible[c.key]);
 
   // Build the rows to export
   const buildRows = () => {
     const rows = [];
-    const chosen = mainDepts.filter(d => selectedDepts.has(d.id));
+    const chosen = mainDepts.filter(d => selectedDepts.has(d.id) && (!excludeEmpty || hasRecords(d)));
     const allRaw = includeSubAccounts
       ? departments
       : departments.filter(d => !d.isSubAccount);
@@ -442,62 +446,92 @@ const ExportModal = ({ departments, onClose }) => {
         XLSX.writeFile(wb, `Dept_HOD_Export_${new Date().toISOString().slice(0,10)}.xlsx`);
         toast.success('Excel file downloaded.');
       } else {
-        // PDF — landscape for wide tables, portrait if few columns
-        const orientation = visibleCols.length > 6 ? 'landscape' : 'portrait';
-        const doc = new jsPDF({ orientation, unit: 'mm', format: 'a4' });
-        const pageW = doc.internal.pageSize.getWidth();
-        const pageH = doc.internal.pageSize.getHeight();
-        const margin = 12;
-        const colCount = headers.length;
-        const colW = Math.floor((pageW - margin * 2) / colCount);
+        // PDF — always landscape for best fit
+        const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+        const pageW = doc.internal.pageSize.getWidth(); // 297mm
+        const pageH = doc.internal.pageSize.getHeight(); // 210mm
+        const margin = 10;
+        const usable = pageW - margin * 2; // 277mm
+        const FONT_SIZE = 6.5;
+        const LINE_H = 3.8; // mm per text line at 6.5pt
+        const CELL_PAD_V = 2.5; // top+bottom padding per cell
+        const HEADER_H = 8;
 
-        // Title
-        doc.setFontSize(13);
+        // Weighted column widths — proportional to expected content
+        const COL_WEIGHTS = {
+          name: 5, type: 3, staffId: 3, surname: 4, firstName: 4,
+          otherName: 4, headTitle: 5, headEmail: 7, phone: 4,
+          accessCode: 3, parentName: 4,
+        };
+        const totalWeight = visibleCols.reduce((s, c) => s + (COL_WEIGHTS[c.key] || 3), 0);
+        const colWidths = visibleCols.map(c => Math.floor(usable * (COL_WEIGHTS[c.key] || 3) / totalWeight));
+        // Distribute any rounding remainder to last column
+        const widthSum = colWidths.reduce((a, b) => a + b, 0);
+        colWidths[colWidths.length - 1] += usable - widthSum;
+
+        // X positions
+        const colX = colWidths.reduce((acc, w, i) => {
+          acc.push(i === 0 ? margin : acc[i - 1] + colWidths[i - 1]);
+          return acc;
+        }, []);
+
+        doc.setFontSize(12);
         doc.setFont(undefined, 'bold');
-        doc.text('Enrolled Heads of Department', margin, 14);
+        doc.text('Enrolled Heads of Department', margin, 12);
         doc.setFontSize(8);
         doc.setFont(undefined, 'normal');
-        doc.text(`Generated: ${new Date().toLocaleString()}   ·   ${rows.length} record(s)`, margin, 20);
+        doc.text(`Generated: ${new Date().toLocaleString()}  ·  ${rows.length} record(s)${excludeEmpty ? '  ·  Empty depts excluded' : ''}`, margin, 18);
 
-        // Table header
-        let y = 27;
-        const rowH = 7;
-        const headerH = 8;
+        let y = 24;
 
         const drawHeader = () => {
           doc.setFillColor(30, 92, 30);
-          doc.rect(margin, y, pageW - margin * 2, headerH, 'F');
+          doc.rect(margin, y, usable, HEADER_H, 'F');
           doc.setTextColor(255, 255, 255);
-          doc.setFontSize(7);
+          doc.setFontSize(FONT_SIZE - 0.5);
           doc.setFont(undefined, 'bold');
           headers.forEach((h, i) => {
-            doc.text(h.toUpperCase(), margin + i * colW + 2, y + 5.5, { maxWidth: colW - 3 });
+            doc.text(h.toUpperCase(), colX[i] + 1.5, y + 5.2, { maxWidth: colWidths[i] - 3 });
           });
           doc.setTextColor(0, 0, 0);
           doc.setFont(undefined, 'normal');
-          y += headerH;
+          y += HEADER_H;
         };
         drawHeader();
 
-        // Rows
         data.forEach((row, ri) => {
-          if (y + rowH > pageH - margin) {
+          // Pre-split each cell and find the tallest cell in this row
+          doc.setFontSize(FONT_SIZE);
+          const splitCells = row.map((cell, i) =>
+            doc.splitTextToSize(String(cell || '—'), colWidths[i] - 3)
+          );
+          const maxLines = Math.max(...splitCells.map(lines => lines.length));
+          const dynH = Math.max(6, maxLines * LINE_H + CELL_PAD_V * 2);
+
+          if (y + dynH > pageH - margin) {
             doc.addPage();
             y = margin;
             drawHeader();
           }
+
+          // Row background
           if (ri % 2 === 0) {
-            doc.setFillColor(245, 247, 245);
-            doc.rect(margin, y, pageW - margin * 2, rowH, 'F');
+            doc.setFillColor(245, 248, 245);
+            doc.rect(margin, y, usable, dynH, 'F');
           }
-          doc.setFontSize(7);
-          row.forEach((cell, i) => {
-            doc.text(String(cell || ''), margin + i * colW + 2, y + 5, { maxWidth: colW - 3 });
+
+          // Cell text
+          doc.setFontSize(FONT_SIZE);
+          splitCells.forEach((lines, i) => {
+            doc.text(lines, colX[i] + 1.5, y + CELL_PAD_V + LINE_H * 0.8);
           });
-          // Light separator
-          doc.setDrawColor(220, 220, 220);
-          doc.line(margin, y + rowH, pageW - margin, y + rowH);
-          y += rowH;
+
+          // Bottom border
+          doc.setDrawColor(220, 225, 220);
+          doc.setLineWidth(0.1);
+          doc.line(margin, y + dynH, margin + usable, y + dynH);
+
+          y += dynH;
         });
 
         doc.save(`Dept_HOD_Export_${new Date().toISOString().slice(0,10)}.pdf`);
@@ -556,20 +590,27 @@ const ExportModal = ({ departments, onClose }) => {
             </div>
           </div>
 
-          {/* Sub-accounts toggle */}
-          <label className="flex items-center gap-3 p-3.5 rounded-xl border border-border/50 cursor-pointer hover:border-primary/30 transition-all">
-            <input
-              type="checkbox"
-              checked={includeSubAccounts}
-              onChange={e => setIncludeSubAccounts(e.target.checked)}
-              className="w-4 h-4 accent-primary rounded"
-            />
-            <div className="flex-1">
-              <p className="text-xs font-bold text-foreground">Include Sub-Accounts</p>
-              <p className="text-[10px] text-muted-foreground">Sub-accounts will appear indented beneath their parent department</p>
-            </div>
-            <span className="text-[9px] font-black text-muted-foreground/50 bg-muted px-2 py-0.5 rounded-full">{subAccounts.length} sub-accounts</span>
-          </label>
+          {/* Sub-accounts + empty toggles */}
+          <div className="space-y-2">
+            <label className="flex items-center gap-3 p-3.5 rounded-xl border border-border/50 cursor-pointer hover:border-primary/30 transition-all">
+              <input type="checkbox" checked={includeSubAccounts} onChange={e => setIncludeSubAccounts(e.target.checked)} className="w-4 h-4 accent-primary rounded" />
+              <div className="flex-1">
+                <p className="text-xs font-bold text-foreground">Include Sub-Accounts</p>
+                <p className="text-[10px] text-muted-foreground">Sub-accounts will appear indented beneath their parent department</p>
+              </div>
+              <span className="text-[9px] font-black text-muted-foreground/50 bg-muted px-2 py-0.5 rounded-full">{subAccounts.length} sub-accounts</span>
+            </label>
+            <label className="flex items-center gap-3 p-3.5 rounded-xl border border-border/50 cursor-pointer hover:border-amber-300 transition-all">
+              <input type="checkbox" checked={excludeEmpty} onChange={e => setExcludeEmpty(e.target.checked)} className="w-4 h-4 accent-amber-500 rounded" />
+              <div className="flex-1">
+                <p className="text-xs font-bold text-foreground">Exclude departments with no records</p>
+                <p className="text-[10px] text-muted-foreground">Skip departments that have no head assigned (no name, staff ID, or email)</p>
+              </div>
+              <span className="text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                {mainDepts.filter(d => !hasRecords(d)).length} empty
+              </span>
+            </label>
+          </div>
 
           {/* Column visibility */}
           <div className="space-y-2">
@@ -597,6 +638,8 @@ const ExportModal = ({ departments, onClose }) => {
               <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Departments to Include</p>
               <div className="flex items-center gap-2">
                 <button onClick={selectAllDepts} className="text-[9px] font-black text-primary hover:underline uppercase tracking-widest">All</button>
+                <span className="text-muted-foreground/40">·</span>
+                <button onClick={selectWithRecords} className="text-[9px] font-black text-amber-600 hover:underline uppercase tracking-widest">With Records</button>
                 <span className="text-muted-foreground/40">·</span>
                 <button onClick={clearAllDepts} className="text-[9px] font-black text-muted-foreground hover:text-destructive hover:underline uppercase tracking-widest">None</button>
               </div>
@@ -666,7 +709,12 @@ const ExportModal = ({ departments, onClose }) => {
         {/* Footer */}
         <div className="px-6 py-4 border-t border-border/20 bg-muted/10 shrink-0 flex items-center justify-between gap-3">
           <p className="text-[10px] text-muted-foreground font-medium">
-            {selectedDepts.size === 0 ? 'Select departments above' : `${(() => { let n = selectedDepts.size; if (includeSubAccounts) { mainDepts.filter(d => selectedDepts.has(d.id)).forEach(d => { n += subAccounts.filter(s => s.parentId === d.id).length; }); } return n; })()} rows · ${visibleCols.length} columns · ${format.toUpperCase()}`}
+            {selectedDepts.size === 0 ? 'Select departments above' : `${(() => {
+            let depts = mainDepts.filter(d => selectedDepts.has(d.id) && (!excludeEmpty || hasRecords(d)));
+            let n = depts.length;
+            if (includeSubAccounts) depts.forEach(d => { n += subAccounts.filter(s => s.parentId === d.id).length; });
+            return n;
+          })()} rows · ${visibleCols.length} columns · ${format.toUpperCase()}`}
           </p>
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="px-4 py-2 rounded-xl border border-border/50 text-xs font-bold text-muted-foreground hover:bg-muted transition-all">Cancel</button>
