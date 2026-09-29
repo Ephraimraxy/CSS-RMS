@@ -1655,11 +1655,14 @@ const DepartmentManager = ({ onViewChange }) => {
     } finally { setResendingDeptId(null); }
   };
 
+  // ── Onboarding / tab state ────────────────────────────────────────────────
+  const [activeTab, setActiveTab]               = useState('departments');
+
   // ── Help Desk state ───────────────────────────────────────────────────────
   const [hdMessages, setHdMessages]             = useState([]);
   const [hdLoading, setHdLoading]               = useState(false);
   const [hdUnread, setHdUnread]                 = useState(0);
-  const [hdExpanded, setHdExpanded]             = useState(null); // id of expanded message
+  const [hdExpanded, setHdExpanded]             = useState(null);
   const [hdReplyText, setHdReplyText]           = useState('');
   const [hdReplying, setHdReplying]             = useState(false);
 
@@ -1694,7 +1697,6 @@ const DepartmentManager = ({ onViewChange }) => {
     return () => clearInterval(iv);
   }, [activeTab, loadHelpDesk, loadHdUnreadCount]);
 
-  // Poll unread count on other tabs
   useEffect(() => {
     if (activeTab === 'helpdesk') return;
     const iv = setInterval(loadHdUnreadCount, 30_000);
@@ -1734,9 +1736,6 @@ const DepartmentManager = ({ onViewChange }) => {
     } catch { toast.error('Network error.'); }
     finally { setHdReplying(false); }
   };
-
-  // ── Onboarding review state ────────────────────────────────────────────────
-  const [activeTab, setActiveTab]               = useState('departments');
   const [onboardingSubs, setOnboardingSubs]     = useState([]);
   const [onboardingLoading, setOnboardingLoading] = useState(false);
   const [onboardingFilter, setOnboardingFilter] = useState('PENDING');
