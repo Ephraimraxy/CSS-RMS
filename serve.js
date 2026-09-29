@@ -5780,7 +5780,13 @@ app.post('/api/public/onboarding', onboardingSubmitLimiter, async (req, res) => 
       sendEmail({ to: adminEmail, subject: adminSubject, text: aText, html: aHtml }).catch(() => {});
     }
 
-    res.json({ success: true, refId: sub.id.slice(0, 8).toUpperCase(), officialEmail });
+    res.json({
+      success:         true,
+      refId:           sub.id.slice(0, 8).toUpperCase(),
+      officialEmail,
+      webmailUrl:      process.env.COMPANY_WEBMAIL_URL      || null,
+      webmailPassword: process.env.COMPANY_WEBMAIL_DEFAULT_PASSWORD || null,
+    });
   } catch (err) {
     if (err.code === 'P2002') {
       const field = err.meta?.target?.[0] || 'field';

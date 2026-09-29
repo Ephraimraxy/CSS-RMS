@@ -216,7 +216,12 @@ export default function StaffOnboardingForm() {
         else setServerError(data.error || 'Submission failed. Please try again.');
         return;
       }
-      setSuccess({ refId: data.refId, officialEmail: data.officialEmail });
+      setSuccess({
+        refId:           data.refId,
+        officialEmail:   data.officialEmail,
+        webmailUrl:      data.webmailUrl      || null,
+        webmailPassword: data.webmailPassword || null,
+      });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch {
       setServerError('Network error. Please check your connection and try again.');
@@ -225,36 +230,119 @@ export default function StaffOnboardingForm() {
 
   // ── Success Screen ──────────────────────────────────────────────────────
   if (success) {
+    const step = (n, color, title, children) => (
+      <div style={{ display:'flex', gap:12, alignItems:'flex-start' }}>
+        <div style={{ flexShrink:0, width:28, height:28, borderRadius:'50%', background:color, display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:900, color:'#fff', marginTop:1 }}>{n}</div>
+        <div style={{ flex:1 }}>
+          <p style={{ margin:'0 0 3px', fontSize:12, fontWeight:900, textTransform:'uppercase', letterSpacing:'0.12em', color:color }}>{title}</p>
+          {children}
+        </div>
+      </div>
+    );
     return (
       <>
         <style>{GLOBAL_CSS}</style>
-        {/* Same internal-scroll pattern as the form — bypasses body scroll entirely */}
-        <div style={{ height:'100dvh', overflowY:'auto', WebkitOverflowScrolling:'touch', background:'linear-gradient(135deg,#052e16 0%,#14532d 40%,#166534 100%)', display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'24px 16px 60px', fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', boxSizing:'border-box' }}>
-          <div style={{ width:'100%', maxWidth:480, background:'#fff', borderRadius:24, overflow:'hidden', boxShadow:'0 32px 80px rgba(0,0,0,0.45)', marginTop:16 }}>
-            <div style={{ background:'linear-gradient(135deg,#15803d,#14532d)', padding:'32px 24px', textAlign:'center' }}>
-              <img src="/CSS_Group.png" alt="CSS Group" style={{ height:40, objectFit:'contain', marginBottom:16, opacity:0.95 }} />
+        <div style={{ height:'100dvh', overflowY:'auto', WebkitOverflowScrolling:'touch', background:'linear-gradient(135deg,#052e16 0%,#14532d 40%,#166534 100%)', fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', boxSizing:'border-box' }}>
+          <div style={{ maxWidth:520, margin:'0 auto', padding:'28px 16px 60px', boxSizing:'border-box' }}>
+
+            {/* ── Hero ── */}
+            <div style={{ background:'linear-gradient(135deg,#15803d,#14532d)', borderRadius:'20px 20px 0 0', padding:'32px 24px 24px', textAlign:'center' }}>
+              <img src="/CSS_Group.png" alt="CSS Group" style={{ height:38, objectFit:'contain', marginBottom:18, opacity:0.95 }} />
               <div style={{ width:64, height:64, borderRadius:'50%', background:'rgba(255,255,255,0.15)', border:'3px solid rgba(255,255,255,0.4)', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 14px' }}>
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><path d="M20 6L9 17l-5-5"/></svg>
               </div>
-              <h2 style={{ margin:0, fontSize:22, fontWeight:900, color:'#fff', letterSpacing:'-0.02em' }}>Submission Received!</h2>
-              <p style={{ margin:'6px 0 0', fontSize:14, color:'rgba(255,255,255,0.7)', fontWeight:500 }}>Your application is under review</p>
+              <h2 style={{ margin:'0 0 6px', fontSize:22, fontWeight:900, color:'#fff', letterSpacing:'-0.02em' }}>Submission Received!</h2>
+              <p style={{ margin:0, fontSize:14, color:'rgba(255,255,255,0.7)', fontWeight:500 }}>Thank you — your application is under review</p>
             </div>
-            <div style={{ padding:'24px 20px', display:'flex', flexDirection:'column', gap:16 }}>
-              <div style={{ background:'#f0fdf4', border:'2px solid #86efac', borderRadius:14, padding:'16px' }}>
+
+            {/* ── Body ── */}
+            <div style={{ background:'#fff', borderRadius:'0 0 20px 20px', padding:'24px 20px', display:'flex', flexDirection:'column', gap:16, boxShadow:'0 24px 60px rgba(0,0,0,0.4)' }}>
+
+              {/* Ref number */}
+              <div style={{ background:'#f0fdf4', border:'2px solid #86efac', borderRadius:14, padding:'14px 16px' }}>
                 <p style={{ margin:'0 0 4px', fontSize:11, fontWeight:900, textTransform:'uppercase', letterSpacing:'0.15em', color:'#15803d' }}>Reference Number</p>
-                <p style={{ margin:0, fontSize:24, fontWeight:900, color:'#14532d', letterSpacing:'0.1em', fontFamily:'monospace', wordBreak:'break-all' }}>{success.refId}</p>
+                <p style={{ margin:0, fontSize:22, fontWeight:900, color:'#14532d', letterSpacing:'0.12em', fontFamily:'monospace', wordBreak:'break-all' }}>{success.refId}</p>
+                <p style={{ margin:'4px 0 0', fontSize:12, color:'#4ade80', fontWeight:600 }}>Keep this for your records</p>
               </div>
-              <div style={{ background:'#eff6ff', border:'2px solid #bfdbfe', borderRadius:14, padding:'16px' }}>
-                <p style={{ margin:'0 0 4px', fontSize:11, fontWeight:900, textTransform:'uppercase', letterSpacing:'0.15em', color:'#1d4ed8' }}>Your Official CSS Group Email</p>
-                <p style={{ margin:'0 0 4px', fontSize:15, fontWeight:900, color:'#1e40af', wordBreak:'break-all' }}>{success.officialEmail}</p>
-                <p style={{ margin:0, fontSize:12, color:'#3b82f6', fontWeight:500 }}>This will be your company email once your account is activated.</p>
-              </div>
-              <div style={{ background:'#fffbeb', border:'2px solid #fcd34d', borderRadius:14, padding:'16px' }}>
-                <p style={{ margin:'0 0 6px', fontSize:11, fontWeight:900, textTransform:'uppercase', letterSpacing:'0.15em', color:'#b45309' }}>What Happens Next</p>
-                <p style={{ margin:0, fontSize:13, color:'#78350f', fontWeight:600, lineHeight:1.6 }}>
-                  The administrator will review your submission. Once approved, your <strong>RMS portal access code and login instructions</strong> will be sent to your personal email and phone.
+
+              {/* Company email */}
+              <div style={{ background:'#eff6ff', border:'2px solid #bfdbfe', borderRadius:14, padding:'14px 16px' }}>
+                <p style={{ margin:'0 0 4px', fontSize:11, fontWeight:900, textTransform:'uppercase', letterSpacing:'0.15em', color:'#1d4ed8' }}>Your CSS Group Company Email</p>
+                <p style={{ margin:'0 0 6px', fontSize:16, fontWeight:900, color:'#1e40af', wordBreak:'break-all', fontFamily:'monospace' }}>{success.officialEmail}</p>
+                <p style={{ margin:0, fontSize:12, color:'#3b82f6', fontWeight:600, lineHeight:1.5 }}>
+                  The system has automatically generated this company email address for you based on your name. It will be activated once your account is approved.
                 </p>
               </div>
+
+              {/* Webmail guide — only shown if env vars are set */}
+              {success.webmailUrl && (
+                <div style={{ background:'#faf5ff', border:'2px solid #d8b4fe', borderRadius:14, padding:'14px 16px' }}>
+                  <p style={{ margin:'0 0 10px', fontSize:11, fontWeight:900, textTransform:'uppercase', letterSpacing:'0.15em', color:'#7c3aed' }}>📬 Company Webmail Access Guide</p>
+                  <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                    {step(1, '#7c3aed', 'Go to the Company Webmail',
+                      <p style={{ margin:0, fontSize:13, color:'#581c87', fontWeight:600, lineHeight:1.5 }}>
+                        Open your browser and visit:<br/>
+                        <span style={{ fontFamily:'monospace', fontSize:13, background:'#ede9fe', padding:'2px 6px', borderRadius:5, wordBreak:'break-all' }}>{success.webmailUrl}</span>
+                      </p>
+                    )}
+                    {step(2, '#7c3aed', 'Login with your company email',
+                      <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                        <p style={{ margin:0, fontSize:13, color:'#581c87', fontWeight:600 }}>
+                          <strong>Email / Username:</strong><br/>
+                          <span style={{ fontFamily:'monospace', fontSize:13, background:'#ede9fe', padding:'2px 6px', borderRadius:5, wordBreak:'break-all' }}>{success.officialEmail}</span>
+                        </p>
+                        {success.webmailPassword && (
+                          <p style={{ margin:0, fontSize:13, color:'#581c87', fontWeight:600 }}>
+                            <strong>Default Password:</strong><br/>
+                            <span style={{ fontFamily:'monospace', fontSize:13, background:'#ede9fe', padding:'2px 6px', borderRadius:5, letterSpacing:'0.05em' }}>{success.webmailPassword}</span>
+                          </p>
+                        )}
+                        <p style={{ margin:'4px 0 0', fontSize:11, color:'#7c3aed', fontWeight:700 }}>⚠️ Change your password immediately after first login.</p>
+                      </div>
+                    )}
+                    {step(3, '#7c3aed', 'Use it to receive company communications',
+                      <p style={{ margin:0, fontSize:13, color:'#581c87', fontWeight:600, lineHeight:1.5 }}>
+                        Your company inbox will receive requisition updates, approvals, and official CSS Group notifications. Check it regularly.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* What happens next */}
+              <div style={{ background:'#fffbeb', border:'2px solid #fcd34d', borderRadius:14, padding:'14px 16px' }}>
+                <p style={{ margin:'0 0 10px', fontSize:11, fontWeight:900, textTransform:'uppercase', letterSpacing:'0.15em', color:'#b45309' }}>⏳ What Happens Next</p>
+                <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                  {step(1, '#d97706', 'Admin reviews your submission',
+                    <p style={{ margin:0, fontSize:13, color:'#78350f', fontWeight:600, lineHeight:1.5 }}>
+                      The administrator will verify your details and approve or reject your request.
+                    </p>
+                  )}
+                  {step(2, '#d97706', 'You receive your access details',
+                    <p style={{ margin:0, fontSize:13, color:'#78350f', fontWeight:600, lineHeight:1.5 }}>
+                      Once approved, your <strong>RMS access code</strong>, Staff ID, and full login instructions will be delivered to you via:
+                    </p>
+                  )}
+                  <div style={{ marginLeft:40, display:'flex', flexDirection:'column', gap:5 }}>
+                    {[
+                      { icon:'✉️', label:'Your personal email address' },
+                      { icon:'🏢', label:'Your new company email inbox' },
+                      { icon:'📱', label:'SMS to your registered phone number' },
+                    ].map(({ icon, label }) => (
+                      <div key={label} style={{ display:'flex', alignItems:'center', gap:8, background:'rgba(217,119,6,0.08)', borderRadius:8, padding:'7px 10px' }}>
+                        <span style={{ fontSize:16 }}>{icon}</span>
+                        <span style={{ fontSize:13, fontWeight:700, color:'#78350f' }}>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {step(3, '#d97706', 'Login to the RMS portal',
+                    <p style={{ margin:0, fontSize:13, color:'#78350f', fontWeight:600, lineHeight:1.5 }}>
+                      Use your Staff ID and the access code you receive to log in at <span style={{ fontFamily:'monospace', background:'#fef3c7', padding:'1px 5px', borderRadius:4 }}>cssgrouprms.com</span>.
+                    </p>
+                  )}
+                </div>
+              </div>
+
               <p style={{ margin:0, textAlign:'center', fontSize:12, color:'#9ca3af', fontWeight:600 }}>CSS Group of Companies · RMS Portal</p>
             </div>
           </div>
