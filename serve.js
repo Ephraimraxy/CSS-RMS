@@ -6255,15 +6255,25 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
     const sub = await prisma.onboardingSubmission.findUnique({ where: { id: req.params.id } });
     if (!sub) return res.status(404).json({ error: 'Submission not found.' });
 
-    const allowed = ['firstName', 'surname', 'middleName', 'staffId', 'phone', 'personalEmail', 'role', 'status', 'deptId'];
+    const allowed = ['firstName', 'surname', 'middleName', 'staffId', 'phone', 'personalEmail', 'role', 'status'];
     const data = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) data[key] = req.body[key];
     }
 
+    // deptId is an Int in Prisma — parse and validate separately
+    let newDeptId = undefined;
+    if (req.body.deptId !== undefined && req.body.deptId !== '' && req.body.deptId !== null) {
+      newDeptId = parseInt(req.body.deptId, 10);
+      if (isNaN(newDeptId)) return res.status(400).json({ error: 'Invalid department ID.' });
+      data.deptId = newDeptId;
+    } else if (req.body.deptId === '' || req.body.deptId === null) {
+      data.deptId = null; // allow clearing
+    }
+
     // If department changed, fetch new dept name and update deptName
-    const deptChanged = data.deptId && data.deptId !== sub.deptId;
-    if (deptChanged) {
+    const deptChanged = data.deptId !== undefined && data.deptId !== sub.deptId;
+    if (deptChanged && data.deptId) {
       const newDept = await prisma.department.findUnique({ where: { id: data.deptId } });
       if (!newDept) return res.status(400).json({ error: 'Selected department not found.' });
       data.deptName = newDept.name;
@@ -12777,6 +12787,122 @@ app.use(express.static(distPath, {
   }
 }));
 
+// ── Help Desk ─────────────────────────────────────────────────────────────────
+// Self-healing: create the table if it doesn't exist yet.
+async function ensureHelpDeskTable() {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "HelpDesk" (
+      "id"           TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+      "deptId"       TEXT        NOT NULL,
+      "deptName"     TEXT        NOT NULL DEFAULT '',
+      "senderName"   TEXT        NOT NULL DEFAULT '',
+      "message"      TEXT        NOT NULL,
+      "type"         TEXT        NOT NULL DEFAULT 'question',
+      "adminRead"    BOOLEAN     NOT NULL DEFAULT false,
+      "adminResponse" TEXT,
+      "respondedAt"  TIMESTAMPTZ,
+      "responseRead" BOOLEAN     NOT NULL DEFAULT false,
+      "createdAt"    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+// Dept: submit a help desk message
+app.post('/api/dept/helpdesk', authenticateToken, async (req, res) => {
+  try {
+    await ensureHelpDeskTable();
+    const { message, type = 'question' } = req.body;
+    if (!message?.trim()) return res.status(400).json({ error: 'Message is required.' });
+    const validTypes = ['question', 'suggestion', 'observation'];
+    const safeType = validTypes.includes(type) ? type : 'question';
+    const deptId   = String(req.user.deptId || '');
+    const deptName = req.user.departmentName || req.user.name || '';
+    const senderName = req.user.headName || req.user.name || deptName;
+    const rows = await prisma.$queryRawUnsafe(
+      `INSERT INTO "HelpDesk" ("deptId","deptName","senderName","message","type")
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      deptId, deptName, senderName, message.trim(), safeType
+    );
+    res.json({ success: true, item: rows[0] });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// Dept: get my messages (with admin responses)
+app.get('/api/dept/helpdesk', authenticateToken, async (req, res) => {
+  try {
+    await ensureHelpDeskTable();
+    const deptId = String(req.user.deptId || '');
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT * FROM "HelpDesk" WHERE "deptId"=$1 ORDER BY "createdAt" DESC LIMIT 100`,
+      deptId
+    );
+    res.json({ messages: rows });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// Dept: mark admin response as read
+app.patch('/api/dept/helpdesk/:id/response-read', authenticateToken, async (req, res) => {
+  try {
+    await ensureHelpDeskTable();
+    const deptId = String(req.user.deptId || '');
+    await prisma.$executeRawUnsafe(
+      `UPDATE "HelpDesk" SET "responseRead"=true WHERE "id"=$1 AND "deptId"=$2`,
+      req.params.id, deptId
+    );
+    res.json({ success: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// Admin: get all help desk messages
+app.get('/api/admin/helpdesk', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    await ensureHelpDeskTable();
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT * FROM "HelpDesk" ORDER BY "adminRead" ASC, "createdAt" DESC LIMIT 200`
+    );
+    res.json({ messages: rows });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// Admin: get unread count
+app.get('/api/admin/helpdesk/unread-count', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    await ensureHelpDeskTable();
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT COUNT(*)::int AS count FROM "HelpDesk" WHERE "adminRead"=false`
+    );
+    res.json({ count: rows[0]?.count ?? 0 });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// Admin: mark message as read
+app.patch('/api/admin/helpdesk/:id/read', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    await ensureHelpDeskTable();
+    await prisma.$executeRawUnsafe(
+      `UPDATE "HelpDesk" SET "adminRead"=true WHERE "id"=$1`,
+      req.params.id
+    );
+    res.json({ success: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// Admin: respond to a message
+app.post('/api/admin/helpdesk/:id/respond', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    await ensureHelpDeskTable();
+    const { response } = req.body;
+    if (!response?.trim()) return res.status(400).json({ error: 'Response is required.' });
+    const rows = await prisma.$queryRawUnsafe(
+      `UPDATE "HelpDesk" SET "adminResponse"=$1,"respondedAt"=NOW(),"adminRead"=true,"responseRead"=false
+       WHERE "id"=$2 RETURNING *`,
+      response.trim(), req.params.id
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Message not found.' });
+    res.json({ success: true, item: rows[0] });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
 app.use((req, res) => {
   if (req.path.startsWith('/api')) return res.status(404).json({ error: 'API route not found' });
   if (!fs.existsSync(indexPath)) {
@@ -12845,6 +12971,10 @@ const server = app.listen(PORT, async () => {
 
       isSystemReady = true;
       logger.info('✅ [SYSTEM READY] Requisition Management Service fully operational.');
+
+      // Ensure Help Desk table exists (self-healing)
+      try { await ensureHelpDeskTable(); logger.info('[BOOT] HelpDesk table ready'); }
+      catch (e) { logger.warn('[BOOT] HelpDesk table setup deferred:', e.message); }
 
       // ── WhatsApp (Baileys) — start after DB is ready ─────────────────────
       if (process.env.WHATSAPP_ENABLED === 'true') {

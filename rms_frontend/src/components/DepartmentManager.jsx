@@ -1655,6 +1655,86 @@ const DepartmentManager = ({ onViewChange }) => {
     } finally { setResendingDeptId(null); }
   };
 
+  // ── Help Desk state ───────────────────────────────────────────────────────
+  const [hdMessages, setHdMessages]             = useState([]);
+  const [hdLoading, setHdLoading]               = useState(false);
+  const [hdUnread, setHdUnread]                 = useState(0);
+  const [hdExpanded, setHdExpanded]             = useState(null); // id of expanded message
+  const [hdReplyText, setHdReplyText]           = useState('');
+  const [hdReplying, setHdReplying]             = useState(false);
+
+  const loadHelpDesk = useCallback(async () => {
+    setHdLoading(true);
+    try {
+      const res = await fetch('/api/admin/helpdesk', {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}` }
+      });
+      const data = await res.json();
+      const msgs = data.messages || [];
+      setHdMessages(msgs);
+      setHdUnread(msgs.filter(m => !m.adminRead).length);
+    } catch {}
+    finally { setHdLoading(false); }
+  }, []);
+
+  const loadHdUnreadCount = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/helpdesk/unread-count', {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}` }
+      });
+      const data = await res.json();
+      setHdUnread(data.count ?? 0);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'helpdesk') { loadHdUnreadCount(); return; }
+    loadHelpDesk();
+    const iv = setInterval(loadHelpDesk, 30_000);
+    return () => clearInterval(iv);
+  }, [activeTab, loadHelpDesk, loadHdUnreadCount]);
+
+  // Poll unread count on other tabs
+  useEffect(() => {
+    if (activeTab === 'helpdesk') return;
+    const iv = setInterval(loadHdUnreadCount, 30_000);
+    loadHdUnreadCount();
+    return () => clearInterval(iv);
+  }, [activeTab, loadHdUnreadCount]);
+
+  const hdMarkRead = async (id) => {
+    try {
+      await fetch(`/api/admin/helpdesk/${id}/read`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}` }
+      });
+      setHdMessages(ms => ms.map(m => m.id === id ? { ...m, adminRead: true } : m));
+      setHdUnread(n => Math.max(0, n - 1));
+    } catch {}
+  };
+
+  const hdRespond = async (id) => {
+    if (!hdReplyText.trim()) return;
+    setHdReplying(true);
+    try {
+      const res = await fetch(`/api/admin/helpdesk/${id}/respond`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('rms_token')}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ response: hdReplyText }),
+      });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.error || 'Reply failed.'); return; }
+      toast.success('Reply sent.');
+      setHdReplyText('');
+      setHdExpanded(null);
+      loadHelpDesk();
+    } catch { toast.error('Network error.'); }
+    finally { setHdReplying(false); }
+  };
+
   // ── Onboarding review state ────────────────────────────────────────────────
   const [activeTab, setActiveTab]               = useState('departments');
   const [onboardingSubs, setOnboardingSubs]     = useState([]);
@@ -1948,10 +2028,11 @@ const DepartmentManager = ({ onViewChange }) => {
         </div>
 
         {/* ── Tab bar ── */}
-        <div className="flex items-center gap-2 border-b border-border/30 pb-1">
+        <div className="flex items-center gap-2 border-b border-border/30 pb-1 flex-wrap">
           {[
             { key: 'departments', label: 'Departments' },
-            { key: 'onboarding',  label: 'Onboarding', badge: pendingCount || null },
+            { key: 'onboarding',  label: 'Onboarding', badge: pendingCount || null, badgeColor: 'bg-amber-500' },
+            { key: 'helpdesk',    label: 'Help Desk',  badge: hdUnread || null,     badgeColor: 'bg-blue-600', live: true },
           ].map(tab => (
             <button
               key={tab.key}
@@ -1964,7 +2045,7 @@ const DepartmentManager = ({ onViewChange }) => {
             >
               {tab.label}
               {tab.badge ? (
-                <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full min-w-[18px] text-center leading-none">
+                <span className={`${tab.badgeColor} text-white text-[9px] font-black px-1.5 py-0.5 rounded-full min-w-[18px] text-center leading-none ${tab.live ? 'animate-pulse' : ''}`}>
                   {tab.badge}
                 </span>
               ) : null}
@@ -2344,6 +2425,136 @@ const DepartmentManager = ({ onViewChange }) => {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ── Help Desk tab ── */}
+        {activeTab === 'helpdesk' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black text-foreground">Help Desk Inbox</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Messages, questions and suggestions from department portals</p>
+              </div>
+              <button onClick={loadHelpDesk} className="p-2 hover:bg-muted rounded-xl text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
+                <RotateCcw size={15} />
+              </button>
+            </div>
+
+            {hdLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 size={24} className="animate-spin text-blue-400" />
+              </div>
+            ) : hdMessages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-4">
+                <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center">
+                  <Send size={24} className="text-blue-300" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-bold text-muted-foreground">No messages yet</p>
+                  <p className="text-xs text-muted-foreground/60 mt-1">Department portals can send questions, suggestions and observations here.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {hdMessages.map(m => (
+                  <div key={m.id} className={`rounded-2xl border transition-all ${!m.adminRead ? 'border-blue-200 bg-blue-50/40 shadow-sm shadow-blue-100' : 'border-border bg-background'}`}>
+                    {/* Message header */}
+                    <button
+                      className="w-full text-left px-4 py-3 flex items-start gap-3"
+                      onClick={() => {
+                        setHdExpanded(hdExpanded === m.id ? null : m.id);
+                        if (!m.adminRead) hdMarkRead(m.id);
+                        setHdReplyText('');
+                      }}
+                    >
+                      {/* Avatar */}
+                      <div className="w-9 h-9 rounded-xl bg-blue-100 flex items-center justify-center shrink-0 mt-0.5">
+                        <span className="text-[11px] font-black text-blue-700">
+                          {(m.deptName || '?').charAt(0).toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-black text-foreground truncate">{m.deptName || 'Unknown Dept'}</span>
+                          {m.senderName && <span className="text-[10px] text-muted-foreground">· {m.senderName}</span>}
+                          <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ml-auto ${
+                            m.type === 'question'   ? 'bg-blue-100 text-blue-700' :
+                            m.type === 'suggestion' ? 'bg-purple-100 text-purple-700' :
+                                                      'bg-amber-100 text-amber-700'
+                          }`}>{m.type}</span>
+                          {!m.adminRead && (
+                            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" title="Unread" />
+                          )}
+                        </div>
+                        <p className="text-[11px] text-foreground leading-relaxed mt-1 line-clamp-2">{m.message}</p>
+                        <div className="flex items-center gap-3 mt-1.5">
+                          <span className="text-[9px] text-muted-foreground/60">{m.createdAt ? new Date(m.createdAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                          {m.adminResponse && (
+                            <span className="flex items-center gap-1 text-[9px] text-emerald-600 font-bold">
+                              <CheckCircle2 size={9} /> Responded{m.responseRead ? ' · seen' : ' · unseen'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* Expanded */}
+                    {hdExpanded === m.id && (
+                      <div className="px-4 pb-4 space-y-3 border-t border-border/30 pt-3">
+                        {/* Full message */}
+                        <div className="bg-blue-50 rounded-xl p-3">
+                          <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">{m.message}</p>
+                        </div>
+
+                        {/* Existing response */}
+                        {m.adminResponse && (
+                          <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-100">
+                            <div className="flex items-center gap-1.5 mb-2">
+                              <CheckCircle2 size={11} className="text-emerald-600" />
+                              <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">Your Response</span>
+                              <span className="text-[9px] text-muted-foreground ml-auto">{m.respondedAt ? new Date(m.respondedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                            </div>
+                            <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">{m.adminResponse}</p>
+                            <p className="text-[9px] text-muted-foreground mt-1.5">{m.responseRead ? '✓ Seen by department' : '○ Not yet seen'}</p>
+                          </div>
+                        )}
+
+                        {/* Reply form */}
+                        <div className="space-y-2">
+                          <label className="block text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                            {m.adminResponse ? 'Update Response' : 'Send Response'}
+                          </label>
+                          <textarea
+                            value={hdReplyText}
+                            onChange={e => setHdReplyText(e.target.value)}
+                            placeholder="Write your response to this department…"
+                            rows={3}
+                            className="w-full px-3 py-2.5 rounded-xl border border-border text-xs bg-background focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none leading-relaxed"
+                          />
+                          <div className="flex gap-2 justify-end">
+                            <button
+                              onClick={() => { setHdExpanded(null); setHdReplyText(''); }}
+                              className="px-4 py-2 text-[11px] font-bold rounded-xl border border-border text-muted-foreground hover:bg-muted transition-all"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={() => hdRespond(m.id)}
+                              disabled={hdReplying || !hdReplyText.trim()}
+                              className="px-4 py-2 text-[11px] font-black rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-all disabled:opacity-50 flex items-center gap-1.5"
+                            >
+                              {hdReplying ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                              {hdReplying ? 'Sending…' : 'Send Reply'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
