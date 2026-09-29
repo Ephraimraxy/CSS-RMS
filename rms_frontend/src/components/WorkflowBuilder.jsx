@@ -131,6 +131,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
   // ── WhatsApp state ─────────────────────────────────────────────────────────
   const [waStatus,      setWaStatus]      = useState('disconnected');
   const [waQr,          setWaQr]          = useState(null);
+  const [waError,       setWaError]       = useState(null);
   const [waLoading,     setWaLoading]     = useState(false);
   const [waActionBusy,  setWaActionBusy]  = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -1159,14 +1160,16 @@ const WorkflowBuilder = ({ onViewChange }) => {
   useEffect(() => {
     if (activeTab !== 'whatsapp') return;
     let cancelled = false;
+    const applyStatus = (d) => {
+      setWaStatus(d.status);
+      setWaQr(d.qr || null);
+      setWaError(d.error || null);
+    };
     const load = async () => {
       setWaLoading(true);
       try {
         const res = await whatsappAPI.status();
-        if (!cancelled) {
-          setWaStatus(res.data.status);
-          setWaQr(res.data.qr || null);
-        }
+        if (!cancelled) applyStatus(res.data);
       } catch {
         if (!cancelled) setWaStatus('error');
       } finally {
@@ -1174,13 +1177,9 @@ const WorkflowBuilder = ({ onViewChange }) => {
       }
     };
     load();
-    // Poll every 5s when waiting for QR/connection; slow down once connected
     const interval = setInterval(() => {
       whatsappAPI.status().then(res => {
-        if (!cancelled) {
-          setWaStatus(res.data.status);
-          setWaQr(res.data.qr || null);
-        }
+        if (!cancelled) applyStatus(res.data);
       }).catch(() => {});
     }, 5000);
     return () => { cancelled = true; clearInterval(interval); };
@@ -3592,7 +3591,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
               ) : (
                 <div className="space-y-5">
                   {/* Badge */}
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
                     {waStatus === 'connected' && (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-100 text-green-800 text-sm font-semibold">
                         <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse inline-block"/> Connected
@@ -3605,7 +3604,12 @@ const WorkflowBuilder = ({ onViewChange }) => {
                     )}
                     {waStatus === 'connecting' && (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-sm font-semibold">
-                        <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse inline-block"/> Connecting…
+                        <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse inline-block"/> Connecting… (up to 30s)
+                      </span>
+                    )}
+                    {waStatus === 'timeout' && (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-100 text-orange-800 text-sm font-semibold">
+                        <span className="w-2 h-2 rounded-full bg-orange-500 inline-block"/> Timed Out
                       </span>
                     )}
                     {(waStatus === 'disconnected' || waStatus === 'error' || !waStatus) && (
@@ -3632,10 +3636,22 @@ const WorkflowBuilder = ({ onViewChange }) => {
                     </p>
                   )}
 
+                  {waStatus === 'timeout' && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 text-sm text-orange-900 space-y-2">
+                      <p className="font-bold">Connection timed out</p>
+                      <p>The VPS could not reach WhatsApp servers within 30 seconds. This usually means the VPS firewall is blocking outbound WebSocket connections to WhatsApp.</p>
+                      {waError && <p className="font-mono text-xs bg-orange-100 rounded p-2 break-all">{waError}</p>}
+                      <p className="font-semibold">To fix: open port 443 outbound on your VPS firewall (WhatsApp uses WSS on port 443). Then click Connect WhatsApp again.</p>
+                    </div>
+                  )}
+
                   {(waStatus === 'disconnected' || waStatus === 'error') && (
-                    <p className="text-sm text-muted-foreground">
-                      Click <strong>Connect WhatsApp</strong> below. A QR code will appear — scan it with your phone to link this account.
-                    </p>
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">
+                        Click <strong>Connect WhatsApp</strong> below. A QR code will appear — scan it with your phone to link this account.
+                      </p>
+                      {waError && <p className="text-xs font-mono text-red-600 bg-red-50 rounded p-2 break-all">{waError}</p>}
+                    </div>
                   )}
 
                   {/* Action buttons */}
@@ -3644,6 +3660,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                       <button
                         onClick={async () => {
                           setWaActionBusy(true);
+                          setWaError(null);
                           try {
                             await whatsappAPI.reconnect();
                             setWaStatus('connecting');
@@ -3653,7 +3670,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                         disabled={waActionBusy || waStatus === 'connecting'}
                         className="px-4 py-2 rounded-xl bg-green-600 hover:bg-green-700 text-white text-sm font-semibold disabled:opacity-50 transition-colors"
                       >
-                        {waActionBusy ? 'Connecting…' : 'Connect WhatsApp'}
+                        {waActionBusy ? 'Connecting…' : waStatus === 'connecting' ? 'Connecting… (wait 30s)' : 'Connect WhatsApp'}
                       </button>
                     )}
                     {waStatus === 'connected' && (
@@ -3664,6 +3681,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                             await whatsappAPI.disconnect();
                             setWaStatus('disconnected');
                             setWaQr(null);
+                            setWaError(null);
                             toast.success('WhatsApp disconnected');
                           } catch { toast.error('Failed to disconnect'); }
                           finally { setWaActionBusy(false); }
@@ -3681,6 +3699,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                           const res = await whatsappAPI.status();
                           setWaStatus(res.data.status);
                           setWaQr(res.data.qr || null);
+                          setWaError(res.data.error || null);
                         } catch { setWaStatus('error'); }
                         finally { setWaLoading(false); }
                       }}
@@ -3705,7 +3724,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 <li><strong>meta</strong> — Official Meta Cloud API. Set <code className="font-mono bg-muted px-1 rounded">WHATSAPP_PROVIDER=meta</code> + credentials when ready.</li>
               </ul>
               <p className="text-xs text-muted-foreground mt-3">
-                To switch providers, change <code className="font-mono bg-muted px-1 rounded">WHATSAPP_PROVIDER</code> in Railway → Variables, then redeploy.
+                To switch providers, change <code className="font-mono bg-muted px-1 rounded">WHATSAPP_PROVIDER</code> in Ephraim Hub → CSS RMS → Variables, then Save &amp; Restart.
               </p>
             </div>
           </div>

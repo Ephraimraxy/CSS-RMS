@@ -6118,8 +6118,9 @@ app.post('/api/admin/onboarding/batch-reject', authenticateToken, requireRoles([
 // ── Admin: WhatsApp status + QR code ───────────────────────────────────────
 app.get('/api/admin/whatsapp/status', authenticateToken, requireRoles(['global_admin']), async (_req, res) => {
   const status = whatsapp.getStatus();
-  const qr = status === 'qr_ready' ? await whatsapp.getQrDataUrl() : null;
-  res.json({ status, qr });
+  const qr     = status === 'qr_ready' ? await whatsapp.getQrDataUrl() : null;
+  const error  = whatsapp.getLastError();
+  res.json({ status, qr, error });
 });
 
 app.post('/api/admin/whatsapp/reconnect', authenticateToken, requireRoles(['global_admin']), async (_req, res) => {
