@@ -335,6 +335,266 @@ const EditDeptModal = ({ dept, onClose, onSaved }) => {
 };
 
 
+// ── Onboarding Export Columns ─────────────────────────────────────────────────
+const OB_EXPORT_COLUMNS = [
+  { key: 'surname',       label: 'Surname',          defaultOn: true  },
+  { key: 'firstName',     label: 'First Name',       defaultOn: true  },
+  { key: 'middleName',    label: 'Other Name',       defaultOn: true  },
+  { key: 'staffId',       label: 'Staff ID',         defaultOn: true  },
+  { key: 'deptName',      label: 'Department',       defaultOn: true  },
+  { key: 'role',          label: 'Role',             defaultOn: true  },
+  { key: 'phone',         label: 'Phone',            defaultOn: true  },
+  { key: 'personalEmail', label: 'Personal Email',   defaultOn: true  },
+  { key: 'officialEmail', label: 'Official Email',   defaultOn: true  },
+  { key: 'status',        label: 'Status',           defaultOn: true  },
+  { key: 'submittedAt',   label: 'Submitted Date',   defaultOn: true  },
+];
+
+const OB_COL_WEIGHTS = {
+  surname: 4, firstName: 4, middleName: 3, staffId: 3, deptName: 5,
+  role: 3, phone: 4, personalEmail: 6, officialEmail: 6, status: 3, submittedAt: 4,
+};
+
+// ── Onboarding Export Modal ───────────────────────────────────────────────────
+const OnboardingExportModal = ({ submissions, currentFilter, onClose }) => {
+  const [format, setFormat]         = useState('excel');
+  const [colVisible, setColVisible] = useState(() =>
+    Object.fromEntries(OB_EXPORT_COLUMNS.map(c => [c.key, c.defaultOn]))
+  );
+  const [statusFilter, setStatusFilter] = useState('current'); // 'current' | 'ALL' | specific status
+  const [exporting, setExporting]   = useState(false);
+
+  const STATUS_OPTIONS = ['PENDING', 'DEPT_PENDING', 'APPROVED', 'REJECTED', 'ALL'];
+  const visibleCols = OB_EXPORT_COLUMNS.filter(c => colVisible[c.key]);
+
+  const toggleCol = (key) => setColVisible(v => ({ ...v, [key]: !v[key] }));
+
+  const filteredSubs = statusFilter === 'current'
+    ? submissions
+    : statusFilter === 'ALL'
+      ? submissions // already all when fetched with ALL
+      : submissions.filter(s => s.status === statusFilter);
+
+  const buildRows = () => filteredSubs.map(s => ({
+    surname:       s.surname       || '',
+    firstName:     s.firstName     || '',
+    middleName:    s.middleName    || '',
+    staffId:       s.staffId       || '',
+    deptName:      s.deptName      || '',
+    role:          s.role === 'HEAD' ? 'Head of Dept' : s.role === 'ASSISTANT' ? 'Assistant' : s.role || '',
+    phone:         s.phone         || '',
+    personalEmail: s.personalEmail || '',
+    officialEmail: s.officialEmail || '',
+    status:        s.status        || '',
+    submittedAt:   s.submittedAt ? new Date(s.submittedAt).toLocaleDateString('en-GB') : '',
+  }));
+
+  const handleExport = async () => {
+    if (visibleCols.length === 0) { toast.error('Select at least one column.'); return; }
+    if (filteredSubs.length === 0) { toast.error('No submissions to export.'); return; }
+    setExporting(true);
+    try {
+      const rows = buildRows();
+      const headers = visibleCols.map(c => c.label);
+      const data = rows.map(r => visibleCols.map(c => r[c.key] ?? ''));
+      const dateStr = new Date().toISOString().slice(0, 10);
+
+      if (format === 'excel') {
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+        ws['!cols'] = headers.map((h, i) => ({
+          wch: Math.max(h.length, ...data.map(r => String(r[i] || '').length)) + 2
+        }));
+        XLSX.utils.book_append_sheet(wb, ws, 'Onboarding Submissions');
+        XLSX.writeFile(wb, `Onboarding_Export_${dateStr}.xlsx`);
+        toast.success('Excel file downloaded.');
+      } else {
+        const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+        const pageW = doc.internal.pageSize.getWidth();
+        const pageH = doc.internal.pageSize.getHeight();
+        const margin = 10;
+        const usable = pageW - margin * 2;
+        const FONT_SIZE = 6.5;
+        const LINE_H = 3.8;
+        const CELL_PAD_V = 2.5;
+        const HEADER_H = 8;
+
+        const totalWeight = visibleCols.reduce((s, c) => s + (OB_COL_WEIGHTS[c.key] || 3), 0);
+        const colWidths = visibleCols.map(c => Math.floor(usable * (OB_COL_WEIGHTS[c.key] || 3) / totalWeight));
+        const widthSum = colWidths.reduce((a, b) => a + b, 0);
+        colWidths[colWidths.length - 1] += usable - widthSum;
+
+        const colX = colWidths.reduce((acc, w, i) => {
+          acc.push(i === 0 ? margin : acc[i - 1] + colWidths[i - 1]);
+          return acc;
+        }, []);
+
+        doc.setFontSize(12);
+        doc.setFont(undefined, 'bold');
+        doc.text('Onboarding Submissions', margin, 12);
+        doc.setFontSize(8);
+        doc.setFont(undefined, 'normal');
+        const filterLabel = statusFilter === 'current' ? `Filter: ${currentFilter || 'Current'}` : `Filter: ${statusFilter}`;
+        doc.text(`Generated: ${new Date().toLocaleString()}  ·  ${filteredSubs.length} record(s)  ·  ${filterLabel}`, margin, 18);
+
+        let y = 24;
+
+        const drawHeader = () => {
+          doc.setFillColor(25, 70, 140);
+          doc.rect(margin, y, usable, HEADER_H, 'F');
+          doc.setTextColor(255, 255, 255);
+          doc.setFontSize(FONT_SIZE - 0.5);
+          doc.setFont(undefined, 'bold');
+          headers.forEach((h, i) => {
+            doc.text(h.toUpperCase(), colX[i] + 1.5, y + 5.2, { maxWidth: colWidths[i] - 3 });
+          });
+          doc.setTextColor(0, 0, 0);
+          doc.setFont(undefined, 'normal');
+          y += HEADER_H;
+        };
+        drawHeader();
+
+        data.forEach((row, ri) => {
+          doc.setFontSize(FONT_SIZE);
+          const splitCells = row.map((cell, i) =>
+            doc.splitTextToSize(String(cell || '—'), colWidths[i] - 3)
+          );
+          const maxLines = Math.max(...splitCells.map(lines => lines.length));
+          const dynH = Math.max(6, maxLines * LINE_H + CELL_PAD_V * 2);
+
+          if (y + dynH > pageH - margin) {
+            doc.addPage();
+            y = margin;
+            drawHeader();
+          }
+
+          if (ri % 2 === 0) {
+            doc.setFillColor(240, 244, 252);
+            doc.rect(margin, y, usable, dynH, 'F');
+          }
+
+          doc.setFontSize(FONT_SIZE);
+          splitCells.forEach((lines, i) => {
+            doc.text(lines, colX[i] + 1.5, y + CELL_PAD_V + LINE_H * 0.8);
+          });
+
+          doc.setDrawColor(210, 218, 235);
+          doc.setLineWidth(0.1);
+          doc.line(margin, y + dynH, margin + usable, y + dynH);
+
+          y += dynH;
+        });
+
+        doc.save(`Onboarding_Export_${dateStr}.pdf`);
+        toast.success('PDF file downloaded.');
+      }
+      onClose();
+    } catch (err) {
+      console.error(err);
+      toast.error('Export failed: ' + err.message);
+    } finally { setExporting(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border/30 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-600">
+              <FileDown size={16} />
+            </div>
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Export Onboarding Data</h3>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Choose format and columns to include in the export</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl text-muted-foreground transition-colors"><X size={16} /></button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 p-6 space-y-6">
+
+          {/* Format */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Export Format</p>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { id: 'excel', label: 'Excel (.xlsx)', icon: FileSpreadsheet, color: 'emerald' },
+                { id: 'pdf',   label: 'PDF Document',  icon: FileDown,        color: 'red'     },
+              ].map(({ id, label, icon: Icon, color }) => (
+                <button key={id} onClick={() => setFormat(id)}
+                  className={`flex items-center gap-3 p-3.5 rounded-xl border transition-all ${format === id ? `border-${color}-500 bg-${color}-50 text-${color}-700` : 'border-border/50 text-muted-foreground hover:border-border'}`}>
+                  <Icon size={18} className={format === id ? `text-${color}-600` : 'text-muted-foreground'} />
+                  <span className="text-xs font-bold">{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Status scope */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Records to Include</p>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { val: 'current', label: `Current view (${submissions.length})` },
+                { val: 'PENDING',     label: 'Pending only' },
+                { val: 'APPROVED',    label: 'Approved only' },
+                { val: 'REJECTED',    label: 'Rejected only' },
+                { val: 'DEPT_PENDING',label: 'Dept Pending' },
+                { val: 'ALL',         label: 'All statuses' },
+              ].map(({ val, label }) => (
+                <button key={val} onClick={() => setStatusFilter(val)}
+                  className={`px-3 py-2 rounded-xl border text-[11px] font-bold transition-all ${statusFilter === val ? 'bg-blue-600 text-white border-blue-600' : 'border-border/50 text-muted-foreground hover:border-blue-300'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground">{filteredSubs.length} record{filteredSubs.length !== 1 ? 's' : ''} will be exported</p>
+          </div>
+
+          {/* Columns */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">Columns to Export</p>
+              <div className="flex gap-3">
+                <button onClick={() => setColVisible(Object.fromEntries(OB_EXPORT_COLUMNS.map(c => [c.key, true])))}
+                  className="text-[9px] font-black text-primary hover:underline uppercase tracking-widest">All</button>
+                <button onClick={() => setColVisible(Object.fromEntries(OB_EXPORT_COLUMNS.map(c => [c.key, false])))}
+                  className="text-[9px] font-black text-muted-foreground hover:text-destructive hover:underline uppercase tracking-widest">None</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {OB_EXPORT_COLUMNS.map(col => (
+                <label key={col.key} className={`flex items-center gap-2.5 px-3 py-2 rounded-xl cursor-pointer transition-all ${colVisible[col.key] ? 'bg-blue-500/5 border border-blue-500/20' : 'border border-border/40 hover:border-border'}`}>
+                  <input type="checkbox" checked={!!colVisible[col.key]} onChange={() => toggleCol(col.key)}
+                    className="w-3.5 h-3.5 accent-blue-600 rounded shrink-0" />
+                  <span className={`text-[11px] font-bold ${colVisible[col.key] ? 'text-foreground' : 'text-muted-foreground/50 line-through'}`}>{col.label}</span>
+                </label>
+              ))}
+            </div>
+            <p className="text-[9px] text-muted-foreground/60 font-medium">{visibleCols.length} of {OB_EXPORT_COLUMNS.length} columns selected</p>
+          </div>
+
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-border/20 bg-muted/10 shrink-0 flex items-center justify-between gap-3">
+          <p className="text-[10px] text-muted-foreground">{filteredSubs.length} records · {visibleCols.length} columns</p>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-xl border border-border text-xs font-bold text-muted-foreground hover:bg-muted transition-all">Cancel</button>
+            <button onClick={handleExport} disabled={exporting || visibleCols.length === 0 || filteredSubs.length === 0}
+              className="flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-widest transition-all disabled:opacity-50 shadow-sm active:scale-95">
+              {exporting ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />}
+              {exporting ? 'Exporting…' : `Export ${filteredSubs.length} Records`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ── Export Columns definition (shared) ────────────────────────────────────────
 const EXPORT_COLUMNS = [
   { key: 'name',        label: 'Department Name',  defaultOn: true },
@@ -1408,6 +1668,7 @@ const DepartmentManager = ({ onViewChange }) => {
   const [pendingCount, setPendingCount]         = useState(0);
   const [deletingId, setDeletingId]             = useState(null);
   const [deleteAllModal, setDeleteAllModal]     = useState(false);
+  const [obExportOpen, setObExportOpen]         = useState(false);
   const [editModal, setEditModal]               = useState(null); // submission object or null
   const [editForm, setEditForm]                 = useState({});
   const [editSaving, setEditSaving]             = useState(false);
@@ -1766,11 +2027,18 @@ const DepartmentManager = ({ onViewChange }) => {
                 </div>
               )}
               {onboardingSubs.length > 0 && (
-                <button onClick={() => setDeleteAllModal(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-[11px] font-black hover:bg-red-100 transition-all ml-auto">
-                  <Trash2 size={11} />
-                  Delete All ({onboardingSubs.length})
-                </button>
+                <div className="flex items-center gap-2 ml-auto">
+                  <button onClick={() => setObExportOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 text-[11px] font-black hover:bg-blue-100 transition-all">
+                    <FileDown size={11} />
+                    Export
+                  </button>
+                  <button onClick={() => setDeleteAllModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-[11px] font-black hover:bg-red-100 transition-all">
+                    <Trash2 size={11} />
+                    Delete All ({onboardingSubs.length})
+                  </button>
+                </div>
               )}
             </div>
 
@@ -2277,6 +2545,15 @@ const DepartmentManager = ({ onViewChange }) => {
       {/* Export Modal */}
       {exportOpen && (
         <ExportModal departments={departments} onClose={() => setExportOpen(false)} />
+      )}
+
+      {/* Onboarding Export Modal */}
+      {obExportOpen && (
+        <OnboardingExportModal
+          submissions={onboardingSubs}
+          currentFilter={onboardingFilter}
+          onClose={() => setObExportOpen(false)}
+        />
       )}
 
       {/* Seal View Modal */}
