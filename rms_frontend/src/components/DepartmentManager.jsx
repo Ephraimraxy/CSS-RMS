@@ -734,6 +734,330 @@ const ExportModal = ({ departments, onClose }) => {
 };
 
 
+// ── Import HOD Modal ─────────────────────────────────────────────────────────
+const ImportHODModal = ({ onClose, onDone }) => {
+  const [step, setStep] = useState('pick'); // pick | preview | result
+  const [preview, setPreview] = useState([]); // parsed rows
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileRef = React.useRef(null);
+
+  const EXPECTED_COLS = {
+    deptName:   ['department name', 'department', 'dept', 'unit name'],
+    type:       ['category', 'type'],
+    staffId:    ['staff id', 'staffid', 'id'],
+    surname:    ['surname', 'last name', 'lastname'],
+    firstName:  ['first name', 'firstname'],
+    otherName:  ['other name', 'othername', 'middle name'],
+    headTitle:  ['designation', 'title', 'position'],
+    headEmail:  ['official email', 'email'],
+    phone:      ['contact phone', 'phone', 'mobile'],
+  };
+
+  const parseFile = async (file) => {
+    if (!file) return;
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      if (raw.length < 2) { toast.error('File appears empty.'); return; }
+
+      // Map header row to field keys
+      const headerRow = raw[0].map(h => (h || '').toString().toLowerCase().trim());
+      const colMap = {};
+      for (const [field, aliases] of Object.entries(EXPECTED_COLS)) {
+        const idx = headerRow.findIndex(h => aliases.some(a => h.includes(a)));
+        if (idx >= 0) colMap[field] = idx;
+      }
+      if (colMap.deptName === undefined) { toast.error('Could not find a "Department Name" column in the file.'); return; }
+
+      const rows = raw.slice(1).map((row, ri) => {
+        const get = (field) => (colMap[field] !== undefined ? String(row[colMap[field]] || '').trim() : '');
+        const deptName = get('deptName');
+        const staffId  = get('staffId');
+        const surname  = get('surname');
+        const firstName = get('firstName');
+        const otherName = get('otherName');
+        const headTitle = get('headTitle');
+        const headEmail = get('headEmail');
+        const phone    = get('phone');
+        const type     = get('type');
+        const hasData  = staffId || surname || firstName || headEmail || phone || headTitle;
+        const isProtected = /^super\s*admin$/i.test(deptName);
+        let status = 'ready';
+        if (!deptName)    status = 'skip-empty';
+        else if (isProtected) status = 'skip-protected';
+        else if (!hasData)    status = 'skip-nodata';
+        return { _ri: ri, deptName, staffId, surname, firstName, otherName, headTitle, headEmail, phone, type, status };
+      }).filter(r => r.deptName || r.status === 'skip-empty');
+
+      setPreview(rows);
+      setStep('preview');
+    } catch (err) {
+      toast.error('Failed to read file: ' + err.message);
+    }
+  };
+
+  const handleFilePick = (e) => { const f = e.target.files?.[0]; if (f) parseFile(f); };
+  const handleDrop = (e) => { e.preventDefault(); setDragOver(false); parseFile(e.dataTransfer.files?.[0]); };
+
+  const readyRows = preview.filter(r => r.status === 'ready');
+  const skipRows  = preview.filter(r => r.status !== 'ready');
+
+  const handleImport = async () => {
+    if (!readyRows.length) return;
+    setImporting(true);
+    try {
+      const res = await fetch('/api/admin/departments/import-hods', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: readyRows })
+      });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.error || 'Import failed.'); return; }
+      setResult(d.results);
+      setStep('result');
+      onDone();
+    } catch (err) { toast.error('Network error: ' + err.message); }
+    finally { setImporting(false); }
+  };
+
+  const statusBadge = (s) => {
+    if (s === 'ready')           return <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">WILL UPDATE</span>;
+    if (s === 'skip-empty')      return <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">SKIP — empty</span>;
+    if (s === 'skip-protected')  return <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">SKIP — Super Admin</span>;
+    if (s === 'skip-nodata')     return <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">SKIP — no data</span>;
+    return null;
+  };
+
+  return (
+    <div className="fixed inset-0 z-[160] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border/30 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-600">
+              <Upload size={16} />
+            </div>
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-widest">Import HOD Data</h3>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Upload an Excel file to bulk-update department head records</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl text-muted-foreground"><X size={16} /></button>
+        </div>
+
+        <div className="overflow-y-auto flex-1">
+
+          {/* Step 1: Pick file */}
+          {step === 'pick' && (
+            <div className="p-8 flex flex-col items-center gap-6">
+              <div
+                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                onClick={() => fileRef.current?.click()}
+                className={`w-full max-w-lg border-2 border-dashed rounded-3xl p-12 flex flex-col items-center gap-4 cursor-pointer transition-all ${dragOver ? 'border-blue-500 bg-blue-50' : 'border-border/50 hover:border-blue-400 hover:bg-blue-50/30'}`}
+              >
+                <div className="w-14 h-14 rounded-2xl bg-blue-100 flex items-center justify-center">
+                  <FileSpreadsheet size={28} className="text-blue-600" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-bold text-foreground">Drop your Excel file here</p>
+                  <p className="text-[11px] text-muted-foreground mt-1">or click to browse — .xlsx or .xls</p>
+                </div>
+                <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFilePick} />
+              </div>
+
+              <div className="w-full max-w-lg space-y-3 text-[11px] text-muted-foreground">
+                <p className="font-black text-[9px] uppercase tracking-widest text-foreground/50">Expected column headers (any order):</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    ['Department Name', 'required — matches the department'],
+                    ['Category', 'Strategic or Operational'],
+                    ['Staff ID', 'head\'s staff ID'],
+                    ['Surname', 'head\'s surname'],
+                    ['First Name', 'head\'s first name'],
+                    ['Other Name', 'optional'],
+                    ['Designation', 'job title / position'],
+                    ['Official Email', 'head\'s email address'],
+                    ['Contact Phone', 'phone number'],
+                  ].map(([col, desc]) => (
+                    <div key={col} className="flex items-start gap-1.5 p-2 rounded-xl bg-muted/30">
+                      <span className="font-bold text-foreground">{col}</span>
+                      <span className="text-muted-foreground/70">— {desc}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl mt-2">
+                  <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-amber-700 font-medium">
+                    <strong>Super Admin</strong> rows are automatically protected and will never be modified, even if present in the file. Rows with no head data (no name, staff ID, or email) are also skipped automatically.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Step 2: Preview */}
+          {step === 'preview' && (
+            <div className="p-6 space-y-4">
+              <div className="flex flex-wrap gap-3">
+                <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl">
+                  <CheckCircle2 size={13} className="text-emerald-600" />
+                  <span className="text-[11px] font-bold text-emerald-700">{readyRows.length} will be updated</span>
+                </div>
+                {skipRows.length > 0 && (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-border rounded-xl">
+                    <Info size={13} className="text-muted-foreground" />
+                    <span className="text-[11px] font-bold text-muted-foreground">{skipRows.length} skipped</span>
+                  </div>
+                )}
+                <button onClick={() => { setPreview([]); setStep('pick'); }} className="ml-auto text-[11px] font-bold text-muted-foreground hover:text-foreground px-3 py-2 rounded-xl hover:bg-muted transition-all">
+                  ← Choose different file
+                </button>
+              </div>
+
+              <div className="rounded-2xl border border-border/50 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-muted/40 text-[9px] font-black uppercase tracking-widest text-muted-foreground">
+                        <th className="py-2.5 px-3">Status</th>
+                        <th className="py-2.5 px-3">Department</th>
+                        <th className="py-2.5 px-3">Staff ID</th>
+                        <th className="py-2.5 px-3">Name</th>
+                        <th className="py-2.5 px-3">Designation</th>
+                        <th className="py-2.5 px-3">Official Email</th>
+                        <th className="py-2.5 px-3">Phone</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/10">
+                      {preview.map((row, i) => (
+                        <tr key={i} className={`${row.status === 'ready' ? '' : 'opacity-40'}`}>
+                          <td className="py-2 px-3">{statusBadge(row.status)}</td>
+                          <td className="py-2 px-3 text-xs font-bold text-foreground">{row.deptName || '—'}</td>
+                          <td className="py-2 px-3 text-xs font-mono text-foreground">{row.staffId || '—'}</td>
+                          <td className="py-2 px-3 text-xs text-foreground">{[row.surname, row.firstName, row.otherName].filter(Boolean).join(' ') || '—'}</td>
+                          <td className="py-2 px-3 text-[10px] text-muted-foreground max-w-[150px] truncate">{row.headTitle || '—'}</td>
+                          <td className="py-2 px-3 text-[10px] text-blue-600 max-w-[180px] truncate">{row.headEmail || '—'}</td>
+                          <td className="py-2 px-3 text-[10px] font-mono text-muted-foreground">{row.phone || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Result */}
+          {step === 'result' && result && (
+            <div className="p-6 space-y-4">
+              <div className="flex flex-wrap gap-3">
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                  <CheckCircle2 size={14} className="text-emerald-600" />
+                  <span className="text-sm font-black text-emerald-700">{result.updated.length} departments updated</span>
+                </div>
+                {result.notFound.length > 0 && (
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                    <AlertTriangle size={14} className="text-amber-600" />
+                    <span className="text-sm font-black text-amber-700">{result.notFound.length} not found</span>
+                  </div>
+                )}
+                {result.errors.length > 0 && (
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl">
+                    <X size={14} className="text-red-600" />
+                    <span className="text-sm font-black text-red-700">{result.errors.length} errors</span>
+                  </div>
+                )}
+              </div>
+
+              {result.updated.length > 0 && (
+                <div>
+                  <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-2">Successfully Updated</p>
+                  <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto">
+                    {result.updated.map((r, i) => (
+                      <div key={i} className="flex items-center gap-2 px-3 py-2 bg-emerald-50 border border-emerald-100 rounded-xl">
+                        <CheckCircle2 size={11} className="text-emerald-600 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-bold text-emerald-800 truncate">{r.name}</p>
+                          {r.headName && <p className="text-[10px] text-emerald-600 truncate">{r.headName}</p>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {result.notFound.length > 0 && (
+                <div>
+                  <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest mb-2">Not Found in System</p>
+                  <div className="space-y-1">
+                    {result.notFound.map((r, i) => (
+                      <div key={i} className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-100 rounded-xl text-[11px] text-amber-700">
+                        <AlertTriangle size={11} className="shrink-0" />
+                        <strong>{r.name}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {result.errors.length > 0 && (
+                <div>
+                  <p className="text-[9px] font-black text-red-600 uppercase tracking-widest mb-2">Errors</p>
+                  <div className="space-y-1">
+                    {result.errors.map((r, i) => (
+                      <div key={i} className="flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-100 rounded-xl text-[11px] text-red-700">
+                        <X size={11} className="shrink-0 mt-0.5" />
+                        <span><strong>{r.name}</strong>: {r.reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-border/20 bg-muted/10 shrink-0 flex items-center justify-between gap-3">
+          {step === 'pick' && (
+            <>
+              <p className="text-[10px] text-muted-foreground">Supported: .xlsx, .xls — first sheet is used</p>
+              <button onClick={onClose} className="px-5 py-2 rounded-xl border border-border text-xs font-bold text-muted-foreground hover:bg-muted transition-all">Cancel</button>
+            </>
+          )}
+          {step === 'preview' && (
+            <>
+              <p className="text-[10px] text-muted-foreground">Review the rows above, then confirm to apply all updates</p>
+              <div className="flex gap-2">
+                <button onClick={onClose} className="px-4 py-2 rounded-xl border border-border text-xs font-bold text-muted-foreground hover:bg-muted transition-all">Cancel</button>
+                <button
+                  onClick={handleImport}
+                  disabled={importing || readyRows.length === 0}
+                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-widest transition-all disabled:opacity-50 shadow-sm active:scale-95"
+                >
+                  {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  {importing ? 'Importing…' : `Import ${readyRows.length} Records`}
+                </button>
+              </div>
+            </>
+          )}
+          {step === 'result' && (
+            <button onClick={onClose} className="ml-auto px-5 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-all">Done</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 // ── Main Component ────────────────────────────────────────────────────────────
 const DepartmentManager = ({ onViewChange }) => {
   const { user } = useAuth();
@@ -747,6 +1071,8 @@ const DepartmentManager = ({ onViewChange }) => {
   const [editingDept, setEditingDept] = useState(null);
   const [sealDept, setSealDept] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const importFileRef = useRef(null);
   const [newDeptData, setNewDeptData] = useState({ name: '', type: 'Operational', accessCode: '', headStaffId: '', headSurname: '', headFirstName: '', headOtherName: '', headTitle: '', headEmail: '', phone: '' });
 
   // Flash-free: default null (unknown/hidden) until the real setting resolves, so the
@@ -1144,6 +1470,13 @@ const DepartmentManager = ({ onViewChange }) => {
                 className="bg-white/80 border border-border/50 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 w-56 shadow-sm"
               />
             </div>
+            <button
+              onClick={() => setImportOpen(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-5 rounded-xl transition-all shadow-lg shadow-blue-500/20 text-sm"
+            >
+              <Upload size={16} />
+              Import HODs
+            </button>
             <button
               onClick={() => setExportOpen(true)}
               className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-5 rounded-xl transition-all shadow-lg shadow-emerald-500/20 text-sm"
@@ -1744,6 +2077,11 @@ const DepartmentManager = ({ onViewChange }) => {
         accept="image/png,image/jpeg"
         onChange={handleAdminSigUpload}
       />
+
+      {/* Import HOD Modal */}
+      {importOpen && (
+        <ImportHODModal onClose={() => setImportOpen(false)} onDone={() => { loadDepts(); setImportOpen(false); }} />
+      )}
 
       {/* Export Modal */}
       {exportOpen && (

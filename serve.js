@@ -6268,6 +6268,54 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
   } catch (err) { sendError(res, 500, err.message); }
 });
 
+// ── Admin: bulk import HOD records from Excel (parsed on frontend, sent as JSON) ──
+app.post('/api/admin/departments/import-hods', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { rows } = req.body; // [{ deptName, staffId, surname, firstName, otherName, headTitle, headEmail, phone, type }]
+    if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'No rows provided.' });
+
+    const results = { updated: [], skipped: [], notFound: [], errors: [] };
+
+    for (const row of rows) {
+      const deptName = (row.deptName || '').trim();
+
+      // Skip blank department name rows
+      if (!deptName) { results.skipped.push({ name: '(empty)', reason: 'No department name' }); continue; }
+
+      // Always protect Super Admin — never update it via bulk import
+      if (/^super\s*admin$/i.test(deptName)) { results.skipped.push({ name: deptName, reason: 'Super Admin is protected' }); continue; }
+
+      // Skip rows with no head data at all
+      const hasData = (row.staffId || row.surname || row.firstName || row.headEmail || row.phone || row.headTitle);
+      if (!hasData) { results.skipped.push({ name: deptName, reason: 'No head data in row' }); continue; }
+
+      // Find the department (case-insensitive)
+      const dept = await prisma.department.findFirst({
+        where: { name: { equals: deptName, mode: 'insensitive' }, isDeleted: false, isSubAccount: false }
+      });
+      if (!dept) { results.notFound.push({ name: deptName, reason: 'Department not found in system' }); continue; }
+
+      try {
+        const headName = [row.surname, row.firstName, row.otherName].map(s => (s || '').trim()).filter(Boolean).join(' ');
+        const updateData = {};
+        if (headName)          updateData.headName  = headName;
+        if (row.headTitle?.trim()) updateData.headTitle = row.headTitle.trim();
+        if (row.headEmail?.trim()) updateData.headEmail = row.headEmail.trim().toLowerCase();
+        if (row.phone?.trim())     updateData.phone     = row.phone.trim();
+        if (row.staffId?.trim())   updateData.staffId   = row.staffId.trim().toUpperCase();
+        if (row.type?.trim() && ['Operational','Strategic'].includes(row.type.trim())) updateData.type = row.type.trim();
+
+        await prisma.department.update({ where: { id: dept.id }, data: updateData });
+        results.updated.push({ name: deptName, staffId: updateData.staffId || '', headName: headName || '' });
+      } catch (err) {
+        results.errors.push({ name: deptName, reason: err.message });
+      }
+    }
+
+    res.json({ success: true, results });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
 // ── System Settings ───────────────────────────────────────────────────────────
 // GET /api/system-settings/:key  — read one setting (public for dept-level reads like chairman access)
 app.get('/api/system-settings/:key', authenticateToken, async (req, res) => {
