@@ -632,8 +632,8 @@ const Login = () => {
     if (TURNSTILE_SITE_KEY && widgetIdRef.current != null && window.turnstile) {
       window.turnstile.reset(widgetIdRef.current);
     }
-    if (!name || name === 'Super Admin') {
-      setDeptActivated(name === 'Super Admin' ? true : null);
+    if (!name || /^super\s*admin$/i.test(name)) {
+      setDeptActivated(/^super\s*admin$/i.test(name) ? true : null);
       return;
     }
     try {
@@ -968,7 +968,7 @@ const Login = () => {
                   </div>
                 </div>
 
-                {selectedDept === 'Super Admin' && (
+                {/^super\s*admin$/i.test(selectedDept) && (
                   <div className="space-y-2 animate-in slide-in-from-top-2 duration-300">
                     <label className="text-xs font-bold text-primary uppercase tracking-[0.12em] flex items-center justify-between">
                       <span>MFA Security PIN</span>

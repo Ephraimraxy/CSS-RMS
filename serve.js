@@ -1619,7 +1619,7 @@ const checkDeptReadiness = async (deptId) => {
   const dept = await prisma.department.findUnique({ where: { id: deptId } });
   if (!dept) return { ready: false, reason: 'Department not found' };
   // Super Admin and Chairman/CEO depts are always ready
-  if (dept.name === 'Super Admin' || /ceo|chairman/i.test(dept.name)) return { ready: true };
+  if (/^super\s*admin$/i.test(dept.name) || /ceo|chairman/i.test(dept.name)) return { ready: true };
 
   // Respect the require_governance_setup system setting — if disabled, skip profile checks
   const govSetting = await prisma.systemSetting.findUnique({ where: { key: 'require_governance_setup' } });

@@ -31,8 +31,8 @@ const LoginPagePremium = () => {
   const handleDeptChange = async (name) => {
     setSelectedDept(name);
     setDeptActivated(null);
-    if (!name || name === 'Super Admin') {
-      setDeptActivated(name === 'Super Admin' ? true : null);
+    if (!name || /^super\s*admin$/i.test(name)) {
+      setDeptActivated(/^super\s*admin$/i.test(name) ? true : null);
       return;
     }
     try {
@@ -243,7 +243,7 @@ const LoginPagePremium = () => {
                     </div>
                   </div>
 
-                  {selectedDept === 'Super Admin' && (
+                  {/^super\s*admin$/i.test(selectedDept) && (
                     <div className="space-y-1.5 animate-in slide-in-from-top-2 duration-300">
                       <label className="text-[10px] font-bold text-primary uppercase tracking-wider flex items-center justify-between">
                         <span>MFA Security PIN</span>
