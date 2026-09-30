@@ -2025,26 +2025,24 @@ app.post('/api/auth/refresh', authenticateToken, async (req, res) => {
   } catch (error) { sendError(res, 500, error.message); }
 });
 
-// ── Silent profile sync — re-reads DB and issues a fresh JWT with current privileges ─
-// Called by the frontend every 60 s so sub-account privilege changes, routing scope
-// changes, and dept data updates take effect live without the user needing to re-login.
+// ── Silent profile sync — re-reads DB and returns fresh user data ─────────────────────
+// Called by the frontend every 60 s so privilege/routing changes take effect live.
+// IMPORTANT: never revokes the current token (avoids race-condition logouts) and never
+// returns 401/403 (avoids triggering the API interceptor's forced-logout handler).
+// On any error just returns { user: null } — the frontend silently ignores it.
 app.post('/api/auth/sync', authenticateToken, async (req, res) => {
   try {
     const user = req.user;
-    if (!user) return res.status(401).json({ error: 'Invalid session' });
+    if (!user) return res.json({ user: null });
 
-    // Super admin — nothing dynamic to sync from DB, just re-issue the same token
+    // Super admin — nothing dynamic to sync, return current user unchanged
     if (normalizeRole(user.role) === 'global_admin') {
-      const userData = { id: user.id, email: user.email, name: user.name, role: user.role, department: user.department, deptId: user.deptId, ...(user.tokenVersion != null ? { tokenVersion: user.tokenVersion } : {}) };
-      await revokeToken(req.token);
-      const newToken = jwt.sign(userData, JWT_SECRET, { expiresIn: '12h' });
-      res.cookie('rms_token', newToken, cookieOptions);
-      return res.json({ user: userData });
+      return res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role, department: user.department, deptId: user.deptId } });
     }
 
     // Department / sub-account — re-read latest record from DB
     const deptId = user.deptId ? (typeof user.deptId === 'number' ? user.deptId : parseInt(user.deptId)) : null;
-    if (!deptId) return res.status(400).json({ error: 'No deptId in session' });
+    if (!deptId) return res.json({ user: null });
 
     const dept = await prisma.department.findUnique({
       where: { id: deptId },
@@ -2058,16 +2056,16 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
       }
     });
 
-    if (!dept || dept.isDeleted || dept.isDisabled) {
-      return res.status(403).json({ error: 'Department no longer active' });
-    }
+    // If dept is gone or disabled, return null — frontend will ignore silently
+    if (!dept || dept.isDeleted || dept.isDisabled) return res.json({ user: null });
 
-    // Invalidate if tokenVersion was bumped (security reset)
+    // If tokenVersion was bumped (security reset), return null — the existing JWT will
+    // fail on the next real request and the interceptor will handle logout then.
     if (dept.tokenVersion != null && user.tokenVersion != null && dept.tokenVersion !== user.tokenVersion) {
-      return res.status(401).json({ error: 'Session invalidated — please log in again' });
+      return res.json({ user: null });
     }
 
-    const userData = {
+    const freshUser = {
       id: user.id,
       name: dept.name,
       role: 'department',
@@ -2087,11 +2085,8 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
       ...(dept.materialPrivilege        ? { materialPrivilege: true }                   : {}),
     };
 
-    await revokeToken(req.token);
-    const newToken = jwt.sign(userData, JWT_SECRET, { expiresIn: '12h' });
-    res.cookie('rms_token', newToken, cookieOptions);
-    res.json({ user: userData });
-  } catch (err) { sendError(res, 500, err.message); }
+    res.json({ user: freshUser });
+  } catch { res.json({ user: null }); }
 });
 
 app.post('/api/auth/dept-login', authLimiter, async (req, res) => {
