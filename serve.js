@@ -8788,10 +8788,24 @@ app.post('/api/requisitions/:id/discount', authenticateToken, async (req, res) =
     if (!discountReason) return res.status(400).json({ error: 'A reason for the discount is required.' });
     if (isNaN(discountAmount) || discountAmount <= 0) return res.status(400).json({ error: 'A valid discount amount is required.' });
 
-    // Look up the configured verifier department
-    const verifierSetting = await prisma.systemSetting.findUnique({ where: { key: 'discount_verifier_dept_id' } });
-    const verifierDeptId = verifierSetting?.value ? parseInt(verifierSetting.value) : null;
-    if (!verifierDeptId) return res.status(400).json({ error: 'No discount verifier department is configured. Ask the Super Admin to set one in Workflow Builder.' });
+    // Look up the configured verifier department list (multi-select)
+    // Falls back to legacy single key for backwards compatibility
+    const [multiSetting, singleSetting] = await Promise.all([
+      prisma.systemSetting.findUnique({ where: { key: 'discount_verifier_dept_ids' } }),
+      prisma.systemSetting.findUnique({ where: { key: 'discount_verifier_dept_id' } }),
+    ]);
+    let allowedIds = [];
+    if (multiSetting?.value) {
+      try { allowedIds = JSON.parse(multiSetting.value).map(Number).filter(Boolean); } catch {}
+    } else if (singleSetting?.value) {
+      allowedIds = [parseInt(singleSetting.value)].filter(Boolean);
+    }
+    if (!allowedIds.length) return res.status(400).json({ error: 'No discount verifier department is configured. Ask the Super Admin to set one in Workflow Builder.' });
+
+    // Account must choose which verifier dept to send to (from the allowed list)
+    const chosenId = req.body?.verifierDeptId ? parseInt(req.body.verifierDeptId) : null;
+    const verifierDeptId = chosenId && allowedIds.includes(chosenId) ? chosenId : (allowedIds.length === 1 ? allowedIds[0] : null);
+    if (!verifierDeptId) return res.status(400).json({ error: 'Please select a verifier department from the list.' });
 
     await prisma.requisition.update({
       where: { id: reqId },

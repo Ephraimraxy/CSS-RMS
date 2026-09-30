@@ -2226,6 +2226,8 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
   const [discountActing, setDiscountActing] = useState(false);
   const [discountRejectReason, setDiscountRejectReason] = useState('');
   const [discountRejectActing, setDiscountRejectActing] = useState(false);
+  const [discountVerifierDepts, setDiscountVerifierDepts] = useState([]); // list of {id,name}
+  const [selectedVerifierDeptId, setSelectedVerifierDeptId] = useState('');
   const [forwardingForReapproval, setForwardingForReapproval] = useState(false);
   // Convert material → cash
   const [showConvert, setShowConvert] = useState(false);
@@ -2436,7 +2438,7 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
     if (!discountReason.trim()) { toast.error('A reason for the discount is required.'); return; }
     setDiscountActing(true);
     try {
-      await discountAPI.file(req.id, { discountAmount: amt, discountReason: discountReason.trim() });
+      await discountAPI.file(req.id, { discountAmount: amt, discountReason: discountReason.trim(), verifierDeptId: selectedVerifierDeptId ? parseInt(selectedVerifierDeptId) : undefined });
       toast.success('Discount filed — the verifier department has been notified.');
       setShowDiscountForm(false);
       setDiscountAmount('');
@@ -2625,7 +2627,34 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
                 <div className="border border-orange-200 rounded-xl bg-orange-50/60 overflow-hidden">
                   <button
                     type="button"
-                    onClick={() => { setShowDiscountForm(v => !v); if (!showDiscountForm && hasAmount) setDiscountAmount(String(balanceDue)); }}
+                    onClick={async () => {
+                      const opening = !showDiscountForm;
+                      setShowDiscountForm(v => !v);
+                      if (opening) {
+                        if (hasAmount) setDiscountAmount(String(balanceDue));
+                        // Load verifier dept list
+                        try {
+                          const [multiRes, allDeptsRes] = await Promise.all([
+                            fetch('/api/system-settings/discount_verifier_dept_ids', { credentials: 'include' }),
+                            fetch('/api/departments', { credentials: 'include' }),
+                          ]);
+                          const multiData = await multiRes.json();
+                          const allDepts = await allDeptsRes.json();
+                          let ids = [];
+                          try { ids = JSON.parse(multiData?.value || '[]').map(Number).filter(Boolean); } catch {}
+                          if (!ids.length) {
+                            // legacy single key
+                            const legacyRes = await fetch('/api/system-settings/discount_verifier_dept_id', { credentials: 'include' });
+                            const legacyData = await legacyRes.json();
+                            if (legacyData?.value) ids = [parseInt(legacyData.value)].filter(Boolean);
+                          }
+                          const depts = Array.isArray(allDepts) ? allDepts.filter(d => ids.includes(d.id)) : [];
+                          setDiscountVerifierDepts(depts);
+                          if (depts.length === 1) setSelectedVerifierDeptId(String(depts[0].id));
+                          else setSelectedVerifierDeptId('');
+                        } catch { setDiscountVerifierDepts([]); }
+                      }
+                    }}
                     className="w-full flex items-center justify-between px-4 py-3 text-[11px] font-black text-orange-800 uppercase tracking-widest hover:bg-orange-100/50 transition-all"
                   >
                     <span>Apply Discount / Deduction to Close</span>
@@ -2659,10 +2688,25 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
                           className="w-full bg-white border border-orange-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 resize-none"
                         />
                       </div>
+                      {discountVerifierDepts.length > 1 && (
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-orange-800 uppercase tracking-widest">Send Verification To</label>
+                          <select
+                            value={selectedVerifierDeptId}
+                            onChange={e => setSelectedVerifierDeptId(e.target.value)}
+                            className="w-full bg-white border border-orange-300 rounded-xl px-3 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-300"
+                          >
+                            <option value="">— Select verifier department —</option>
+                            {discountVerifierDepts.map(d => (
+                              <option key={d.id} value={String(d.id)}>{d.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                       <button
                         type="button"
                         onClick={handleFileDiscount}
-                        disabled={discountActing}
+                        disabled={discountActing || (discountVerifierDepts.length > 1 && !selectedVerifierDeptId)}
                         className="px-5 py-2.5 text-[11px] font-black uppercase tracking-widest rounded-xl bg-orange-600 text-white disabled:opacity-50 hover:bg-orange-700 transition-all"
                       >
                         {discountActing ? 'Submitting...' : 'Submit Discount for Verification'}

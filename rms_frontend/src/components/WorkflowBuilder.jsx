@@ -565,8 +565,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
   // Pipeline stage timer configuration — stored as JSON in SystemSetting
   // Each stage: { id, deptId, timerCritical, timerUrgent, timerNormal, onExpiry, escalationDeptIds }
   const [pipelineStages, setPipelineStages] = useState([]);
-  // Part-payment discount verifier dept
-  const [discountVerifierDeptId, setDiscountVerifierDeptId]       = useState('');
+  // Part-payment discount verifier depts (multi-select, stored as array of IDs)
+  const [discountVerifierDeptIds, setDiscountVerifierDeptIds]     = useState([]);
   const [adminCreateFundEnabled, setAdminCreateFundEnabled]       = useState(false);
   const [adminCreateMaterialEnabled, setAdminCreateMaterialEnabled] = useState(false);
   const [adminCreateMemoEnabled, setAdminCreateMemoEnabled]       = useState(false);
@@ -761,7 +761,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.get('priority_time_limit_urgent'),
         settingsAPI.get('priority_time_limit_normal'),
         settingsAPI.get('priority_escalation_dept_ids'),
-        settingsAPI.get('discount_verifier_dept_id'),
+        settingsAPI.get('discount_verifier_dept_ids'),
         settingsAPI.get('approval_timer_hr_minutes'),
         settingsAPI.get('approval_timer_gm_minutes'),
         settingsAPI.get('approval_timer_ceo_minutes'),
@@ -824,8 +824,13 @@ const WorkflowBuilder = ({ onViewChange }) => {
       if (priorityEscDeptIdsRes.status === 'fulfilled' && priorityEscDeptIdsRes.value?.value) {
         try { setPriorityEscalationDeptIds(JSON.parse(priorityEscDeptIdsRes.value.value).map(Number)); } catch { setPriorityEscalationDeptIds([]); }
       }
-      if (discountVerifierDeptIdRes.status === 'fulfilled' && discountVerifierDeptIdRes.value?.value)
-        setDiscountVerifierDeptId(discountVerifierDeptIdRes.value.value);
+      if (discountVerifierDeptIdRes.status === 'fulfilled' && discountVerifierDeptIdRes.value?.value) {
+        try { setDiscountVerifierDeptIds(JSON.parse(discountVerifierDeptIdRes.value.value).map(Number).filter(Boolean)); }
+        catch { // legacy single-ID fallback
+          const v = parseInt(discountVerifierDeptIdRes.value.value);
+          if (v) setDiscountVerifierDeptIds([v]);
+        }
+      }
       if (approvalTimerHrRes.status === 'fulfilled') {
         const v = parseFloat(approvalTimerHrRes.value?.value); setApprovalTimerHr(!isNaN(v) && v > 0 ? String(v) : '');
       }
@@ -928,7 +933,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.set('priority_time_limit_urgent',   priorityLimitUrgent   !== '' ? String(parseFloat(priorityLimitUrgent))   : '0'),
         settingsAPI.set('priority_time_limit_normal',   priorityLimitNormal   !== '' ? String(parseFloat(priorityLimitNormal))   : '0'),
         settingsAPI.set('priority_escalation_dept_ids', JSON.stringify(priorityEscalationDeptIds)),
-        settingsAPI.set('discount_verifier_dept_id', discountVerifierDeptId ? String(discountVerifierDeptId) : ''),
+        settingsAPI.set('discount_verifier_dept_ids', JSON.stringify(discountVerifierDeptIds)),
         settingsAPI.set('approval_timer_hr_minutes',  approvalTimerHr  !== '' ? String(parseFloat(approvalTimerHr))  : '0'),
         settingsAPI.set('approval_timer_gm_minutes',  approvalTimerGm  !== '' ? String(parseFloat(approvalTimerGm))  : '0'),
         settingsAPI.set('approval_timer_ceo_minutes', approvalTimerCeo !== '' ? String(parseFloat(approvalTimerCeo)) : '0'),
@@ -1644,7 +1649,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
                 </div>
               </div>
 
-              {/* Part-Payment Discount Verifier Department */}
+              {/* Part-Payment Discount Verifier Departments (multi-select) */}
               <div className="lg:col-span-2 p-5 rounded-2xl border-2 border-orange-200 bg-orange-50/40 space-y-4">
                 <div className="space-y-1">
                   <p className="text-sm font-black text-foreground flex items-center gap-2">
@@ -1652,25 +1657,40 @@ const WorkflowBuilder = ({ onViewChange }) => {
                     Part-Payment Discount Verifier
                   </p>
                   <p className="text-[11px] text-muted-foreground leading-relaxed max-w-2xl">
-                    When Account makes a partial payment and the remaining balance is legitimately waived (e.g. transport cash handed directly to the initiator), Account can file a <strong>discount</strong> with a reason. The department selected here must confirm the discount before the request closes as fully treated. Leave blank to disable the discount feature.
+                    When Account makes a partial payment and the remaining balance is legitimately waived, Account can file a <strong>discount</strong> with a reason. Select one or more departments below — Account will choose which one to route the verification to. Leave all unchecked to disable the discount feature.
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Verifier Department</label>
-                  <select
-                    value={discountVerifierDeptId}
-                    onChange={e => setDiscountVerifierDeptId(e.target.value)}
-                    className="w-full sm:w-80 bg-white border border-orange-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400/40"
-                  >
-                    <option value="">— Disabled (no discount feature) —</option>
-                    {allDepts.filter(d => !d.isSubAccount).map(dept => (
-                      <option key={dept.id} value={String(dept.id)}>{dept.name}</option>
-                    ))}
-                  </select>
-                  {discountVerifierDeptId && (
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Verifier Departments (tick to enable)</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                    {allDepts.filter(d => !d.isSubAccount).map(dept => {
+                      const checked = discountVerifierDeptIds.includes(dept.id);
+                      return (
+                        <button
+                          key={dept.id}
+                          type="button"
+                          onClick={() => setDiscountVerifierDeptIds(prev =>
+                            checked ? prev.filter(id => id !== dept.id) : [...prev, dept.id]
+                          )}
+                          className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border-2 text-left transition-all ${checked ? 'border-orange-500 bg-orange-100' : 'border-orange-200 bg-white hover:border-orange-300'}`}
+                        >
+                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-all ${checked ? 'border-orange-500 bg-orange-500' : 'border-orange-300'}`}>
+                            {checked && <svg width="9" height="9" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                          </div>
+                          <span className={`text-xs font-bold truncate ${checked ? 'text-orange-900' : 'text-foreground'}`}>{dept.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {discountVerifierDeptIds.length > 0 && (
                     <p className="text-[11px] text-orange-800 font-semibold">
-                      {allDepts.find(d => String(d.id) === String(discountVerifierDeptId))?.name || '—'} will receive discount verification requests and must confirm before a partially-paid request can close.
+                      {discountVerifierDeptIds.length === 1
+                        ? `${allDepts.find(d => d.id === discountVerifierDeptIds[0])?.name || '—'} will receive all discount verification requests.`
+                        : `Account will choose from ${discountVerifierDeptIds.length} departments when filing a discount.`}
                     </p>
+                  )}
+                  {discountVerifierDeptIds.length === 0 && (
+                    <p className="text-[11px] text-muted-foreground">Discount feature is disabled — no departments selected.</p>
                   )}
                 </div>
               </div>
