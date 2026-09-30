@@ -534,6 +534,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
   };
 
   // ── Feature flags ──────────────────────────────────────────────────────────
+  const [chatWidgetEnabled, setChatWidgetEnabled]           = useState(true);
+  const [helpdeskWidgetEnabled, setHelpdeskWidgetEnabled]   = useState(true);
   const [studioEnabled, setStudioEnabled]               = useState(true);
   const [hrPortalEnabled, setHrPortalEnabled]           = useState(true);
   const [hrPortalAdminEnabled, setHrPortalAdminEnabled] = useState(true);
@@ -736,6 +738,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         discountVerifierDeptIdRes,
         approvalTimerHrRes, approvalTimerGmRes, approvalTimerCeoRes,
         pipelineStagesRes,
+        chatWidgetRes, helpdeskWidgetRes,
       ] = await Promise.allSettled([
         settingsAPI.get('document_studio_enabled'),
         settingsAPI.get('hr_portal_enabled'),
@@ -763,6 +766,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.get('approval_timer_gm_minutes'),
         settingsAPI.get('approval_timer_ceo_minutes'),
         settingsAPI.get('pipeline_stages'),
+        settingsAPI.get('chat_widget_enabled'),
+        settingsAPI.get('helpdesk_widget_enabled'),
       ]);
       if (studioRes.status === 'fulfilled' && studioRes.value?.value !== undefined)
         setStudioEnabled(studioRes.value.value !== 'false');
@@ -833,6 +838,10 @@ const WorkflowBuilder = ({ onViewChange }) => {
       if (pipelineStagesRes.status === 'fulfilled' && pipelineStagesRes.value?.value) {
         try { setPipelineStages(JSON.parse(pipelineStagesRes.value.value)); } catch { setPipelineStages([]); }
       }
+      if (chatWidgetRes.status === 'fulfilled' && chatWidgetRes.value?.value !== undefined && chatWidgetRes.value.value !== null)
+        setChatWidgetEnabled(chatWidgetRes.value.value !== 'false');
+      if (helpdeskWidgetRes.status === 'fulfilled' && helpdeskWidgetRes.value?.value !== undefined && helpdeskWidgetRes.value.value !== null)
+        setHelpdeskWidgetEnabled(helpdeskWidgetRes.value.value !== 'false');
     } catch {}
 
     // Load Turnstile required depts separately (JSON array)
@@ -924,6 +933,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
         settingsAPI.set('approval_timer_gm_minutes',  approvalTimerGm  !== '' ? String(parseFloat(approvalTimerGm))  : '0'),
         settingsAPI.set('approval_timer_ceo_minutes', approvalTimerCeo !== '' ? String(parseFloat(approvalTimerCeo)) : '0'),
         settingsAPI.set('pipeline_stages', JSON.stringify(pipelineStages)),
+        settingsAPI.set('chat_widget_enabled', String(chatWidgetEnabled)),
+        settingsAPI.set('helpdesk_widget_enabled', String(helpdeskWidgetEnabled)),
       ]);
       toast.success('Feature settings saved.');
       window.dispatchEvent(new CustomEvent('rms:flags:updated'));
@@ -1313,6 +1324,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
 
             {settingsReady && <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {[
+                { label: 'Chat Widget', desc: 'The floating green chat button visible to department users on every page. Disable to hide it system-wide immediately — active users see it disappear within 15 seconds without refreshing.', value: chatWidgetEnabled, set: setChatWidgetEnabled },
+                { label: 'Help Desk Widget', desc: 'The floating blue Help Desk button visible to department users on every page. Disable to stop staff from sending questions or suggestions to Super Admin. Disappears live within 15 seconds.', value: helpdeskWidgetEnabled, set: setHelpdeskWidgetEnabled },
                 { label: 'Document Studio', desc: 'Allows all users to access the Document Studio for printing and PDF generation. When disabled the Studio tab is hidden from the sidebar.', value: studioEnabled, set: setStudioEnabled },
                 { label: 'HR Portal (Departments)', desc: 'Grants the HR department and HR-role users access to the HR management portal. When disabled, the HR Portal button is hidden from department sidebars — Super Admin access is controlled separately below.', value: hrPortalEnabled, set: setHrPortalEnabled },
                 { label: 'HR Portal (Super Admin)', desc: 'Grants the Super Admin account access to the HR management portal. Toggle this independently — disabling it hides HR Portal from the admin sidebar while departments can still have it enabled, and vice versa.', value: hrPortalAdminEnabled, set: setHrPortalAdminEnabled },

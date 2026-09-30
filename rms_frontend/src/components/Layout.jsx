@@ -777,6 +777,8 @@ const Navbar = ({ user, toggleSidebar, isCollapsed, notifications, setNotificati
 const Layout = ({ children, user, currentView, onViewChange }) => {
   const { logout } = useAuth();
   const { isOnline } = useNetwork();
+  const [chatWidgetEnabled, setChatWidgetEnabled]         = useState(true);
+  const [helpDeskWidgetEnabled, setHelpDeskWidgetEnabled] = useState(true);
   const [isCollapsed, setIsCollapsed] = useState(() => {
     const saved = localStorage.getItem('rms_sidebar_collapsed');
     return saved === 'true';
@@ -797,6 +799,25 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
       if (parent?.name) setParentDeptLabel(parent.name);
     }).catch(() => {});
   }, [user?.parentDeptId, user?.parentDeptName, user?.isSubAccount]);
+
+  // Poll widget visibility settings every 15 s so changes take effect live
+  useEffect(() => {
+    const pollWidgetSettings = async () => {
+      try {
+        const [chatRes, hdRes] = await Promise.allSettled([
+          settingsAPI.get('chat_widget_enabled'),
+          settingsAPI.get('helpdesk_widget_enabled'),
+        ]);
+        if (chatRes.status === 'fulfilled' && chatRes.value?.value !== undefined && chatRes.value.value !== null)
+          setChatWidgetEnabled(chatRes.value.value !== 'false');
+        if (hdRes.status === 'fulfilled' && hdRes.value?.value !== undefined && hdRes.value.value !== null)
+          setHelpDeskWidgetEnabled(hdRes.value.value !== 'false');
+      } catch {}
+    };
+    pollWidgetSettings();
+    const iv = setInterval(pollWidgetSettings, 15_000);
+    return () => clearInterval(iv);
+  }, []);
 
   useEffect(() => {
     const fetchNotifs = async () => {
@@ -1454,11 +1475,13 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
         </div>
       )}
 
-      <ChatWidget
-        initialDeepLink={chatDeepLink}
-        onDeepLinkConsumed={() => setChatDeepLink(null)}
-      />
-      {user?.role === 'department' && <HelpDeskWidget />}
+      {chatWidgetEnabled && (
+        <ChatWidget
+          initialDeepLink={chatDeepLink}
+          onDeepLinkConsumed={() => setChatDeepLink(null)}
+        />
+      )}
+      {helpDeskWidgetEnabled && user?.role === 'department' && <HelpDeskWidget />}
     </div>
   );
 };
