@@ -6403,6 +6403,16 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
 
     // Stamp (or update) head on the effective department if submission is now an approved HEAD
     if (isApprovedHead && effectiveDeptId) {
+      const personStaffId = (data.staffId ?? sub.staffId ?? '')?.toUpperCase() || null;
+      // When this person was previously approved as ASSISTANT/MEMBER, a sub-account
+      // Department was created with their staffId (@unique). Clear it first so the
+      // parent department update doesn't violate the unique constraint (P2002).
+      if (personStaffId) {
+        await prisma.department.updateMany({
+          where: { staffId: personStaffId, isSubAccount: true, id: { not: effectiveDeptId } },
+          data: { staffId: null }
+        });
+      }
       await prisma.department.update({
         where: { id: effectiveDeptId },
         data: {
@@ -6410,7 +6420,7 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
           headTitle: 'Head of Department',
           headEmail: data.officialEmail,
           phone:     data.phone  ?? sub.phone  ?? null,
-          staffId:   (data.staffId ?? sub.staffId ?? '')?.toUpperCase() || null,
+          staffId:   personStaffId,
         }
       });
     }
@@ -13080,6 +13090,18 @@ const server = app.listen(PORT, async () => {
         if (toUpper.length > 0) logger.info(`[BOOT] Uppercased ${toUpper.length} department name(s).`);
       } catch (e) {
         logger.warn('[BOOT] Department name normalization skipped:', e.message);
+      }
+
+      // One-time: normalize deptName in onboarding submissions to UPPERCASE
+      try {
+        const allSubs = await prisma.onboardingSubmission.findMany({ select: { id: true, deptName: true } });
+        const toUpperSubs = allSubs.filter(s => s.deptName && s.deptName !== s.deptName.toUpperCase());
+        for (const s of toUpperSubs) {
+          await prisma.onboardingSubmission.update({ where: { id: s.id }, data: { deptName: s.deptName.toUpperCase() } });
+        }
+        if (toUpperSubs.length > 0) logger.info(`[BOOT] Uppercased deptName in ${toUpperSubs.length} onboarding submission(s).`);
+      } catch (e) {
+        logger.warn('[BOOT] Submission deptName normalization skipped:', e.message);
       }
 
       // Secondary setup tasks already in serve.js logic
