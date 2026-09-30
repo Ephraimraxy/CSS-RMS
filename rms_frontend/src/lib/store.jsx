@@ -699,15 +699,15 @@ export async function addDepartment(dept) {
 
 export async function deleteDepartment(id) {
   await ensureInitialized();
-  try {
-    await deptAPI.deleteDepartment(id);
-    toast.success("Department removed from cloud");
-  } catch (err) {
-    console.warn("Offline: Department removed locally ONLY", err);
+  // If the server responds with an error (network present), propagate it —
+  // silently removing from local cache only would make the department reappear
+  // on the next data fetch and mislead the admin.
+  if (!navigator.onLine) {
     const all = await getDepartments();
-    const filtered = all.filter(d => d.id !== id);
-    await departmentStore.setItem('all', filtered);
+    await departmentStore.setItem('all', all.filter(d => d.id !== id));
+    return;
   }
+  await deptAPI.deleteDepartment(id);
 }
 
 export async function validateDepartmentLogin(deptName, code) {

@@ -2454,6 +2454,7 @@ app.get('/api/departments', async (req, res) => {
     }
 
     const departments = await prisma.department.findMany({
+      where: { isDeleted: false },
       orderBy: { name: 'asc' },
       select: isGlobalAdmin
         ? { id: true, name: true, type: true, code: true, staffId: true, headName: true, headTitle: true, headEmail: true, phone: true, address: true, parentId: true, stamp: true, accessCode: true, accessCodeLabel: true, codeChangedByDept: true, isSubAccount: true }
@@ -3691,8 +3692,18 @@ app.post('/api/departments/:id/resend-welcome', authenticateToken, requireRoles(
 
 app.delete('/api/departments/:id', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
-    const { id } = req.params;
-    await prisma.department.delete({ where: { id: parseInt(id) } });
+    const deptId = parseInt(req.params.id);
+    const dept = await prisma.department.findUnique({ where: { id: deptId }, select: { name: true } });
+    if (!dept) return res.status(404).json({ error: 'Department not found' });
+    if (/^super\s*admin$/i.test(dept.name)) return res.status(403).json({ error: 'Super Admin department cannot be deleted' });
+    // Soft-delete: marks as deleted and disabled so no new logins are possible.
+    // Hard delete is avoided because departments have related records (requisitions,
+    // submissions, chat messages, etc.) that would violate FK constraints and
+    // silently fail, making the department appear to return after deletion.
+    await prisma.department.update({
+      where: { id: deptId },
+      data: { isDeleted: true, isDisabled: true }
+    });
     res.json({ success: true });
   } catch (error) { sendError(res, 500, error.message); }
 });

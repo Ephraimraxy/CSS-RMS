@@ -538,7 +538,7 @@ const EditBar = ({ onCancel }) => (
 );
 
 // ── ThreadView ────────────────────────────────────────────────────────────────
-const ThreadView = ({ thread, myDeptId, onBack, onNewMessage }) => {
+const ThreadView = ({ thread, myDeptId, onBack, onNewMessage, onClose }) => {
   const [messages, setMessages]     = useState([]);
   const [input, setInput]           = useState('');
   const [sending, setSending]       = useState(false);
@@ -745,18 +745,21 @@ const ThreadView = ({ thread, myDeptId, onBack, onNewMessage }) => {
   return (
     <div className="relative flex flex-col h-full">
       {/* Header */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-border/40 shrink-0">
-          <button onClick={onBack} className="p-1 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+        <div className="bg-primary flex items-center gap-3 px-4 py-3 shrink-0">
+          <button onClick={onBack} className="p-1 rounded-lg bg-white/20 hover:bg-white/30 transition-colors text-white">
             <ArrowLeft size={16} />
           </button>
           {isGroup
-            ? <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0"><Users size={14} className="text-primary" /></div>
+            ? <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0"><Users size={14} className="text-white" /></div>
             : <Avatar name={thread.deptName} size={8} />
           }
           <div className="flex-1 min-w-0">
-            <p className="font-bold text-sm text-foreground truncate">{isGroup ? 'Group Chats' : thread.deptName}</p>
-            <p className="text-[10px] text-muted-foreground">{isGroup ? 'Visible to all departments' : 'Direct message'}</p>
+            <p className="font-bold text-sm text-white truncate">{isGroup ? 'Group Chats' : thread.deptName}</p>
+            <p className="text-[10px] text-white/70">{isGroup ? 'Visible to all departments' : 'Direct message'}</p>
           </div>
+          <button onClick={onClose} className="text-white/70 hover:text-white transition-colors p-1" title="Close">
+            <X size={16} />
+          </button>
         </div>
 
         {/* Messages */}
@@ -912,7 +915,7 @@ const ThreadView = ({ thread, myDeptId, onBack, onNewMessage }) => {
 };
 
 // ── NewDMView ─────────────────────────────────────────────────────────────────
-const NewDMView = ({ myDeptId, onSelect, onBack }) => {
+const NewDMView = ({ myDeptId, onSelect, onBack, onClose }) => {
   const [depts, setDepts] = useState([]);
   const [search, setSearch] = useState('');
 
@@ -924,11 +927,14 @@ const NewDMView = ({ myDeptId, onSelect, onBack }) => {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border/40 shrink-0">
-        <button onClick={onBack} className="p-1 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+      <div className="bg-primary flex items-center gap-3 px-4 py-3 shrink-0">
+        <button onClick={onBack} className="p-1 rounded-lg bg-white/20 hover:bg-white/30 transition-colors text-white">
           <ArrowLeft size={16} />
         </button>
-        <p className="font-bold text-sm text-foreground">New Message</p>
+        <p className="font-bold text-sm text-white flex-1">New Message</p>
+        <button onClick={onClose} className="text-white/70 hover:text-white transition-colors p-1" title="Close">
+          <X size={16} />
+        </button>
       </div>
       <div className="px-4 py-2 border-b border-border/20 shrink-0">
         <input autoFocus value={search} onChange={e => setSearch(e.target.value)}
@@ -950,18 +956,24 @@ const NewDMView = ({ myDeptId, onSelect, onBack }) => {
 };
 
 // ── InboxView ─────────────────────────────────────────────────────────────────
-const InboxView = ({ myDeptId, onOpenThread, onNewDM, conversations, loading }) => {
+const InboxView = ({ myDeptId, onOpenThread, onNewDM, conversations, loading, onClose }) => {
   const { group, dms } = conversations;
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border/40 shrink-0">
-        <p className="font-black text-sm text-foreground uppercase tracking-wide">Messages</p>
+      <div className="bg-primary px-4 py-3 flex items-center gap-3 shrink-0">
+        <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
+          <MessageCircle size={16} className="text-white" />
+        </div>
+        <p className="text-white font-black text-sm flex-1">Messages</p>
         <button onClick={onNewDM}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 hover:bg-primary/20 text-primary transition-colors"
+          className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors mr-1"
           title="Start a direct message">
-          <span className="text-[10px] font-black uppercase tracking-widest">Chats</span>
+          <span className="text-[10px] font-black uppercase tracking-widest">New</span>
           <Plus size={12} />
+        </button>
+        <button onClick={onClose} className="text-white/70 hover:text-white transition-colors p-1" title="Close">
+          <X size={16} />
         </button>
       </div>
 
@@ -1111,13 +1123,16 @@ export default function ChatWidget({ initialDeepLink, onDeepLinkConsumed }) {
     dragRef.current = { on: true, sx: cx, sy: cy, bx: p.x, by: p.y, moved: false };
   };
 
-  // Panel anchors near the button; always stays fully inside the viewport
+  // Panel anchors near the button; full-width sheet on mobile
   const panelStyle = useMemo(() => {
     if (!pos) return {};
     const vw = window.innerWidth, vh = window.innerHeight;
-    // horizontal: right-align to button, then clamp
+    if (vw < 480) {
+      // Mobile: full-width bottom sheet anchored above the bottom nav
+      return { left: '8px', right: '8px', bottom: `${bottomClear() + BTN + GAP}px`, width: 'calc(100vw - 16px)', maxHeight: `${vh * 0.75}px` };
+    }
+    // Desktop: float near the button
     const left = clampN(pos.x + BTN - PW, EDGE, vw - PW - EDGE);
-    // vertical: prefer above button; fall back to below; last resort: best fit
     let top;
     if (pos.y - GAP >= PH + EDGE)                   top = pos.y - PH - GAP;
     else if (vh - (pos.y + BTN + GAP) >= PH + EDGE) top = pos.y + BTN + GAP;
@@ -1219,24 +1234,25 @@ export default function ChatWidget({ initialDeepLink, onDeepLinkConsumed }) {
         )}
       </button>
 
-      {/* Panel — floats near the button */}
+      {/* Panel — full-width sheet on mobile, floating on desktop */}
       {open && (
         <div
-          className="fixed z-50 w-[340px] h-[540px] bg-card border border-border/60 rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in duration-200"
-          style={panelStyle}
+          className="fixed z-50 bg-card border border-border/60 rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in duration-200"
+          style={{ width: window.innerWidth < 480 ? undefined : '340px', height: window.innerWidth < 480 ? undefined : '540px', ...panelStyle }}
         >
           {screen === 'inbox' && (
             <InboxView myDeptId={myDeptId} conversations={conversations} loading={convLoading}
-              onOpenThread={openThread} onNewDM={() => setScreen('new')} />
+              onOpenThread={openThread} onNewDM={() => setScreen('new')} onClose={() => setOpen(false)} />
           )}
           {screen === 'thread' && activeThread && (
             <ThreadView thread={activeThread} myDeptId={myDeptId}
               onBack={() => { setScreen('inbox'); loadConversations(); }}
-              onNewMessage={loadConversations} />
+              onNewMessage={loadConversations} onClose={() => setOpen(false)} />
           )}
           {screen === 'new' && (
             <NewDMView myDeptId={myDeptId} onBack={() => setScreen('inbox')}
-              onSelect={(dept) => openThread({ type: 'dm', deptId: dept.id, deptName: dept.name })} />
+              onSelect={(dept) => openThread({ type: 'dm', deptId: dept.id, deptName: dept.name })}
+              onClose={() => setOpen(false)} />
           )}
         </div>
       )}

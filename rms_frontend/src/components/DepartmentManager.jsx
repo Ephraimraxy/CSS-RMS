@@ -1603,12 +1603,18 @@ const DepartmentManager = ({ onViewChange }) => {
     if (!pendingDept) return;
     setIsProcessing(true);
     await new Promise(r => setTimeout(r, 400));
-    await deleteDepartment(pendingDept.id);
-    await loadDepts();
-    setIsProcessing(false);
-    setIsDeleteModalOpen(false);
-    toast.error(`${pendingDept.name} Department removed`);
-    setPendingDept(null);
+    try {
+      await deleteDepartment(pendingDept.id);
+      await loadDepts();
+      setIsDeleteModalOpen(false);
+      toast.success(`${pendingDept.name} has been permanently deleted`);
+      setPendingDept(null);
+    } catch (err) {
+      await loadDepts();
+      toast.error(err?.response?.data?.error || 'Failed to delete department. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const [isSecurityResetModalOpen, setIsSecurityResetModalOpen] = useState(false);
