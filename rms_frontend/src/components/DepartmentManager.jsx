@@ -1560,10 +1560,10 @@ const DepartmentManager = ({ onViewChange }) => {
   useEffect(() => { loadDepts(); }, []);
 
   useEffect(() => {
-    const handler = () => { loadDepts(); loadPendingCount(); };
+    const handler = () => loadDepts();
     window.addEventListener('globalHardRefresh', handler);
     return () => window.removeEventListener('globalHardRefresh', handler);
-  }, [loadPendingCount]);
+  }, []);
 
   useEffect(() => {
     // Falls back to the last known good cached value on a network failure, not blindly
@@ -1791,6 +1791,12 @@ const DepartmentManager = ({ onViewChange }) => {
   }, []);
 
   useEffect(() => { loadPendingCount(); }, [loadPendingCount]);
+
+  useEffect(() => {
+    const handler = () => loadPendingCount();
+    window.addEventListener('globalHardRefresh', handler);
+    return () => window.removeEventListener('globalHardRefresh', handler);
+  }, [loadPendingCount]);
 
   // Load submissions on tab switch / filter change, then poll every 20s for live updates
   useEffect(() => {
