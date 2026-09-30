@@ -6399,6 +6399,29 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
         where: { id: oldDeptId },
         data: { headName: null, headTitle: null, headEmail: null, phone: null, staffId: null }
       });
+
+      // Restore staffId on the person's sub-account so they can still log in.
+      // When they were promoted to HEAD their sub-account's staffId was cleared to null
+      // (to avoid the @unique constraint). Demotion reverses that.
+      const personStaffId = (data.staffId ?? sub.staffId ?? '')?.toUpperCase() || null;
+      const fullName = `${newFirst} ${newSurname}`;
+      if (personStaffId && !isApprovedHead) {
+        const subAccount = await prisma.department.findFirst({
+          where: {
+            parentId: oldDeptId,
+            isSubAccount: true,
+            isDeleted: false,
+            staffId: null,
+            name: { contains: fullName, mode: 'insensitive' },
+          }
+        });
+        if (subAccount) {
+          await prisma.department.update({
+            where: { id: subAccount.id },
+            data: { staffId: personStaffId }
+          });
+        }
+      }
     }
 
     // Stamp (or update) head on the effective department if submission is now an approved HEAD
