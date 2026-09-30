@@ -78,6 +78,9 @@ export const authAPI = {
   async checkSession() {
     return api.get('/auth/me');
   },
+  async syncProfile() {
+    return api.post('/auth/sync');
+  },
   
   async logout() {
     try {

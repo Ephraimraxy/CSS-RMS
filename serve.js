@@ -2025,6 +2025,75 @@ app.post('/api/auth/refresh', authenticateToken, async (req, res) => {
   } catch (error) { sendError(res, 500, error.message); }
 });
 
+// ── Silent profile sync — re-reads DB and issues a fresh JWT with current privileges ─
+// Called by the frontend every 60 s so sub-account privilege changes, routing scope
+// changes, and dept data updates take effect live without the user needing to re-login.
+app.post('/api/auth/sync', authenticateToken, async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: 'Invalid session' });
+
+    // Super admin — nothing dynamic to sync from DB, just re-issue the same token
+    if (normalizeRole(user.role) === 'global_admin') {
+      const userData = { id: user.id, email: user.email, name: user.name, role: user.role, department: user.department, deptId: user.deptId, ...(user.tokenVersion != null ? { tokenVersion: user.tokenVersion } : {}) };
+      await revokeToken(req.token);
+      const newToken = jwt.sign(userData, JWT_SECRET, { expiresIn: '12h' });
+      res.cookie('rms_token', newToken, cookieOptions);
+      return res.json({ user: userData });
+    }
+
+    // Department / sub-account — re-read latest record from DB
+    const deptId = user.deptId ? (typeof user.deptId === 'number' ? user.deptId : parseInt(user.deptId)) : null;
+    if (!deptId) return res.status(400).json({ error: 'No deptId in session' });
+
+    const dept = await prisma.department.findUnique({
+      where: { id: deptId },
+      select: {
+        id: true, name: true, tokenVersion: true, isDisabled: true, isDeleted: true,
+        isSubAccount: true, parentId: true,
+        directRoute: true, allowedRouteDeptIds: true,
+        privilegeAmount: true, approvalLimit: true,
+        cashPrivilege: true, memoPrivilege: true, materialPrivilege: true,
+        parent: { select: { id: true, name: true } },
+      }
+    });
+
+    if (!dept || dept.isDeleted || dept.isDisabled) {
+      return res.status(403).json({ error: 'Department no longer active' });
+    }
+
+    // Invalidate if tokenVersion was bumped (security reset)
+    if (dept.tokenVersion != null && user.tokenVersion != null && dept.tokenVersion !== user.tokenVersion) {
+      return res.status(401).json({ error: 'Session invalidated — please log in again' });
+    }
+
+    const userData = {
+      id: user.id,
+      name: dept.name,
+      role: 'department',
+      deptId: dept.id,
+      tokenVersion: dept.tokenVersion || 0,
+      email: user.email,
+      ...(dept.isSubAccount ? {
+        isSubAccount: true,
+        parentDeptId: dept.parentId,
+        parentDeptName: dept.parent?.name || null,
+        directRoute: dept.directRoute ?? false,
+        allowedRouteDeptIds: (() => { try { return JSON.parse(dept.allowedRouteDeptIds || 'null') || []; } catch { return []; } })(),
+      } : {}),
+      ...(dept.privilegeAmount  != null ? { privilegeAmount: dept.privilegeAmount }   : {}),
+      ...(dept.approvalLimit    != null ? { approvalLimit: dept.approvalLimit }         : {}),
+      ...(dept.memoPrivilege            ? { memoPrivilege: true }                       : {}),
+      ...(dept.materialPrivilege        ? { materialPrivilege: true }                   : {}),
+    };
+
+    await revokeToken(req.token);
+    const newToken = jwt.sign(userData, JWT_SECRET, { expiresIn: '12h' });
+    res.cookie('rms_token', newToken, cookieOptions);
+    res.json({ user: userData });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
 app.post('/api/auth/dept-login', authLimiter, async (req, res) => {
   try {
     const parsed = z.object({

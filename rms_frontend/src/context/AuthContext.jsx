@@ -58,6 +58,25 @@ export const AuthProvider = ({ children }) => {
     verifySession();
   }, []);
 
+  // Silent background sync — re-reads DB every 60 s and refreshes the JWT
+  // with current privileges, routing scope, and dept data. Completely invisible
+  // to users: no spinner, no state flag, UI just reflects updated values quietly.
+  useEffect(() => {
+    const syncProfile = async () => {
+      try {
+        const result = await authAPI.syncProfile();
+        if (result?.user) {
+          setUser(result.user);
+          localStorage.setItem('rms_user', JSON.stringify(result.user));
+        }
+      } catch {
+        // Ignore — offline, server error, or session expired (handled by API interceptor)
+      }
+    };
+    const iv = setInterval(syncProfile, 60_000);
+    return () => clearInterval(iv);
+  }, []);
+
   const login = async (email, password) => {
     const { user: userData } = await authAPI.login(email, password);
     // Server sets the HttpOnly auth cookie — we only keep user data for the UI
