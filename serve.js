@@ -5689,7 +5689,7 @@ function makeOfficialEmail(firstName, surname) {
 app.get('/api/public/onboarding/departments', async (req, res) => {
   try {
     const depts = await prisma.department.findMany({
-      where: { isDeleted: false, isDisabled: false, isSubAccount: false },
+      where: { isDeleted: false, isSubAccount: false },
       select: { id: true, name: true },
       orderBy: { name: 'asc' }
     });
