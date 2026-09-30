@@ -13,6 +13,7 @@ import { getNotifications, getSyncQueueStatus, flushSyncQueue, markNotificationR
 import { reqAPI, settingsAPI, authAPI } from '../lib/api';
 import { loadFeatureFlag } from '../lib/featureFlag';
 import ChatWidget from './ChatWidget';
+import HelpDeskWidget from './HelpDeskWidget';
 
 const normalizeRole = (r) => (r || '').toLowerCase().replace(/\s+/g, '_');
 
@@ -1457,6 +1458,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
         initialDeepLink={chatDeepLink}
         onDeepLinkConsumed={() => setChatDeepLink(null)}
       />
+      {user?.role === 'department' && <HelpDeskWidget />}
     </div>
   );
 };

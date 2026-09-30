@@ -5,7 +5,7 @@ import { reqAPI, settingsAPI, adminAPI } from '../lib/api';
 import { getEffectiveAmount, getLiveTrailDepartment, normalizeReq } from '../lib/requisitionDisplay';
 import toast from 'react-hot-toast';
 import { ArrowUpRight, Clock, CheckCircle2, XCircle, ListFilter, Eye, AlertTriangle, ShieldCheck, ArrowRight, Paperclip, ChevronDown, ChevronUp, Send, BadgeCheck, RotateCcw, FileText, MessageSquare, AlertOctagon } from 'lucide-react';
-import HelpDeskWidget from './HelpDeskWidget';
+
 
 const StatCard = ({ label, value, icon: Icon, color, onClick, title, active, activeLabel, danger }) => (
   <div onClick={onClick} title={title} className={`glass p-3.5 sm:p-5 rounded-[1.5rem] sm:rounded-[2rem] border relative overflow-hidden group transition-all bg-white/70 shadow-sm ${danger ? 'border-red-400 ring-2 ring-red-300/60 bg-red-50/60' : active ? `border-${color}-400 ring-2 ring-${color}-300/50` : 'border-border/40'} ${onClick ? 'hover:border-primary/40 cursor-pointer hover:shadow-xl hover:shadow-primary/5 active:scale-[0.98]' : ''}`}>
@@ -1119,7 +1119,6 @@ const Dashboard = ({ onViewChange }) => {
         </div>
       </div>
 
-      {user?.role === 'department' && <HelpDeskWidget />}
     </>
   );
 };
