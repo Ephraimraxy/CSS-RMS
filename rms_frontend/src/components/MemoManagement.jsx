@@ -636,6 +636,12 @@ const MemoManagement = ({ onViewChange }) => {
 
   useEffect(() => { loadMemos(); }, [loadMemos]);
 
+  useEffect(() => {
+    const handler = () => loadMemos();
+    window.addEventListener('globalHardRefresh', handler);
+    return () => window.removeEventListener('globalHardRefresh', handler);
+  }, [loadMemos]);
+
   // Open new Memo form when triggered by local-draft "Continue editing" in navbar
   useEffect(() => {
     const handle = (e) => {

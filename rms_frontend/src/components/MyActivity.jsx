@@ -10,14 +10,18 @@ const MyActivity = ({ onViewChange }) => {
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
 
+  const loadActivity = async () => {
+    const log = await getMyActivityLog();
+    setActivities(log);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadActivity(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
-    const load = async () => {
-      const log = await getMyActivityLog();
-      setActivities(log);
-      setLoading(false);
-    };
-    load();
-  }, []);
+    window.addEventListener('globalHardRefresh', loadActivity);
+    return () => window.removeEventListener('globalHardRefresh', loadActivity);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSignatureUpload = async (e) => {
     const file = e.target.files?.[0];

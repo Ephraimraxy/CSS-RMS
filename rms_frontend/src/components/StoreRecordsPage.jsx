@@ -283,6 +283,12 @@ const StoreRecordsPage = ({ onViewChange }) => {
 
   useEffect(() => { loadRecords(); }, [loadRecords]);
 
+  useEffect(() => {
+    const handler = () => loadRecords();
+    window.addEventListener('globalHardRefresh', handler);
+    return () => window.removeEventListener('globalHardRefresh', handler);
+  }, [loadRecords]);
+
   // ── Form helpers ─────────────────────────────────────────────────────────────
   const openNew = async () => {
     setEditingId(null);

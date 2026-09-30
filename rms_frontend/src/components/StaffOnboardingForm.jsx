@@ -107,6 +107,8 @@ export default function StaffOnboardingForm() {
   const [roleChecking, setRoleChecking] = useState(false);
   const [showCustomDept, setShowCustomDept] = useState(false);
 
+  const [customDeptDuplicate, setCustomDeptDuplicate] = useState(null); // matched existing dept
+
   const [form, setForm] = useState({
     staffId: '', surname: '', firstName: '', middleName: '',
     phone: '', personalEmail: '',
@@ -189,6 +191,7 @@ export default function StaffOnboardingForm() {
 
   const handleNotListed = () => {
     setShowCustomDept(true);
+    setCustomDeptDuplicate(null);
     setForm(prev => ({ ...prev, deptId: '', customDeptName: '' }));
     clearErr('deptId'); setServerError('');
     checkRoles('');
@@ -196,8 +199,28 @@ export default function StaffOnboardingForm() {
 
   const handleBackToDepts = () => {
     setShowCustomDept(false);
+    setCustomDeptDuplicate(null);
     setForm(prev => ({ ...prev, customDeptName: '' }));
     clearErr('deptId');
+  };
+
+  const handleCustomDeptChange = (val) => {
+    const upper = toUpper(val);
+    setField('customDeptName', upper);
+    if (upper.length >= 2) {
+      const match = departments.find(d => d.name.toUpperCase() === upper);
+      setCustomDeptDuplicate(match || null);
+    } else {
+      setCustomDeptDuplicate(null);
+    }
+  };
+
+  const switchToExistingDept = (dept) => {
+    setShowCustomDept(false);
+    setCustomDeptDuplicate(null);
+    setForm(prev => ({ ...prev, deptId: String(dept.id), customDeptName: '' }));
+    clearErr('deptId'); setServerError('');
+    checkRoles(String(dept.id));
   };
 
   const officialEmail = makeOfficialEmail(form.firstName, form.surname);
@@ -205,8 +228,9 @@ export default function StaffOnboardingForm() {
   const validate = () => {
     const e = {};
     if (!form.staffId.trim()) e.staffId = 'Staff ID is required.';
-    else if (!/^\d+$/.test(form.staffId.trim())) e.staffId = 'Staff ID must be numbers only (e.g. 12345).';
-    else if (form.staffId.trim().length < 5) e.staffId = 'Staff ID must be at least 5 digits.';
+    else if (!/^\d+$/.test(form.staffId.trim())) e.staffId = 'Staff ID must be numbers only. Contact the HR department for your verified Staff ID.';
+    else if (form.staffId.trim().length !== 5) e.staffId = 'Staff ID must be exactly 5 digits (e.g. 10001, 20938). Contact HR for your correct Staff ID.';
+    else if (!/^[123]/.test(form.staffId.trim())) e.staffId = 'Staff ID must start with 1, 2, or 3 (e.g. 10001, 20938, 30001). Contact the HR department for your verified and valid Staff ID — do not enter an ID that was not issued to you.';
     else if (taken.staffId) e.staffId = 'This Staff ID is already registered. Contact admin if this is an error.';
     if (!form.surname.trim()) e.surname = 'Surname is required.';
     if (!form.firstName.trim()) e.firstName = 'First name is required.';
@@ -434,7 +458,7 @@ export default function StaffOnboardingForm() {
             {/* ── Section 1: Personal Details ── */}
             <Section number="1" title="Personal Details">
               <Field label="Staff ID" required error={errors.staffId}
-                hint={taken.staffId === false ? null : taken.staffId === true ? null : 'Numbers only, minimum 5 digits — e.g. 12345'}
+                hint={taken.staffId === false ? null : taken.staffId === true ? null : 'Exactly 5 digits starting with 1, 2, or 3 — e.g. 10001, 20938, 30001. Contact HR if unsure.'}
                 fieldId="staffId">
                 <input
                   type="text"
@@ -521,9 +545,10 @@ export default function StaffOnboardingForm() {
                 hint="Your personal/private email — NOT a CSS Group official email" fieldId="personalEmail">
                 <input type="email" value={form.personalEmail}
                   onChange={e => {
-                    setField('personalEmail', e.target.value.toLowerCase());
+                    const v = e.target.value.toLowerCase().replace(/\s+/g, '');
+                    setField('personalEmail', v);
                     setTaken(prev => ({ ...prev, personalEmail: null }));
-                    liveCheck('personalEmail', e.target.value.toLowerCase().trim());
+                    liveCheck('personalEmail', v.trim());
                   }}
                   placeholder="yourname@gmail.com"
                   style={inputStyle(errors.personalEmail || taken.personalEmail || isCompanyEmail(form.personalEmail))} maxLength={120}
@@ -586,7 +611,7 @@ export default function StaffOnboardingForm() {
                   >
                     <option value="">{deptLoading ? 'Loading departments…' : '— Select your department —'}</option>
                     {departments.filter(d => !/^super\s*admin$/i.test(d.name)).map(d => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
+                      <option key={d.id} value={d.id}>{d.name.toUpperCase()}</option>
                     ))}
                   </select>
                   {/* Not listed toggle */}
@@ -614,18 +639,39 @@ export default function StaffOnboardingForm() {
                   <input
                     type="text"
                     value={form.customDeptName}
-                    onChange={e => setField('customDeptName', toUpper(e.target.value))}
+                    onChange={e => handleCustomDeptChange(e.target.value)}
                     placeholder="E.G. POULTRY LAYERS PEN 1"
-                    style={inputStyle(errors.deptId)}
+                    style={inputStyle(errors.deptId || customDeptDuplicate)}
                     maxLength={100}
                     autoFocus
-                    onFocus={e => e.target.style.borderColor = errors.deptId ? '#fca5a5' : '#16a34a'}
-                    onBlur={e => e.target.style.borderColor = errors.deptId ? '#fca5a5' : '#e5e7eb'}
+                    onFocus={e => e.target.style.borderColor = (errors.deptId || customDeptDuplicate) ? '#fca5a5' : '#16a34a'}
+                    onBlur={e => e.target.style.borderColor = (errors.deptId || customDeptDuplicate) ? '#fca5a5' : '#e5e7eb'}
                   />
-                  <div style={{ display:'flex', alignItems:'flex-start', gap:8, padding:'10px 12px', background:'#fffbeb', border:'1px solid #fcd34d', borderRadius:10, marginTop:4 }}>
-                    <svg style={{ flexShrink:0, marginTop:1 }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                    <span style={{ fontSize:12, fontWeight:700, color:'#92400e', lineHeight:1.5 }}>This department needs admin approval first before your enrollment can proceed.</span>
-                  </div>
+                  {customDeptDuplicate ? (
+                    <div style={{ display:'flex', flexDirection:'column', gap:8, padding:'12px 14px', background:'#fef2f2', border:'2px solid #fca5a5', borderRadius:12, marginTop:4 }}>
+                      <div style={{ display:'flex', alignItems:'flex-start', gap:8 }}>
+                        <span style={{ fontSize:16, flexShrink:0 }}>⚠️</span>
+                        <div>
+                          <p style={{ margin:0, fontSize:13, fontWeight:900, color:'#dc2626' }}>This department already exists!</p>
+                          <p style={{ margin:'3px 0 0', fontSize:12, fontWeight:600, color:'#b91c1c', lineHeight:1.5 }}>
+                            <strong>{customDeptDuplicate.name.toUpperCase()}</strong> is already in the system. Please go back and select it from the list — do not create a duplicate.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => switchToExistingDept(customDeptDuplicate)}
+                        style={{ padding:'10px 14px', borderRadius:10, border:'none', background:'#16a34a', color:'#fff', fontSize:13, fontWeight:900, cursor:'pointer', textAlign:'center' }}
+                      >
+                        Select {customDeptDuplicate.name.toUpperCase()} from the list
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display:'flex', alignItems:'flex-start', gap:8, padding:'10px 12px', background:'#fffbeb', border:'1px solid #fcd34d', borderRadius:10, marginTop:4 }}>
+                      <svg style={{ flexShrink:0, marginTop:1 }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                      <span style={{ fontSize:12, fontWeight:700, color:'#92400e', lineHeight:1.5 }}>This department needs admin approval first before your enrollment can proceed.</span>
+                    </div>
+                  )}
                 </Field>
               )}
 

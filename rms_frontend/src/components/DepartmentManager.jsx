@@ -1560,6 +1560,12 @@ const DepartmentManager = ({ onViewChange }) => {
   useEffect(() => { loadDepts(); }, []);
 
   useEffect(() => {
+    const handler = () => { loadDepts(); loadPendingCount(); };
+    window.addEventListener('globalHardRefresh', handler);
+    return () => window.removeEventListener('globalHardRefresh', handler);
+  }, [loadPendingCount]);
+
+  useEffect(() => {
     // Falls back to the last known good cached value on a network failure, not blindly
     // to "enabled" — so a disabled feature doesn't get exposed by a network blip.
     loadFeatureFlag('dept_creation_head_details_enabled').then(setDeptCreationHeadDetailsEnabled);

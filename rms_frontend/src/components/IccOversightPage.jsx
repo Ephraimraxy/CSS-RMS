@@ -601,6 +601,12 @@ export default function IccOversightPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    const handler = () => load();
+    window.addEventListener('globalHardRefresh', handler);
+    return () => window.removeEventListener('globalHardRefresh', handler);
+  }, [load]);
+
   const filtered = records.filter(r => {
     if (showFrozenOnly && !r.iccFrozen) return false;
     if (filterStatus !== 'all' && r.status?.toLowerCase() !== filterStatus) return false;

@@ -1149,6 +1149,12 @@ const WorkflowBuilder = ({ onViewChange }) => {
     })();
   }, []);
 
+  useEffect(() => {
+    const handler = () => { loadData(); loadFeatureFlags(); };
+    window.addEventListener('globalHardRefresh', handler);
+    return () => window.removeEventListener('globalHardRefresh', handler);
+  }, []);
+
   // Live sync, mirroring the desktop app's own 20-second heartbeat: the
   // desktop reports "correction applied" and correlates staff Name/
   // Department in the background continuously, but without this, seeing

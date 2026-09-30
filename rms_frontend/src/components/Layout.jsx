@@ -94,6 +94,7 @@ const REFRESH_STEPS = [
   { key: 'reqs',   label: 'Fetching latest requisitions' },
   { key: 'notifs', label: 'Refreshing notifications' },
   { key: 'page',   label: 'Syncing current page data' },
+  { key: 'reload', label: 'Clearing cache & reloading' },
 ];
 
 const Navbar = ({ user, toggleSidebar, isCollapsed, notifications, setNotifications, showBell, setShowBell, onLogout, onViewChange, currentView, actionAlert, onChatDeepLink, parentDeptLabel }) => {
@@ -381,30 +382,36 @@ const Navbar = ({ user, toggleSidebar, isCollapsed, notifications, setNotificati
     window.dispatchEvent(new CustomEvent('globalHardRefresh'));
     setStep('page', 'done'); ok++;
 
+    // Step 5: always clear PWA caches and hard-reload (APK + web)
+    setStep('reload', 'running');
     setRefreshSummary({ ok, fail });
     setRefreshRunning(false);
-    if (fail === 0) {
-      if (hadSwUpdate) {
-        // New deployment detected — tell the waiting SW to activate, then reload
-        // so the page loads the fresh JS/CSS assets instead of cached old ones
-        const activateAndReload = async () => {
-          try {
-            const reg = await navigator.serviceWorker.ready;
-            const waiting = reg.waiting;
-            if (waiting) {
-              await new Promise((resolve) => {
-                navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
-                waiting.postMessage({ type: 'SKIP_WAITING' });
-              });
-            }
-          } catch { /* SW not available — reload anyway */ }
-          window.location.reload();
-        };
-        setTimeout(activateAndReload, 800);
-      } else {
-        setTimeout(() => setShowRefreshPopover(false), 3500);
-      }
-    }
+
+    const activateAndReload = async () => {
+      try {
+        // Clear all Workbox/SW caches so stale assets are purged
+        if (navigator.onLine && 'caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map(k => caches.delete(k)));
+        }
+        // Activate any waiting service worker (new deployment)
+        if ('serviceWorker' in navigator) {
+          const reg = await navigator.serviceWorker.ready;
+          const waiting = reg.waiting;
+          if (waiting) {
+            await new Promise((resolve) => {
+              navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
+              waiting.postMessage({ type: 'SKIP_WAITING' });
+            });
+          }
+        }
+      } catch { /* SW not available — reload anyway */ }
+      setStep('reload', 'done');
+      await new Promise(r => setTimeout(r, 600));
+      window.location.reload();
+    };
+
+    setTimeout(activateAndReload, 400);
   };
 
   return (

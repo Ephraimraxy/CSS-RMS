@@ -3372,7 +3372,7 @@ app.post('/api/departments', authenticateToken, requireRoles(['global_admin']), 
       return res.status(400).json({ error: 'Invalid department payload' });
     }
     const { name, type, accessCode, headName, headTitle, headEmail, phone, staffId } = parsed.data;
-    const trimmedName = name.trim();
+    const trimmedName = name.trim().toUpperCase();
     const trimmedStaffId = staffId?.trim() ? staffId.trim().toUpperCase() : null;
 
     // Reject name clashes case-insensitively, regardless of Strategic/Operational type —
@@ -5764,8 +5764,9 @@ app.post('/api/public/onboarding', onboardingSubmitLimiter, async (req, res) => 
 
     // ── Required field validation ──────────────────────────────────────────
     if (!staffId)       return res.status(400).json({ error: 'Staff ID is required.' });
-    if (!/^\d+$/.test(staffId)) return res.status(400).json({ error: 'Staff ID must contain numbers only.' });
-    if (staffId.length < 5) return res.status(400).json({ error: 'Staff ID must be at least 5 digits.' });
+    if (!/^\d+$/.test(staffId)) return res.status(400).json({ field: 'staffId', error: 'Staff ID must contain numbers only. Contact the HR department for your verified Staff ID.' });
+    if (staffId.length !== 5) return res.status(400).json({ field: 'staffId', error: 'Staff ID must be exactly 5 digits (e.g. 10001, 20938). Contact HR for your correct Staff ID.' });
+    if (!/^[123]/.test(staffId)) return res.status(400).json({ field: 'staffId', error: 'Staff ID must start with 1, 2, or 3. Contact the HR department for your verified and valid Staff ID.' });
     if (!surname)       return res.status(400).json({ error: 'Surname is required.' });
     if (!firstName)     return res.status(400).json({ error: 'First name is required.' });
     if (!phone)         return res.status(400).json({ error: 'Phone number is required.' });
@@ -5809,6 +5810,19 @@ app.post('/api/public/onboarding', onboardingSubmitLimiter, async (req, res) => 
       const dept = await prisma.department.findUnique({ where: { id: deptId }, select: { name: true } });
       if (!dept) return res.status(400).json({ error: 'Selected department no longer exists. Please refresh and try again.' });
       deptName = dept.name;
+    }
+
+    // ── If custom name matches an existing dept (case-insensitive), use that dept ──
+    if (customDeptName && !deptId) {
+      const matched = await prisma.department.findFirst({
+        where: { name: { equals: customDeptName, mode: 'insensitive' }, isDeleted: false },
+        select: { id: true, name: true }
+      });
+      if (matched) {
+        deptId = matched.id;
+        deptName = matched.name;
+        customDeptName = null;
+      }
     }
 
     // ── Determine initial status ───────────────────────────────────────────
@@ -13040,6 +13054,18 @@ const server = app.listen(PORT, async () => {
         }
       } catch (e) {
         logger.warn('[BOOT] ICC name fix skipped:', e.message);
+      }
+
+      // One-time: normalize all department names to UPPERCASE
+      try {
+        const allDepts = await prisma.department.findMany({ select: { id: true, name: true } });
+        const toUpper = allDepts.filter(d => d.name !== d.name.toUpperCase());
+        for (const d of toUpper) {
+          await prisma.department.update({ where: { id: d.id }, data: { name: d.name.toUpperCase() } });
+        }
+        if (toUpper.length > 0) logger.info(`[BOOT] Uppercased ${toUpper.length} department name(s).`);
+      } catch (e) {
+        logger.warn('[BOOT] Department name normalization skipped:', e.message);
       }
 
       // Secondary setup tasks already in serve.js logic

@@ -1049,6 +1049,12 @@ const SubAccountsPanel = ({ isAdmin = false }) => {
     if (!isAdmin || selectedDeptId !== undefined) load();
   }, [selectedDeptId, isAdmin]);
 
+  useEffect(() => {
+    const handler = () => { if (!isAdmin || selectedDeptId !== undefined) load(); };
+    window.addEventListener('globalHardRefresh', handler);
+    return () => window.removeEventListener('globalHardRefresh', handler);
+  }, [isAdmin, selectedDeptId]);
+
   const resetCreateForm = () => {
     setNewFirstName('');
     setNewSurname('');

@@ -39,14 +39,18 @@ const AuditLogs = ({ onViewChange }) => {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const loadLogs = async () => {
+    const data = await getActivityLog();
+    setLogs(data);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadLogs(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
-    const loadLogs = async () => {
-      const data = await getActivityLog();
-      setLogs(data);
-      setLoading(false);
-    };
-    loadLogs();
-  }, []);
+    window.addEventListener('globalHardRefresh', loadLogs);
+    return () => window.removeEventListener('globalHardRefresh', loadLogs);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return <div className="p-20 text-center animate-pulse text-muted-foreground font-mono text-xs">Accessing Immutable Ledger...</div>;
 
