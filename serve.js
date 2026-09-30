@@ -6277,6 +6277,12 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
       const newDept = await prisma.department.findUnique({ where: { id: data.deptId } });
       if (!newDept) return res.status(400).json({ error: 'Selected department not found.' });
       data.deptName = newDept.name;
+      // Admin resolved the dept question by assigning an existing department —
+      // clear the custom dept name and unblock from DEPT_PENDING → PENDING
+      if (sub.status === 'DEPT_PENDING') {
+        data.customDeptName = null;
+        data.status = 'PENDING';
+      }
     }
 
     // Regenerate officialEmail from name
