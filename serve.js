@@ -5103,7 +5103,8 @@ app.post('/api/requisitions', authenticateToken, generalLimiter, async (req, res
       createdRecords.push(created);
 
       // ── Dept self-approval: auto-approve cash requests at or below the configured limit ──
-      if (!isDraft && isCashPayload && amount > 0) {
+      // Sub-accounts are excluded — their requests must always go to the head for approval.
+      if (!isDraft && isCashPayload && amount > 0 && !req.user.isSubAccount) {
         try {
           const [selfEnabledSetting, selfLimitSetting] = await Promise.all([
             prisma.systemSetting.findUnique({ where: { key: 'dept_self_approval_enabled' } }),
