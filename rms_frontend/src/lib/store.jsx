@@ -446,10 +446,21 @@ export function computeDashboardStats(all, user) {
 
   const operational = all.filter(isOperationalRequisition);
   const memos = all.filter(isMemoRecord);
-  const approved = operational.filter(r => r.status === 'approved' || r.finalApprovalStatus === 'treated').length;
-  const rejected = operational.filter(r => r.status === 'rejected').length;
-  const memoPending = memos.filter(r => r.status === 'pending' && r.finalApprovalStatus !== 'published').length;
-  const memoPublished = memos.filter(r => r.finalApprovalStatus === 'published').length;
+
+  // For stat cards: scope to records this dept actually SUBMITTED (not records sent to them
+  // by other depts). A record belongs to this dept when departmentId or creatorDeptId matches.
+  // Admin has no deptId restriction — sees all.
+  const myOwnOperational = isAdmin || !userDeptId
+    ? operational
+    : operational.filter(r => Number(r.departmentId) === userDeptId || Number(r.creatorDeptId) === userDeptId);
+  const myOwnMemos = isAdmin || !userDeptId
+    ? memos
+    : memos.filter(r => Number(r.departmentId) === userDeptId || Number(r.creatorDeptId) === userDeptId);
+
+  const approved = myOwnOperational.filter(r => r.status === 'approved' || r.finalApprovalStatus === 'treated').length;
+  const rejected = myOwnOperational.filter(r => r.status === 'rejected').length;
+  const memoPending = myOwnMemos.filter(r => r.status === 'pending' && r.finalApprovalStatus !== 'published').length;
+  const memoPublished = myOwnMemos.filter(r => r.finalApprovalStatus === 'published').length;
 
   // For originating depts (ICT, etc.): sum what has actually been disbursed for their requests,
   // including partial payments. For Account: sum what Account itself disbursed. Others: approved totals.
@@ -468,7 +479,7 @@ export function computeDashboardStats(all, user) {
       .reduce((sum, r) => sum + parseFloat(r.amountDisbursed || 0), 0)
     : myDisbursed > 0
       ? myDisbursed  // originating dept — show actual disbursed (includes partial payments)
-      : operational
+      : myOwnOperational
         .filter(r => (r.status === 'approved' || r.finalApprovalStatus === 'treated') && r.amount)
         .reduce((sum, r) => sum + r.amount, 0);
 
@@ -492,7 +503,7 @@ export function computeDashboardStats(all, user) {
     rejected,
     totalSpent,
     totalSpentIsPartial,
-    memos: memos.length,
+    memos: myOwnMemos.length,
     memoPending,
     memoPublished,
     treated,
