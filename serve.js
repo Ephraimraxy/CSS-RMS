@@ -6377,9 +6377,9 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
       if (!newDept) return res.status(400).json({ error: 'Selected department not found.' });
       data.deptName = newDept.name;
       // Admin resolved the dept question by assigning an existing department —
-      // clear the custom dept name and unblock from DEPT_PENDING → PENDING
+      // always clear customDeptName (badge should disappear once a real dept is assigned)
+      data.customDeptName = null;
       if (sub.status === 'DEPT_PENDING') {
-        data.customDeptName = null;
         data.status = 'PENDING';
       }
     }
@@ -13123,6 +13123,18 @@ const server = app.listen(PORT, async () => {
         if (toUpper.length > 0) logger.info(`[BOOT] Uppercased ${toUpper.length} department name(s).`);
       } catch (e) {
         logger.warn('[BOOT] Department name normalization skipped:', e.message);
+      }
+
+      // One-time: clear customDeptName on submissions that already have a real deptId assigned
+      // (customDeptName wasn't being cleared when admin moved them to existing dept from non-DEPT_PENDING status)
+      try {
+        const staleCustom = await prisma.onboardingSubmission.updateMany({
+          where: { deptId: { not: null }, customDeptName: { not: null } },
+          data: { customDeptName: null }
+        });
+        if (staleCustom.count > 0) logger.info(`[BOOT] Cleared stale customDeptName on ${staleCustom.count} submission(s) already assigned to a real department.`);
+      } catch (e) {
+        logger.warn('[BOOT] customDeptName cleanup skipped:', e.message);
       }
 
       // One-time: normalize deptName in onboarding submissions to UPPERCASE

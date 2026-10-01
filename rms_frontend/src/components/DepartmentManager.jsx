@@ -2227,7 +2227,12 @@ const DepartmentManager = ({ onViewChange }) => {
                             <td className="py-3 px-3 text-xs font-bold font-mono text-foreground">{sub.staffId}</td>
                             <td className="py-3 px-3">
                               <p className="text-xs font-semibold text-foreground">{sub.deptName || sub.customDeptName || '—'}</p>
-                              {sub.customDeptName && <p className="text-[10px] text-purple-600 font-bold">Custom request</p>}
+                              {sub.customDeptName && sub.status === 'DEPT_PENDING' && (
+                                <p className="text-[10px] text-amber-600 font-bold">⏳ Dept pending</p>
+                              )}
+                              {sub.customDeptName && sub.status !== 'DEPT_PENDING' && (
+                                <p className="text-[10px] text-teal-600 font-bold">✦ New dept created</p>
+                              )}
                             </td>
                             <td className="py-3 px-3">
                               <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
