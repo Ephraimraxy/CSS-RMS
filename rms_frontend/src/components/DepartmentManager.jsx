@@ -1789,16 +1789,16 @@ const DepartmentManager = ({ onViewChange }) => {
   const [editSaving, setEditSaving]             = useState(false);
   const [replaceHeadConfirm, setReplaceHeadConfirm] = useState(null); // { id, existingHead, msg }
 
-  const loadOnboarding = useCallback(async (filter) => {
-    setOnboardingLoading(true);
+  const loadOnboarding = useCallback(async (filter, silent = false) => {
+    if (!silent) setOnboardingLoading(true);
     try {
       const res = await fetch(`/api/admin/onboarding?status=${filter || onboardingFilter}`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}` }
       });
       const data = await res.json();
       setOnboardingSubs(Array.isArray(data) ? data : []);
-    } catch { setOnboardingSubs([]); }
-    finally { setOnboardingLoading(false); }
+    } catch { if (!silent) setOnboardingSubs([]); }
+    finally { if (!silent) setOnboardingLoading(false); }
   }, [onboardingFilter]);
 
   const loadPendingCount = useCallback(async () => {
@@ -1828,7 +1828,7 @@ const DepartmentManager = ({ onViewChange }) => {
     if (activeTab !== 'onboarding') return;
     loadOnboarding(onboardingFilter);
     const interval = setInterval(() => {
-      loadOnboarding(onboardingFilter);
+      loadOnboarding(onboardingFilter, true); // silent=true: no spinner flicker on background polls
       loadPendingCount();
     }, 20000);
     return () => clearInterval(interval);

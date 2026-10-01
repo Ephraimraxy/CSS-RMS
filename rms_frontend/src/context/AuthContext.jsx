@@ -61,7 +61,11 @@ export const AuthProvider = ({ children }) => {
   // Silent background sync — re-reads DB every 60 s and refreshes the JWT
   // with current privileges, routing scope, and dept data. Completely invisible
   // to users: no spinner, no state flag, UI just reflects updated values quietly.
+  // Guard: only run when authenticated — unauthenticated requests return 401 which
+  // the Axios interceptor escalates to window.location.reload(), wiping any in-flight
+  // first-time activation modal.
   useEffect(() => {
+    if (!user) return;
     const syncProfile = async () => {
       try {
         const result = await authAPI.syncProfile();
@@ -75,7 +79,7 @@ export const AuthProvider = ({ children }) => {
     };
     const iv = setInterval(syncProfile, 60_000);
     return () => clearInterval(iv);
-  }, []);
+  }, [user?.id]);
 
   const login = async (email, password) => {
     const { user: userData } = await authAPI.login(email, password);
