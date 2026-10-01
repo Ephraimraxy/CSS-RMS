@@ -122,9 +122,13 @@ export async function clearAllCaches() {
 export async function getRequisitions(options = {}) {
   await ensureInitialized();
   const scope = typeof options === 'string' ? options : (options.scope || 'all');
+  const viewAsDeptId = typeof options === 'object' ? options.viewAsDeptId : undefined;
   const cacheKey = getScopeCacheKey(scope);
   try {
-    const remote = await reqAPI.getRequisitions(scope && scope !== 'all' ? { scope } : {});
+    const params = viewAsDeptId
+      ? { viewAsDeptId }
+      : scope && scope !== 'all' ? { scope } : {};
+    const remote = await reqAPI.getRequisitions(params);
     // Handle both paginated { data, total } and legacy plain-array responses
     const rawList = Array.isArray(remote) ? remote : (Array.isArray(remote?.data) ? remote.data : []);
     const normalized = filterRecordsForScope(normalizeRequisitionList(rawList), scope);

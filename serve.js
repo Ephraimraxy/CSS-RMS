@@ -11388,6 +11388,39 @@ app.get('/api/requisitions', authenticateToken, async (req, res) => {
       _oversightIds.includes(toIntOrNull(req.user?.deptId));
     if (_isGlobalObserver) {
       // Global observer sees everything — typeScopeWhere already applied above, no extra dept filter
+    } else if (normalizeRole(req.user.role) === 'global_admin' && req.query.viewAsDeptId) {
+      // Super Admin impersonating a dept — apply the same scoping a real dept login would get
+      const deptId = parseInt(req.query.viewAsDeptId);
+      let linkedReqIds = await getDepartmentLinkedRequisitionIds(deptId);
+      try {
+        const vettingIds = await prisma.$queryRaw`
+          SELECT id FROM "Requisition"
+          WHERE "currentVettingDeptId" = ${deptId}
+             OR "finalApprovedByDeptId" = ${deptId}
+             OR "treatedByDeptId" = ${deptId}
+        `;
+        linkedReqIds = [...new Set([...linkedReqIds, ...(vettingIds || []).map(r => parseInt(r.id))])];
+      } catch (_) {}
+      let taggedReqIds = [];
+      try {
+        const tagged = await prisma.requisitionTag.findMany({ where: { deptId }, select: { requisitionId: true } });
+        taggedReqIds = tagged.map(t => t.requisitionId);
+      } catch (_) {}
+      let subDeptIds = [];
+      try {
+        const subDepts = await prisma.department.findMany({ where: { parentId: deptId, isSubAccount: true }, select: { id: true } });
+        subDeptIds = subDepts.map(d => d.id);
+      } catch (_) {}
+      const accessWhere = {
+        OR: [
+          { departmentId: deptId },
+          { targetDepartmentId: deptId },
+          ...(subDeptIds.length > 0 ? [{ departmentId: { in: subDeptIds } }] : []),
+          ...(linkedReqIds.length > 0 ? [{ id: { in: linkedReqIds } }] : []),
+          ...(taggedReqIds.length > 0 ? [{ id: { in: taggedReqIds } }] : []),
+        ]
+      };
+      where = typeValues.length > 0 ? { AND: [accessWhere, typeScopeWhere] } : accessWhere;
     } else if (normalizeRole(req.user.role) === 'department' && req.user.deptId) {
       const deptId = parseInt(req.user.deptId);
       // Extra IDs from columns not in Prisma schema — safe fallback if columns don't exist yet

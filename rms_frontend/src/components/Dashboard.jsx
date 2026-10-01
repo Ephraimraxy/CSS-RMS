@@ -87,7 +87,7 @@ const Dashboard = ({ onViewChange }) => {
     if (user?.role === 'department') {
       reqAPI.getChainStats().then(setChainStats).catch(() => {});
     }
-    const all = await getRequisitions({ scope: 'all' });
+    const all = await getRequisitions(user?._isImpersonating ? { viewAsDeptId: user.deptId } : { scope: 'all' });
     const userDeptId = user.deptId ? Number(user.deptId) : null;
     const userDeptName = user.departmentName || '';
     const isAdmin = normalizeRole(user.role) === 'global_admin';
