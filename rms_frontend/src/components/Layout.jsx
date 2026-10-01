@@ -1122,7 +1122,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
   const showStoreRecords = (user?.role === 'global_admin' || isStoreDept) && storeRecordsEnabled;
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6] text-foreground selection:bg-primary/30 font-sans antialiased overflow-x-hidden">
+    <div className="min-h-screen bg-[#FAF9F6] text-foreground selection:bg-primary/30 font-sans antialiased overflow-x-hidden" style={{ minHeight: '100dvh' }}>
       <Navbar
         user={user}
         toggleSidebar={toggleSidebar}
@@ -1174,7 +1174,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
         </div>
       )}
 
-      <div className="flex h-[calc(100vh-56px)] overflow-hidden">
+      <div className="flex h-[calc(100dvh-56px)] overflow-hidden">
         {/* Desktop Sidebar App-Tile Navigation */}
         <aside
           className={`border-r border-white/5 ${sidebarBg} sticky top-0 hidden lg:flex flex-col transition-all duration-500 cubic-bezier(0.4, 0, 0.2, 1) ${isCollapsed ? 'w-20' : 'w-64'}`}
@@ -1293,7 +1293,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
         </aside>
 
         <main className="flex-1 overflow-y-auto custom-scrollbar relative z-10 w-full bg-[#FAF9F6]/50">
-          <div className="rms-app-content p-3 lg:p-5 max-w-full mx-auto animate-slide-up">
+          <div className="rms-app-content p-3 pb-24 lg:p-5 lg:pb-5 max-w-full mx-auto animate-slide-up">
             {children}
           </div>
         </main>
@@ -1326,7 +1326,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
         )}
 
         {/* ── Main nav bar ── */}
-        <nav className={`${sidebarBg} border-t border-white/10 flex items-center px-1 py-1 shadow-2xl shadow-black/40`}>
+        <nav className={`${sidebarBg} border-t border-white/10 flex items-center px-1 py-1 shadow-2xl shadow-black/40`} style={{ paddingBottom: 'max(4px, env(safe-area-inset-bottom, 0px))' }}>
           {user?.role === 'department' ? (
             <>
               <SidebarItem icon={LayoutDashboard} label="Home" active={currentView === 'dashboard'} onClick={() => onViewChange('dashboard')} mobile />
