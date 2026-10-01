@@ -793,6 +793,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
   const [notifications, setNotifications] = useState([]);
   const [showBell, setShowBell] = useState(false);
   const [syncPending, setSyncPending] = useState(0);
+  const [syncError, setSyncError]   = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [actionAlert, setActionAlert] = useState(null);
   const [showOversightMenu, setShowOversightMenu] = useState(false);
@@ -1007,6 +1008,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
     const loadSync = async () => {
       const status = await getSyncQueueStatus();
       setSyncPending(status.pending || 0);
+      setSyncError(status.lastError || null);
     };
     loadSync();
     const interval = setInterval(loadSync, 30000);
@@ -1020,6 +1022,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
       await flushSyncQueue();
       const status = await getSyncQueueStatus();
       setSyncPending(status.pending || 0);
+      setSyncError(status.lastError || null);
       setSyncing(false);
     };
     sync();
@@ -1155,8 +1158,15 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
       )}
 
       {syncPending > 0 && isOnline && (
-        <div className="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs font-bold px-4 py-2 flex items-center justify-between">
-          <span>{syncPending} item(s) pending sync</span>
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs font-bold px-4 py-2 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <span>{syncPending} item(s) pending sync</span>
+            {syncError && (
+              <p className="text-[10px] text-red-600 font-normal mt-0.5 truncate" title={syncError}>
+                Error: {syncError}
+              </p>
+            )}
+          </div>
           <button
             onClick={async () => {
               if (syncing) return;
@@ -1164,9 +1174,10 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
               await flushSyncQueue({ force: true });
               const status = await getSyncQueueStatus();
               setSyncPending(status.pending || 0);
+              setSyncError(status.lastError || null);
               setSyncing(false);
             }}
-            className="flex items-center space-x-2 px-3 py-1 rounded-full border border-amber-300 hover:bg-amber-100 text-[10px] uppercase tracking-widest"
+            className="shrink-0 flex items-center space-x-2 px-3 py-1 rounded-full border border-amber-300 hover:bg-amber-100 text-[10px] uppercase tracking-widest"
           >
             <RefreshCcw size={12} className={syncing ? 'animate-spin' : ''} />
             <span>{syncing ? 'Syncing' : 'Sync Now'}</span>

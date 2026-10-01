@@ -242,14 +242,23 @@ export async function flushSyncQueue({ force = false } = {}) {
       }
       synced += 1;
     } catch (err) {
-      const retryCount = (entry.retryCount || 0) + 1;
-      const delay = Math.min(60000, 2000 * Math.pow(2, retryCount));
-      remaining.push({
-        ...entry,
-        retryCount,
-        nextAttemptAt: now + delay,
-        lastError: err?.message || 'Sync failed'
-      });
+      const status = err?.response?.status;
+      const serverMsg = err?.response?.data?.error || err?.response?.data?.message || null;
+      if (status && status >= 400 && status < 500) {
+        // 4xx = permanent failure (bad data, no permission, etc.) — remove from queue
+        // and tell the user immediately so they don't keep clicking SYNC NOW forever.
+        toast.error(`Sync failed: ${serverMsg || 'Request was rejected by the server. Please recreate it.'}`);
+      } else {
+        // Network error or 5xx — keep with exponential backoff
+        const retryCount = (entry.retryCount || 0) + 1;
+        const delay = Math.min(60000, 2000 * Math.pow(2, retryCount));
+        remaining.push({
+          ...entry,
+          retryCount,
+          nextAttemptAt: now + delay,
+          lastError: serverMsg || err?.message || 'Sync failed'
+        });
+      }
     }
   }
 
@@ -263,7 +272,8 @@ export async function flushSyncQueue({ force = false } = {}) {
 
 export async function getSyncQueueStatus() {
   const queue = (await syncQueueStore.getItem('pending')) || [];
-  return { pending: queue.length };
+  const lastError = queue.find(e => e.lastError)?.lastError || null;
+  return { pending: queue.length, lastError };
 }
 
 export async function uploadAttachments(requisitionId, files, { stageName, stageKey, uploaderDept, onProgress } = {}) {
