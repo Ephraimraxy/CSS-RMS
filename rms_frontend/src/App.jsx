@@ -355,8 +355,8 @@ const AppContent = () => {
   }, []);
 
   useEffect(() => {
-    // Reset to dashboard whenever user session changes (login or logout)
-    navigate('dashboard');
+    // On auth resolve restore the page the user was on; on a fresh login hash is empty → dashboard
+    navigate(getViewFromHash());
     setDeptProfile(null);
     setShowDeptModal(false);
 

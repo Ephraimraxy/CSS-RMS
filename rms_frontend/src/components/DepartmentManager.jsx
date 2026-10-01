@@ -1751,7 +1751,25 @@ const DepartmentManager = ({ onViewChange }) => {
   const [onboardingSubs, setOnboardingSubs]     = useState([]);
   const [onboardingLoading, setOnboardingLoading] = useState(false);
   const [onboardingFilter, setOnboardingFilter] = useState('PENDING');
+  const [onboardingSearch, setOnboardingSearch] = useState('');
   const [selectedIds, setSelectedIds]           = useState([]);
+
+  const _obQ = onboardingSearch.trim().toLowerCase();
+  const filteredOnboardingSubs = _obQ
+    ? onboardingSubs.filter(s => {
+        const name = `${s.firstName || ''} ${s.surname || ''} ${s.middleName || ''}`.toLowerCase();
+        return (
+          name.includes(_obQ) ||
+          (s.staffId || '').toLowerCase().includes(_obQ) ||
+          (s.deptName || '').toLowerCase().includes(_obQ) ||
+          (s.customDeptName || '').toLowerCase().includes(_obQ) ||
+          (s.role || '').toLowerCase().includes(_obQ) ||
+          (s.phone || '').includes(_obQ) ||
+          (s.personalEmail || '').toLowerCase().includes(_obQ) ||
+          (s.officialEmail || '').toLowerCase().includes(_obQ)
+        );
+      })
+    : onboardingSubs;
   const [rejectModal, setRejectModal]           = useState(null); // { id, name } or null
   const [rejectNote, setRejectNote]             = useState('');
   const [actioningId, setActioningId]           = useState(null);
@@ -2087,8 +2105,8 @@ const DepartmentManager = ({ onViewChange }) => {
         {/* ── Onboarding Review Panel ── */}
         {activeTab === 'onboarding' && (
           <div className="space-y-5">
-            {/* Status filter tabs */}
-            <div className="flex flex-wrap gap-2">
+            {/* Status filter tabs + quick search */}
+            <div className="flex flex-wrap items-center gap-2">
               {[
                 { value: 'PENDING',      label: 'Pending' },
                 { value: 'DEPT_PENDING', label: 'Dept Pending' },
@@ -2098,7 +2116,7 @@ const DepartmentManager = ({ onViewChange }) => {
               ].map(f => (
                 <button
                   key={f.value}
-                  onClick={() => { setOnboardingFilter(f.value); setSelectedIds([]); }}
+                  onClick={() => { setOnboardingFilter(f.value); setSelectedIds([]); setOnboardingSearch(''); }}
                   className={`px-4 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${
                     onboardingFilter === f.value
                       ? f.value === 'PENDING' ? 'bg-amber-500/10 border-amber-500/30 text-amber-700'
@@ -2112,6 +2130,21 @@ const DepartmentManager = ({ onViewChange }) => {
                   {f.label}
                 </button>
               ))}
+              <div className="relative ml-auto">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={onboardingSearch}
+                  onChange={e => setOnboardingSearch(e.target.value)}
+                  placeholder="Search name, ID, dept, role, email…"
+                  className="bg-white/80 border border-border/50 rounded-xl py-1.5 pl-8 pr-3 text-[11px] focus:outline-none focus:ring-2 focus:ring-primary/20 w-56 shadow-sm"
+                />
+                {onboardingSearch && (
+                  <button onClick={() => setOnboardingSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                    <X size={11} />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Batch actions */}
@@ -2180,6 +2213,10 @@ const DepartmentManager = ({ onViewChange }) => {
               <div className="py-16 text-center bg-white/70 rounded-3xl border border-border/50">
                 <p className="text-sm text-muted-foreground italic">No submissions in this category.</p>
               </div>
+            ) : filteredOnboardingSubs.length === 0 ? (
+              <div className="py-16 text-center bg-white/70 rounded-3xl border border-border/50">
+                <p className="text-sm text-muted-foreground italic">No submissions match your search.</p>
+              </div>
             ) : (
               <div className="bg-white/70 rounded-3xl border border-border/50 overflow-hidden shadow-sm">
                 <div className="overflow-x-auto custom-scrollbar">
@@ -2187,14 +2224,19 @@ const DepartmentManager = ({ onViewChange }) => {
                     <thead>
                       <tr className="bg-muted/30 text-[9px] font-black uppercase tracking-[0.18em] text-muted-foreground border-b border-border/20">
                         <th className="py-3 px-3">
-                          <input type="checkbox"
-                            checked={selectedIds.length === onboardingSubs.filter(s => s.status === 'PENDING').length && onboardingSubs.filter(s => s.status === 'PENDING').length > 0}
-                            onChange={e => {
-                              const pending = onboardingSubs.filter(s => s.status === 'PENDING').map(s => s.id);
-                              setSelectedIds(e.target.checked ? pending : []);
-                            }}
-                            className="rounded"
-                          />
+                          {(() => {
+                            const visiblePending = filteredOnboardingSubs.filter(s => s.status === 'PENDING');
+                            return (
+                              <input type="checkbox"
+                                checked={visiblePending.length > 0 && visiblePending.every(s => selectedIds.includes(s.id))}
+                                onChange={e => {
+                                  const ids = visiblePending.map(s => s.id);
+                                  setSelectedIds(e.target.checked ? [...new Set([...selectedIds, ...ids])] : selectedIds.filter(i => !ids.includes(i)));
+                                }}
+                                className="rounded"
+                              />
+                            );
+                          })()}
                         </th>
                         <th className="py-3 px-3">Name</th>
                         <th className="py-3 px-3">Staff ID</th>
@@ -2209,7 +2251,7 @@ const DepartmentManager = ({ onViewChange }) => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/10">
-                      {onboardingSubs.map(sub => {
+                      {filteredOnboardingSubs.map(sub => {
                         const isPending   = sub.status === 'PENDING';
                         const isDeptPend  = sub.status === 'DEPT_PENDING';
                         const isApproved  = sub.status === 'APPROVED';
@@ -2698,7 +2740,20 @@ const DepartmentManager = ({ onViewChange }) => {
               </thead>
               <tbody className="divide-y divide-border/20">
                 {mainDepartments
-                  .filter(d => d.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                  .filter(d => {
+                    const q = searchTerm.trim().toLowerCase();
+                    if (!q) return true;
+                    return (
+                      (d.name || '').toLowerCase().includes(q) ||
+                      (d.accessCode || '').toLowerCase().includes(q) ||
+                      (d.accessCodeLabel || '').toLowerCase().includes(q) ||
+                      (d.staffId || '').toLowerCase().includes(q) ||
+                      (d.headName || '').toLowerCase().includes(q) ||
+                      (d.headEmail || '').toLowerCase().includes(q) ||
+                      (d.phone || '').includes(q) ||
+                      (d.type || '').toLowerCase().includes(q)
+                    );
+                  })
                   .map((dept) => {
                     const displayCode = dept.accessCodeLabel || dept.accessCode || null;
                     return (
@@ -2824,7 +2879,7 @@ const DepartmentManager = ({ onViewChange }) => {
                   })}
               </tbody>
             </table>
-            {mainDepartments.filter(d => d.name.toLowerCase().includes(searchTerm.toLowerCase())).length === 0 && (
+            {mainDepartments.filter(d => { const q = searchTerm.trim().toLowerCase(); if (!q) return true; return [(d.name||''),(d.accessCode||''),(d.accessCodeLabel||''),(d.staffId||''),(d.headName||''),(d.headEmail||''),(d.phone||''),(d.type||'')].some(v => v.toLowerCase().includes(q)); }).length === 0 && (
                <div className="py-20 text-center">
                   <p className="text-sm text-muted-foreground italic">No departments match your search criteria.</p>
                </div>
