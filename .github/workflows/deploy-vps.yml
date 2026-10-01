@@ -130,17 +130,18 @@ jobs:
           source: "rms_frontend/dist"
           target: "/var/www/cssrms"
 
-      - name: Upload APK to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: "downloads/cssrms.apk"
-          target: "/var/www/cssrms/downloads/"
-          strip_components: 1
-
       # ── Stage 4: Restart app ──────────────────────────────────────────────────
+      # This runs immediately after the frontend upload, and the APK upload has
+      # been moved below it.
+      #
+      # Nginx serves the new frontend the instant the previous step finishes,
+      # but the backend only picks up its new code when pm2 restarts. Anything
+      # sitting between those two steps is a window where the new frontend is
+      # talking to the old API - new JS calling endpoints that do not exist yet,
+      # or parsing response shapes that have since changed. The APK upload used
+      # to sit in that gap, stretching a few seconds of version skew into
+      # however long it takes to scp a mobile binary to a single-core box.
+      # Users filing requisitions during a deploy saw the errors from it.
       - name: Restart PM2
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -165,5 +166,21 @@ jobs:
 
             echo ""
             echo "════════════════════════════════════════"
-            echo "  ✓  Deploy complete — $(date -u)"
+            echo "  ✓  Site is LIVE — $(date -u)"
+            echo "     Frontend and backend are now on the same version."
+            echo "     Remaining steps do not affect the website."
             echo "════════════════════════════════════════"
+
+      # ── Stage 5: Trailing work — nothing below affects the live site ──────────
+      # The Android build is a download served off /var/www/cssrms/downloads/.
+      # It is several MB over scp to a single-core VPS, so it is deliberately
+      # last: it must never sit between the frontend upload and the restart.
+      - name: Upload APK to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "downloads/cssrms.apk"
+          target: "/var/www/cssrms/downloads/"
+          strip_components: 1
