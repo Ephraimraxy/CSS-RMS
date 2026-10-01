@@ -2283,7 +2283,7 @@ const DepartmentManager = ({ onViewChange }) => {
                           Pending submission: <strong>{staffIdResult.submission.firstName} {staffIdResult.submission.surname}</strong> — {staffIdResult.submission.role} / {staffIdResult.submission.deptName} ({staffIdResult.submission.status})
                         </p>
                       )}
-                      {staffIdResult.deptRecord && !staffIdResult.deptRecord.isDeleted && (
+                      {staffIdResult.deptRecord && (
                         <button
                           onClick={handleClearEnrollment}
                           disabled={clearingEnrollment}

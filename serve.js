@@ -5800,8 +5800,8 @@ app.post('/api/public/onboarding', onboardingSubmitLimiter, async (req, res) => 
     if (existingEmail)   return res.status(409).json({ field: 'personalEmail', error: 'A submission with this email address already exists. Contact admin if this is an error.' });
     if (existingPhone)   return res.status(409).json({ field: 'phone',         error: 'A submission with this phone number already exists. Contact admin if this is an error.' });
 
-    // Also check against already-enrolled departments (staffId uniqueness)
-    const enrolledStaffId = await prisma.department.findFirst({ where: { staffId } });
+    // Also check against already-enrolled departments (staffId uniqueness) — exclude soft-deleted records
+    const enrolledStaffId = await prisma.department.findFirst({ where: { staffId, isDeleted: false } });
     if (enrolledStaffId) return res.status(409).json({ field: 'staffId', error: 'This Staff ID is already enrolled in the system.' });
 
     // ── Fetch dept name snapshot ───────────────────────────────────────────
