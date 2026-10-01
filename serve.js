@@ -6056,6 +6056,69 @@ app.post('/api/admin/onboarding/:id/approve', authenticateToken, requireRoles(['
   } catch (err) { sendError(res, 500, err.message); }
 });
 
+// ── Admin: resend credentials for any approved onboarding submission ─────────
+app.post('/api/admin/onboarding/:id/resend-credentials', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const sub = await prisma.onboardingSubmission.findUnique({ where: { id: req.params.id } });
+    if (!sub) return res.status(404).json({ error: 'Submission not found.' });
+    if (sub.status !== 'APPROVED') return res.status(409).json({ error: 'Can only resend credentials for approved submissions.' });
+    if (!sub.personalEmail) return res.status(400).json({ error: 'No personal email on file for this submission.' });
+
+    // Find the Department record that holds this person's access code
+    const deptRecord = sub.staffId
+      ? await prisma.department.findFirst({
+          where: { staffId: sub.staffId },
+          select: { id: true, name: true, accessCodeLabel: true, accessCode: true },
+        })
+      : null;
+
+    const accessCode = deptRecord?.accessCodeLabel || deptRecord?.accessCode || null;
+    const adminName  = req.user?.name || 'Administrator';
+    const roleLabel  = sub.role === 'HEAD' ? 'Head of Department' : sub.role === 'ASSISTANT' ? 'Assistant' : 'Member';
+
+    const credSubject = 'CSS Group RMS — Your Account Credentials (Resent)';
+    const { text: cText, html: cHtml } = buildEmailContent({
+      title: credSubject,
+      lines: [
+        `Dear ${sub.firstName} ${sub.surname},`,
+        ``,
+        `This is a reminder of your CSS Group RMS account details, resent by the Administrator.`,
+        ``,
+        `Staff ID: ${sub.staffId || 'N/A'}`,
+        `Department: ${sub.deptName || 'N/A'}`,
+        `Role: ${roleLabel}`,
+        `Official Email: ${sub.officialEmail || 'N/A'}`,
+        ...(accessCode
+          ? [`Access Code: ${accessCode}`, ``, `Use this Access Code to log in. If you have already created a personal password, use that instead — this access code may no longer work.`]
+          : [``, `Your access code has been changed. Please use your personal password to log in.`, `If you have forgotten your password, contact the ICT Department.`]
+        ),
+      ],
+      actionLabel: 'Log in to RMS Portal',
+    });
+
+    await sendEmail({ to: sub.personalEmail, subject: credSubject, text: cText, html: cHtml });
+
+    if (sub.phone) {
+      sendSms({
+        to: sub.phone,
+        message: accessCode
+          ? `CSS RMS: Hello ${sub.firstName} ${sub.surname}, your account details — Staff ID: ${sub.staffId}. Access Code: ${accessCode}. Log into the portal. - RMS Admin`
+          : `CSS RMS: Hello ${sub.firstName} ${sub.surname}, use your personal password to log into the RMS Portal. Contact ICT if you need a reset. - RMS Admin`,
+      }).catch(() => {});
+    }
+
+    await prisma.activityLog.create({
+      data: {
+        userId:  getNumericUserId(req.user) || null,
+        action:  'Credentials Resent',
+        details: `${adminName} resent credentials to ${sub.firstName} ${sub.surname} (${sub.staffId}) — ${sub.personalEmail}`,
+      }
+    }).catch(() => {});
+
+    res.json({ success: true, sentTo: sub.personalEmail, hasSms: !!sub.phone, hasAccessCode: !!accessCode });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
 // ── Admin: reject a single submission ──────────────────────────────────────
 app.post('/api/admin/onboarding/:id/reject', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {

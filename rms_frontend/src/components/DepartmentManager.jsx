@@ -1780,6 +1780,7 @@ const DepartmentManager = ({ onViewChange }) => {
   const [batchActioning, setBatchActioning]     = useState(false);
   const [pendingCount, setPendingCount]         = useState(0);
   const [deletingId, setDeletingId]             = useState(null);
+  const [resendingId, setResendingId]           = useState(null);
   const [deleteSubConfirm, setDeleteSubConfirm] = useState(null); // submission id to delete
   const [deleteAllModal, setDeleteAllModal]     = useState(false);
   const [obExportOpen, setObExportOpen]         = useState(false);
@@ -1960,6 +1961,20 @@ const DepartmentManager = ({ onViewChange }) => {
       loadDepts();
     } catch { toast.error('Network error.'); }
     finally { setClearingEnrollment(false); }
+  };
+
+  const handleResendCredentials = async (id) => {
+    setResendingId(id);
+    try {
+      const res = await fetch(`/api/admin/onboarding/${id}/resend-credentials`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}` },
+      });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.error || 'Resend failed.'); return; }
+      toast.success(`Credentials resent to ${d.sentTo}${d.hasSms ? ' + SMS' : ''}.`);
+    } catch { toast.error('Network error.'); }
+    finally { setResendingId(null); }
   };
 
   const confirmDeleteSub = async () => {
@@ -2432,6 +2447,16 @@ const DepartmentManager = ({ onViewChange }) => {
                                     title="Reject submission"
                                   >
                                     <X size={12} />
+                                  </button>
+                                )}
+                                {isApproved && (
+                                  <button
+                                    onClick={() => handleResendCredentials(sub.id)}
+                                    disabled={resendingId === sub.id}
+                                    className="p-1.5 rounded-xl bg-teal-500 text-white hover:bg-teal-600 transition-all disabled:opacity-50"
+                                    title="Resend credentials (email + SMS)"
+                                  >
+                                    {resendingId === sub.id ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
                                   </button>
                                 )}
                                 <button
