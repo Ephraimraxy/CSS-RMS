@@ -170,17 +170,16 @@ const Dashboard = ({ onViewChange }) => {
       // Show last 10 sorted newest first (include drafts in the list for visibility)
       setMyReqs([...mine].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 10));
 
-      // Involvement history — every req the API returned for this dept is one they're involved in.
+      // Involvement history — every req/memo the API returned for this dept is one they're involved in.
       // The server already scopes the list using ForwardEvent + VettingEvent lookups, so we don't
-      // need to re-filter here. Sort newest-activity first, cap at 50 for display.
+      // need to re-filter here. Include memos alongside cash/material records. Sort newest-activity
+      // first, cap at 50 for display.
       setHistoryReqs([...all]
-        .filter(isOperationalRequisition)
         .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))
         .slice(0, 50));
     } else if (isAdmin) {
-      // All Involvements for Super Admin — every operational record system-wide
+      // All Involvements for Super Admin — every record system-wide (reqs + memos)
       setHistoryReqs([...all]
-        .filter(isOperationalRequisition)
         .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))
         .slice(0, 50));
     }
