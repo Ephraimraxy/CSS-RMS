@@ -177,6 +177,12 @@ const Dashboard = ({ onViewChange }) => {
         .filter(isOperationalRequisition)
         .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))
         .slice(0, 50));
+    } else if (isAdmin) {
+      // All Involvements for Super Admin — every operational record system-wide
+      setHistoryReqs([...all]
+        .filter(isOperationalRequisition)
+        .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))
+        .slice(0, 50));
     }
   };
 
