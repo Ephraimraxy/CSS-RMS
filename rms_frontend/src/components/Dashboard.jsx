@@ -971,13 +971,13 @@ const Dashboard = ({ onViewChange }) => {
               </div>
             )}
 
-            {/* ── Involvement History — all depts that touched this req ── */}
-            {_isDept && historyReqs.length > 0 && (
+            {/* ── Involvement History (dept) / All Involvements (admin) ── */}
+            {(_isDept || user?.role === 'global_admin') && historyReqs.length > 0 && (
               <div className="space-y-4 pt-6 border-t border-border/20">
                 <div className="flex items-center justify-between border-b border-border/20 pb-4">
                   <div className="flex items-center gap-3 flex-wrap gap-y-2">
                     <div className="w-1.5 h-6 bg-violet-500 rounded-full" />
-                    <h3 className="text-xl font-bold text-foreground tracking-tight">Involvement History</h3>
+                    <h3 className="text-xl font-bold text-foreground tracking-tight">{user?.role === 'global_admin' ? 'All Involvements' : 'Involvement History'}</h3>
                     <span className="bg-violet-500/10 text-violet-600 border border-violet-500/20 text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-[0.15em]">
                       {historyReqs.length} records
                     </span>
@@ -998,6 +998,8 @@ const Dashboard = ({ onViewChange }) => {
                   const renderRow = (r) => {
                     const uid = Number(user.deptId);
                     const myRole = (() => {
+                      if (user?.role === 'global_admin')
+                        return { label: r.department || '—', color: 'bg-slate-50 border-slate-200 text-slate-600' };
                       if (Number(r.departmentId) === uid || Number(r.creatorDeptId) === uid)
                         return { label: 'Originator', color: 'bg-blue-50 border-blue-200 text-blue-700' };
                       if (Number(r.treatedByDeptId) === uid)
@@ -1076,7 +1078,7 @@ const Dashboard = ({ onViewChange }) => {
                                 <tr className="text-muted-foreground text-[10px] font-black uppercase tracking-[0.2em]">
                                   <th className="pb-3 px-4">Ref</th>
                                   <th className="pb-3 px-4">Title</th>
-                                  <th className="pb-3 px-4">My Role</th>
+                                  <th className="pb-3 px-4">{user?.role === 'global_admin' ? 'Department' : 'My Role'}</th>
                                   <th className="pb-3 px-4">Amount</th>
                                   <th className="pb-3 px-4">Status</th>
                                   <th className="pb-3 px-4 text-right">Journey</th>
@@ -1098,7 +1100,7 @@ const Dashboard = ({ onViewChange }) => {
                                 <tr className="text-muted-foreground text-[10px] font-black uppercase tracking-[0.2em]">
                                   <th className="pb-3 px-4">Ref</th>
                                   <th className="pb-3 px-4">Title</th>
-                                  <th className="pb-3 px-4">My Role</th>
+                                  <th className="pb-3 px-4">{user?.role === 'global_admin' ? 'Department' : 'My Role'}</th>
                                   <th className="pb-3 px-4">Amount</th>
                                   <th className="pb-3 px-4">Status</th>
                                   <th className="pb-3 px-4 text-right">Journey</th>
