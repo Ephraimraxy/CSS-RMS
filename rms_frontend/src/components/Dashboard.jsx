@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDashboardStats, getRequisitions, isMemoRecord, isOperationalRequisition } from '../lib/store';
+import { getDashboardStats, getRequisitions, computeDashboardStats, isMemoRecord, isOperationalRequisition } from '../lib/store';
 import { reqAPI, settingsAPI, adminAPI } from '../lib/api';
 import { getEffectiveAmount, getLiveTrailDepartment, normalizeReq } from '../lib/requisitionDisplay';
 import toast from 'react-hot-toast';
@@ -81,13 +81,14 @@ const Dashboard = ({ onViewChange }) => {
   const [departments, setDepartments] = useState([]);
 
   const loadDashboard = async () => {
-    const s = await getDashboardStats(user);
-    setStats(s);
     // Fetch chain stats for dept users (forwarded/vetted counts for "Approved Reqs" card)
     if (user?.role === 'department') {
       reqAPI.getChainStats().then(setChainStats).catch(() => {});
     }
     const all = await getRequisitions(user?._isImpersonating ? { viewAsDeptId: user.deptId } : { scope: 'all' });
+    // Compute stat cards from the same `all` that was fetched — this ensures impersonation uses
+    // the dept-scoped records rather than a separate { scope: 'all' } fetch with the admin token.
+    setStats(computeDashboardStats(all, user));
     const userDeptId = user.deptId ? Number(user.deptId) : null;
     const userDeptName = user.departmentName || '';
     const isAdmin = normalizeRole(user.role) === 'global_admin';
@@ -223,9 +224,11 @@ const Dashboard = ({ onViewChange }) => {
     } finally { setSwitchingProvider(false); }
   };
 
+  // Re-run whenever the effective user's dept scope changes (handles impersonation activate/deactivate).
+  // Stable for normal logins: deptId and _isImpersonating don't change once a session is established.
   useEffect(() => {
     loadDashboard();
-  }, []);
+  }, [user?.deptId, user?._isImpersonating]);
 
   // Re-fetch when the hard-refresh button is clicked or the APK comes back to foreground
   useEffect(() => {

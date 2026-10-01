@@ -643,7 +643,7 @@ const CashRequestForm = ({ type = 'Cash', isOpen, onClose, editDraft = null }) =
                   onChange={e => setTargetDeptId(e.target.value)}
                   className="w-full bg-white border border-border/60 rounded-2xl p-4 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-primary/20 appearance-none pr-10 shadow-sm transition-all cursor-pointer group-hover:border-primary/40"
                 >
-                  <option value="">— Internal Processing —</option>
+                  <option value="">— Select Department —</option>
                   {allowedTargets.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
                 <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
@@ -652,11 +652,18 @@ const CashRequestForm = ({ type = 'Cash', isOpen, onClose, editDraft = null }) =
                 <p className="text-[10px] text-muted-foreground/70 italic pl-1 mt-1">
                   All requests from your unit are routed through your department head first.
                 </p>
-              ) : !isExecutiveCreator && !user?.isSubAccount && (
-                <p className="text-[10px] text-muted-foreground/70 italic pl-1 mt-1">
-                  GM, Chairman, Audit, ICC, and Account are not available here — this request must reach them through HR.
-                </p>
-              )}
+              ) : !isExecutiveCreator && !user?.isSubAccount && (() => {
+                // Work out which privileged depts are still gated (not unlocked by admin)
+                const stillGated = departments.filter(d =>
+                  isPrivilegedDept(d.name) && !directRouteAllowedIds.includes(d.id)
+                );
+                if (stillGated.length === 0) return null;
+                return (
+                  <p className="text-[10px] text-muted-foreground/70 italic pl-1 mt-1">
+                    {stillGated.map(d => d.name).join(', ')} {stillGated.length === 1 ? 'is' : 'are'} not available here — {stillGated.length === 1 ? 'it' : 'they'} must be reached through HR.
+                  </p>
+                );
+              })()}
             </div>
             <div className="space-y-2.5">
               <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-2">Priority</label>
