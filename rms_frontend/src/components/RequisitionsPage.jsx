@@ -779,11 +779,9 @@ const CreatorCommentPanel = ({ req, departments, onDone }) => {
   const [comment, setComment] = useState('');
   const [acting, setActing]   = useState(false);
 
-  // All departments that can receive a re-forward (exclude self, Chairman, GM — keep HR and peers)
-  const forwardableDepts = departments.filter(d =>
-    d.id !== req.departmentId &&
-    !/ceo|chairman|general\s*manager|\bgm\b/i.test(d.name)
-  );
+  // All departments except self — same openness as the RespondPanel forward (no chairman/GM gate
+  // here because the request is already in-flight and was returned, not a fresh submission).
+  const forwardableDepts = departments.filter(d => d.id !== req.departmentId);
 
   // Auto-select the single option, or default to HR if present
   const defaultTarget = forwardableDepts.length === 1

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, X, Send, Loader2, ChevronDown, ArrowLeft, Paperclip, FileText, Eye, WifiOff, CloudUpload, CheckCircle, AlertTriangle } from 'lucide-react';
 import { addRequisition, getDepartments, uploadAttachments } from '../lib/store';
-import { reqAPI } from '../lib/api';
+import { reqAPI, settingsAPI } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
 
@@ -13,6 +13,8 @@ const CashRequestForm = ({ type = 'Cash', isOpen, onClose, editDraft = null }) =
     directRoute: user?.directRoute ?? false,
     allowedRouteDeptIds: user?.allowedRouteDeptIds || [],
   });
+  // Admin-unlocked privileged depts — Super Admin can allow direct routing to Account/Audit/ICC/etc.
+  const [directRouteAllowedIds, setDirectRouteAllowedIds] = useState([]);
   const [subject, setSubject] = useState('');
   const [comment, setComment] = useState('');
   const [urgency, setUrgency] = useState('normal');
@@ -75,6 +77,8 @@ const CashRequestForm = ({ type = 'Cash', isOpen, onClose, editDraft = null }) =
       if (d.id === user?.deptId) return false;
       if (d.type === 'Sub-Account') return false;
       if (isChairmanCreator || isGMCreator || isHRCreator) return true;
+      // Super Admin can unlock specific privileged depts for direct routing
+      if (directRouteAllowedIds.includes(d.id)) return true;
       return !isPrivilegedDept(d.name);
     });
   })();
@@ -98,6 +102,11 @@ const CashRequestForm = ({ type = 'Cash', isOpen, onClose, editDraft = null }) =
       const all = d.filter(dept => dept.id !== user?.deptId);
       setDepartments(all);
     });
+    settingsAPI.get('direct_route_allowed_dept_ids').then(res => {
+      if (res?.value) {
+        try { setDirectRouteAllowedIds(JSON.parse(res.value)); } catch { setDirectRouteAllowedIds([]); }
+      }
+    }).catch(() => {});
 
     if (editDraft) {
       // Pre-populate from existing draft

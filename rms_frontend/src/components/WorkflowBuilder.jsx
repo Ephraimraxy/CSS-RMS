@@ -583,6 +583,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
   // ── Chairman / CEO routing access ─────────────────────────────────────────
   const [chairmanAllowedIds, setChairmanAllowedIds] = useState([]);
   const [savingChairman, setSavingChairman]         = useState(false);
+  const [directRouteAllowedIds, setDirectRouteAllowedIds] = useState([]);
+  const [savingDirectRoute, setSavingDirectRoute]         = useState(false);
 
   // ── AIGC feature toggle ────────────────────────────────────────────────────
   const { refreshAI } = useAIFeatures();
@@ -968,6 +970,26 @@ const WorkflowBuilder = ({ onViewChange }) => {
     setChairmanAllowedIds(prev => prev.includes(deptId) ? prev.filter(id => id !== deptId) : [...prev, deptId]);
   };
 
+  // ── Direct-route unlock — which "privileged" depts any dept can address at creation ──
+  const loadDirectRouteSetting = async () => {
+    try {
+      const res = await settingsAPI.get('direct_route_allowed_dept_ids');
+      if (res?.value) setDirectRouteAllowedIds(JSON.parse(res.value));
+    } catch {}
+  };
+  const saveDirectRouteSetting = async () => {
+    setSavingDirectRoute(true);
+    try {
+      await settingsAPI.set('direct_route_allowed_dept_ids', JSON.stringify(directRouteAllowedIds));
+      toast.success('Direct routing access saved.');
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to save setting.');
+    } finally { setSavingDirectRoute(false); }
+  };
+  const toggleDirectRouteDept = (deptId) => {
+    setDirectRouteAllowedIds(prev => prev.includes(deptId) ? prev.filter(id => id !== deptId) : [...prev, deptId]);
+  };
+
   // ── AI features ────────────────────────────────────────────────────────────
   const loadAISetting = async () => {
     try {
@@ -1141,6 +1163,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
         loadFeatureFlags(),
         loadRefPattern(),
         loadChairmanSetting(),
+        loadDirectRouteSetting(),
         loadAISetting(),
         loadPrintSettings(),
         loadIctPhone(),
@@ -2098,6 +2121,49 @@ const WorkflowBuilder = ({ onViewChange }) => {
                     >
                       <div className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${allowed ? 'bg-amber-500 border-amber-500' : 'border-border'}`}>
                         {allowed && <CheckCircle2 size={10} className="text-white" />}
+                      </div>
+                      <span className="text-[11px] font-bold truncate">{dept.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Direct Routing Unlock — which privileged depts any dept can address on creation */}
+            <div className="glass bg-white/70 rounded-3xl border border-border/50 p-6 shadow-sm flex flex-col">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center shrink-0">
+                    <ArrowRight size={18} className="text-blue-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground">Direct Routing Unlock</h3>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Tick the departments ALL regular users can send requests to directly when creating a new request. Unticked departments remain gated — only HR/GM/Chairman can address them at creation time.</p>
+                  </div>
+                </div>
+                <button
+                  onClick={saveDirectRouteSetting}
+                  disabled={savingDirectRoute}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-[10px] uppercase tracking-widest transition-all disabled:opacity-50 shadow-md shadow-blue-200 active:scale-[0.98]"
+                >
+                  {savingDirectRoute ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                  Save
+                </button>
+              </div>
+              <p className="text-[10px] text-muted-foreground/70 mb-4 pl-12">Currently gated (HR-first by default): <strong>Account, Audit, ICC, GM, Chairman/CEO</strong>. Tick any of them below to unlock direct access for everyone.</p>
+              <div className="max-h-[420px] overflow-y-auto custom-scrollbar pr-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {allDepts.filter(d =>
+                  /general\s*manager|\bgm\b|ceo|chairman|\bicc\b|internal.*control|control.*compliance|audit|account/i.test(d.name)
+                ).map(dept => {
+                  const unlocked = directRouteAllowedIds.includes(dept.id);
+                  return (
+                    <button
+                      key={dept.id}
+                      onClick={() => toggleDirectRouteDept(dept.id)}
+                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all ${unlocked ? 'bg-blue-50 border-blue-300 text-blue-800' : 'bg-white border-border/40 text-muted-foreground hover:border-blue-200'}`}
+                    >
+                      <div className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${unlocked ? 'bg-blue-500 border-blue-500' : 'border-border'}`}>
+                        {unlocked && <CheckCircle2 size={10} className="text-white" />}
                       </div>
                       <span className="text-[11px] font-bold truncate">{dept.name}</span>
                     </button>
