@@ -13,8 +13,8 @@ const CashRequestForm = ({ type = 'Cash', isOpen, onClose, editDraft = null }) =
     directRoute: user?.directRoute ?? false,
     allowedRouteDeptIds: user?.allowedRouteDeptIds || [],
   });
-  // Admin-unlocked privileged depts — Super Admin can allow direct routing to Account/Audit/ICC/etc.
-  const [directRouteAllowedIds, setDirectRouteAllowedIds] = useState([]);
+  // Admin-configured accessible dept list for this request type (null = use default rule)
+  const [directRouteAllowedIds, setDirectRouteAllowedIds] = useState(null);
   const [subject, setSubject] = useState('');
   const [comment, setComment] = useState('');
   const [urgency, setUrgency] = useState('normal');
@@ -77,9 +77,10 @@ const CashRequestForm = ({ type = 'Cash', isOpen, onClose, editDraft = null }) =
       if (d.id === user?.deptId) return false;
       if (d.type === 'Sub-Account') return false;
       if (isChairmanCreator || isGMCreator || isHRCreator) return true;
-      // Super Admin can unlock specific privileged depts for direct routing
-      if (directRouteAllowedIds.includes(d.id)) return true;
-      return !isPrivilegedDept(d.name);
+      // null = setting not yet loaded or not configured → fall back to privilege rule
+      if (directRouteAllowedIds === null) return !isPrivilegedDept(d.name);
+      // explicit list: dept is accessible only if it's in the admin-saved list
+      return directRouteAllowedIds.includes(d.id);
     });
   })();
 
@@ -102,9 +103,10 @@ const CashRequestForm = ({ type = 'Cash', isOpen, onClose, editDraft = null }) =
       const all = d.filter(dept => dept.id !== user?.deptId);
       setDepartments(all);
     });
-    settingsAPI.get('direct_route_allowed_dept_ids').then(res => {
+    const settingKey = type === 'Cash' ? 'accessible_dept_ids_cash' : 'accessible_dept_ids_material';
+    settingsAPI.get(settingKey).then(res => {
       if (res?.value) {
-        try { setDirectRouteAllowedIds(JSON.parse(res.value)); } catch { setDirectRouteAllowedIds([]); }
+        try { setDirectRouteAllowedIds(JSON.parse(res.value)); } catch { setDirectRouteAllowedIds(null); }
       }
     }).catch(() => {});
 
@@ -653,10 +655,12 @@ const CashRequestForm = ({ type = 'Cash', isOpen, onClose, editDraft = null }) =
                   All requests from your unit are routed through your department head first.
                 </p>
               ) : !isExecutiveCreator && !user?.isSubAccount && (() => {
-                // Work out which privileged depts are still gated (not unlocked by admin)
-                const stillGated = departments.filter(d =>
-                  isPrivilegedDept(d.name) && !directRouteAllowedIds.includes(d.id)
-                );
+                // Work out which privileged depts are still gated
+                const stillGated = departments.filter(d => {
+                  if (!isPrivilegedDept(d.name)) return false;
+                  if (directRouteAllowedIds === null) return true;
+                  return !directRouteAllowedIds.includes(d.id);
+                });
                 if (stillGated.length === 0) return null;
                 return (
                   <p className="text-[10px] text-muted-foreground/70 italic pl-1 mt-1">

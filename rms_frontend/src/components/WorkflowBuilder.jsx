@@ -583,8 +583,11 @@ const WorkflowBuilder = ({ onViewChange }) => {
   // ── Chairman / CEO routing access ─────────────────────────────────────────
   const [chairmanAllowedIds, setChairmanAllowedIds] = useState([]);
   const [savingChairman, setSavingChairman]         = useState(false);
-  const [directRouteAllowedIds, setDirectRouteAllowedIds] = useState([]);
-  const [savingDirectRoute, setSavingDirectRoute]         = useState(false);
+  // null = setting never saved → derive default from isPrivilegedDept rule
+  const [accessibleDeptIdsCash,     setAccessibleDeptIdsCash]     = useState(null);
+  const [accessibleDeptIdsMaterial, setAccessibleDeptIdsMaterial] = useState(null);
+  const [savingAccessCash,     setSavingAccessCash]     = useState(false);
+  const [savingAccessMaterial, setSavingAccessMaterial] = useState(false);
 
   // ── AIGC feature toggle ────────────────────────────────────────────────────
   const { refreshAI } = useAIFeatures();
@@ -970,24 +973,72 @@ const WorkflowBuilder = ({ onViewChange }) => {
     setChairmanAllowedIds(prev => prev.includes(deptId) ? prev.filter(id => id !== deptId) : [...prev, deptId]);
   };
 
-  // ── Direct-route unlock — which "privileged" depts any dept can address at creation ──
-  const loadDirectRouteSetting = async () => {
+  // Helper: dept is "privileged" (blocked by default in the Send To dropdown)
+  const _isPrivilegedDeptName = (name = '') =>
+    /general\s*manager|\bgm\b|ceo|chairman|\bicc\b|internal.*control|control.*compliance|audit|account/i.test(name);
+
+  // Returns effective checked-state list: saved value OR derive default from privilege rule
+  const _effectiveAccessIds = (saved, depts) => {
+    if (saved !== null) return saved;
+    return (depts || allDepts).filter(d => !_isPrivilegedDeptName(d.name) && !/super\s*admin/i.test(d.name)).map(d => d.id);
+  };
+
+  // ── Fund (Cash) direct routing ───────────────────────────────────────────────
+  const loadAccessCash = async () => {
     try {
-      const res = await settingsAPI.get('direct_route_allowed_dept_ids');
-      if (res?.value) setDirectRouteAllowedIds(JSON.parse(res.value));
+      const res = await settingsAPI.get('accessible_dept_ids_cash');
+      setAccessibleDeptIdsCash(res?.value ? JSON.parse(res.value) : null);
     } catch {}
   };
-  const saveDirectRouteSetting = async () => {
-    setSavingDirectRoute(true);
-    try {
-      await settingsAPI.set('direct_route_allowed_dept_ids', JSON.stringify(directRouteAllowedIds));
-      toast.success('Direct routing access saved.');
-    } catch (err) {
-      toast.error(err?.response?.data?.error || 'Failed to save setting.');
-    } finally { setSavingDirectRoute(false); }
+  const _persistAccessCash = async (ids) => {
+    setSavingAccessCash(true);
+    try { await settingsAPI.set('accessible_dept_ids_cash', JSON.stringify(ids)); }
+    catch (err) { toast.error(err?.response?.data?.error || 'Failed to save.'); }
+    finally { setSavingAccessCash(false); }
   };
-  const toggleDirectRouteDept = (deptId) => {
-    setDirectRouteAllowedIds(prev => prev.includes(deptId) ? prev.filter(id => id !== deptId) : [...prev, deptId]);
+  const toggleAccessCash = async (deptId) => {
+    const cur = _effectiveAccessIds(accessibleDeptIdsCash, allDepts);
+    const next = cur.includes(deptId) ? cur.filter(id => id !== deptId) : [...cur, deptId];
+    setAccessibleDeptIdsCash(next);
+    await _persistAccessCash(next);
+  };
+  const selectAllCash = async () => {
+    const ids = allDepts.filter(d => !/super\s*admin/i.test(d.name)).map(d => d.id);
+    setAccessibleDeptIdsCash(ids);
+    await _persistAccessCash(ids);
+  };
+  const clearAllCash = async () => {
+    setAccessibleDeptIdsCash([]);
+    await _persistAccessCash([]);
+  };
+
+  // ── Material direct routing ──────────────────────────────────────────────────
+  const loadAccessMaterial = async () => {
+    try {
+      const res = await settingsAPI.get('accessible_dept_ids_material');
+      setAccessibleDeptIdsMaterial(res?.value ? JSON.parse(res.value) : null);
+    } catch {}
+  };
+  const _persistAccessMaterial = async (ids) => {
+    setSavingAccessMaterial(true);
+    try { await settingsAPI.set('accessible_dept_ids_material', JSON.stringify(ids)); }
+    catch (err) { toast.error(err?.response?.data?.error || 'Failed to save.'); }
+    finally { setSavingAccessMaterial(false); }
+  };
+  const toggleAccessMaterial = async (deptId) => {
+    const cur = _effectiveAccessIds(accessibleDeptIdsMaterial, allDepts);
+    const next = cur.includes(deptId) ? cur.filter(id => id !== deptId) : [...cur, deptId];
+    setAccessibleDeptIdsMaterial(next);
+    await _persistAccessMaterial(next);
+  };
+  const selectAllMaterial = async () => {
+    const ids = allDepts.filter(d => !/super\s*admin/i.test(d.name)).map(d => d.id);
+    setAccessibleDeptIdsMaterial(ids);
+    await _persistAccessMaterial(ids);
+  };
+  const clearAllMaterial = async () => {
+    setAccessibleDeptIdsMaterial([]);
+    await _persistAccessMaterial([]);
   };
 
   // ── AI features ────────────────────────────────────────────────────────────
@@ -1163,7 +1214,8 @@ const WorkflowBuilder = ({ onViewChange }) => {
         loadFeatureFlags(),
         loadRefPattern(),
         loadChairmanSetting(),
-        loadDirectRouteSetting(),
+        loadAccessCash(),
+        loadAccessMaterial(),
         loadAISetting(),
         loadPrintSettings(),
         loadIctPhone(),
@@ -2129,48 +2181,107 @@ const WorkflowBuilder = ({ onViewChange }) => {
               </div>
             </div>
 
-            {/* Direct Routing Unlock — which privileged depts any dept can address on creation */}
-            <div className="glass bg-white/70 rounded-3xl border border-border/50 p-6 shadow-sm flex flex-col">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center shrink-0">
-                    <ArrowRight size={18} className="text-blue-600" />
+            {/* Fund Request — Direct Routing */}
+            {(() => {
+              const visibleDepts = allDepts.filter(d => !/super\s*admin/i.test(d.name));
+              const effectiveCash = _effectiveAccessIds(accessibleDeptIdsCash, allDepts);
+              return (
+                <div className="glass bg-white/70 rounded-3xl border border-border/50 p-6 shadow-sm flex flex-col">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-green-50 border border-green-200 flex items-center justify-center shrink-0">
+                        <ArrowRight size={18} className="text-green-600" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-bold text-foreground">Fund Requests — Direct Routing</h3>
+                          {savingAccessCash && <Loader2 size={12} className="animate-spin text-green-500" />}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">Checked = department appears in the Fund (Cash) request "Send To" dropdown. Changes take effect immediately for all users.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={selectAllCash} className="px-2.5 py-1 rounded-lg bg-green-50 hover:bg-green-100 text-green-700 font-bold text-[9px] uppercase tracking-widest border border-green-200 transition-all">All</button>
+                      <button onClick={clearAllCash} className="px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[9px] uppercase tracking-widest border border-red-200 transition-all">None</button>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-foreground">Direct Routing Unlock</h3>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">Tick the departments ALL regular users can send requests to directly when creating a new request. Unticked departments remain gated — only HR/GM/Chairman can address them at creation time.</p>
+                  <p className="text-[10px] text-muted-foreground/60 mb-4 pl-12">
+                    <span className="text-green-700 font-semibold">{effectiveCash.length}</span> of {visibleDepts.length} departments accessible · <span className="text-amber-600 font-semibold">{visibleDepts.length - effectiveCash.length}</span> gated
+                  </p>
+                  <div className="max-h-[380px] overflow-y-auto custom-scrollbar pr-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {visibleDepts.map(dept => {
+                      const checked = effectiveCash.includes(dept.id);
+                      const isPriv = _isPrivilegedDeptName(dept.name);
+                      return (
+                        <button
+                          key={dept.id}
+                          onClick={() => toggleAccessCash(dept.id)}
+                          disabled={savingAccessCash}
+                          className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all disabled:opacity-60 ${checked ? 'bg-green-50 border-green-300 text-green-800' : 'bg-white border-border/40 text-muted-foreground hover:border-green-200'}`}
+                        >
+                          <div className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${checked ? 'bg-green-500 border-green-500' : 'border-border'}`}>
+                            {checked && <CheckCircle2 size={10} className="text-white" />}
+                          </div>
+                          <span className="text-[11px] font-bold truncate flex-1">{dept.name}</span>
+                          {isPriv && <span className="text-[8px] uppercase tracking-wide font-black text-amber-500 shrink-0">Priv</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
-                <button
-                  onClick={saveDirectRouteSetting}
-                  disabled={savingDirectRoute}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-[10px] uppercase tracking-widest transition-all disabled:opacity-50 shadow-md shadow-blue-200 active:scale-[0.98]"
-                >
-                  {savingDirectRoute ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                  Save
-                </button>
-              </div>
-              <p className="text-[10px] text-muted-foreground/70 mb-4 pl-12">Currently gated (HR-first by default): <strong>Account, Audit, ICC, GM, Chairman/CEO</strong>. Tick any of them below to unlock direct access for everyone.</p>
-              <div className="max-h-[420px] overflow-y-auto custom-scrollbar pr-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {allDepts.filter(d =>
-                  /general\s*manager|\bgm\b|ceo|chairman|\bicc\b|internal.*control|control.*compliance|audit|account/i.test(d.name)
-                ).map(dept => {
-                  const unlocked = directRouteAllowedIds.includes(dept.id);
-                  return (
-                    <button
-                      key={dept.id}
-                      onClick={() => toggleDirectRouteDept(dept.id)}
-                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all ${unlocked ? 'bg-blue-50 border-blue-300 text-blue-800' : 'bg-white border-border/40 text-muted-foreground hover:border-blue-200'}`}
-                    >
-                      <div className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${unlocked ? 'bg-blue-500 border-blue-500' : 'border-border'}`}>
-                        {unlocked && <CheckCircle2 size={10} className="text-white" />}
+              );
+            })()}
+
+            {/* Material Request — Direct Routing */}
+            {(() => {
+              const visibleDepts = allDepts.filter(d => !/super\s*admin/i.test(d.name));
+              const effectiveMat = _effectiveAccessIds(accessibleDeptIdsMaterial, allDepts);
+              return (
+                <div className="glass bg-white/70 rounded-3xl border border-border/50 p-6 shadow-sm flex flex-col">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-purple-50 border border-purple-200 flex items-center justify-center shrink-0">
+                        <ArrowRight size={18} className="text-purple-600" />
                       </div>
-                      <span className="text-[11px] font-bold truncate">{dept.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-bold text-foreground">Material Requests — Direct Routing</h3>
+                          {savingAccessMaterial && <Loader2 size={12} className="animate-spin text-purple-500" />}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">Checked = department appears in the Material request "Send To" dropdown. Changes take effect immediately for all users.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={selectAllMaterial} className="px-2.5 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-[9px] uppercase tracking-widest border border-purple-200 transition-all">All</button>
+                      <button onClick={clearAllMaterial} className="px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[9px] uppercase tracking-widest border border-red-200 transition-all">None</button>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground/60 mb-4 pl-12">
+                    <span className="text-purple-700 font-semibold">{effectiveMat.length}</span> of {visibleDepts.length} departments accessible · <span className="text-amber-600 font-semibold">{visibleDepts.length - effectiveMat.length}</span> gated
+                  </p>
+                  <div className="max-h-[380px] overflow-y-auto custom-scrollbar pr-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {visibleDepts.map(dept => {
+                      const checked = effectiveMat.includes(dept.id);
+                      const isPriv = _isPrivilegedDeptName(dept.name);
+                      return (
+                        <button
+                          key={dept.id}
+                          onClick={() => toggleAccessMaterial(dept.id)}
+                          disabled={savingAccessMaterial}
+                          className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all disabled:opacity-60 ${checked ? 'bg-purple-50 border-purple-300 text-purple-800' : 'bg-white border-border/40 text-muted-foreground hover:border-purple-200'}`}
+                        >
+                          <div className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${checked ? 'bg-purple-500 border-purple-500' : 'border-border'}`}>
+                            {checked && <CheckCircle2 size={10} className="text-white" />}
+                          </div>
+                          <span className="text-[11px] font-bold truncate flex-1">{dept.name}</span>
+                          {isPriv && <span className="text-[8px] uppercase tracking-wide font-black text-amber-500 shrink-0">Priv</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         ) : activeTab === 'pipeline' ? (
           <PipelineDelegationTab
