@@ -29,6 +29,7 @@ const AuthContext = createContext(null);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [viewAsDept, setViewAsDept] = useState(null); // { deptId, deptName } — admin impersonating a dept
 
   useEffect(() => {
     const verifySession = async () => {
@@ -182,8 +183,23 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('rms_offline_session');
   };
 
+  // When admin is "viewing as" a dept, expose a synthetic user object that drives
+  // all role-based rendering as if the admin IS that dept head. The real user (admin)
+  // is also exposed as `realUser` so Layout can always show the dept switcher.
+  const isImpersonating = !!viewAsDept && user?.role === 'global_admin';
+  const effectiveUser = isImpersonating ? {
+    ...user,
+    role: 'department',
+    deptId: viewAsDept.deptId,
+    departmentName: viewAsDept.deptName,
+    name: viewAsDept.deptName,
+    memberRole: 'head',
+    isSubAccount: false,
+    _isImpersonating: true,
+  } : user;
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, deptLogin, loginWithData, logout, updateUser }}>
+    <AuthContext.Provider value={{ user: effectiveUser, realUser: user, isImpersonating, setViewAsDept, loading, login, deptLogin, loginWithData, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

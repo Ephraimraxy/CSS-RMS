@@ -782,7 +782,7 @@ const Navbar = ({ user, toggleSidebar, isCollapsed, notifications, setNotificati
 };
 
 const Layout = ({ children, user, currentView, onViewChange }) => {
-  const { logout } = useAuth();
+  const { logout, realUser, isImpersonating, setViewAsDept } = useAuth();
   const { isOnline } = useNetwork();
   const [chatWidgetEnabled, setChatWidgetEnabled]         = useState(true);
   const [helpDeskWidgetEnabled, setHelpDeskWidgetEnabled] = useState(true);
@@ -798,6 +798,8 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
   const [actionAlert, setActionAlert] = useState(null);
   const [showOversightMenu, setShowOversightMenu] = useState(false);
   const [showDeptMoreMenu, setShowDeptMoreMenu] = useState(false);
+  const [deptSwitcherOpen, setDeptSwitcherOpen] = useState(false);
+  const [allDepts, setAllDepts] = useState([]);
   const [parentDeptLabel, setParentDeptLabel] = useState(user?.parentDeptName || null);
 
   useEffect(() => {
@@ -807,6 +809,12 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
       if (parent?.name) setParentDeptLabel(parent.name);
     }).catch(() => {});
   }, [user?.parentDeptId, user?.parentDeptName, user?.isSubAccount]);
+
+  // Load all departments once for the admin dept-switcher panel
+  useEffect(() => {
+    if (realUser?.role !== 'global_admin') return;
+    getDepartments().then(setAllDepts).catch(() => {});
+  }, [realUser?.role]);
 
   // Poll widget visibility settings every 15 s so changes take effect live
   useEffect(() => {
@@ -1289,6 +1297,48 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
             )}
           </div>
 
+          {/* ── View As Department — admin only ── */}
+          {realUser?.role === 'global_admin' && (
+            <div className={isCollapsed ? 'mx-2 mt-1 space-y-1' : 'mx-2 mt-2 space-y-1'}>
+              <div className="border-t border-white/10 pt-3">
+                {!isCollapsed && (
+                  <p className="px-2 text-[9px] font-black text-white/30 uppercase tracking-[0.25em] mb-2">
+                    View As Dept
+                  </p>
+                )}
+                <button
+                  onClick={() => setDeptSwitcherOpen(v => !v)}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-white/70 hover:text-white hover:bg-white/10 ${deptSwitcherOpen ? 'bg-white/10 text-white' : ''} ${isCollapsed ? 'justify-center' : ''}`}
+                  title={isCollapsed ? 'View As Department' : ''}
+                >
+                  <Building2 size={17} className="shrink-0" />
+                  {!isCollapsed && (
+                    <>
+                      <span className="flex-1 text-left text-[11px] font-black uppercase tracking-[0.15em]">Departments</span>
+                      <ChevronDown size={13} className={`transition-transform duration-200 ${deptSwitcherOpen ? 'rotate-180' : ''}`} />
+                    </>
+                  )}
+                </button>
+                {deptSwitcherOpen && !isCollapsed && (
+                  <div className="mt-1 space-y-0.5 animate-in slide-in-from-top-1 duration-200 max-h-52 overflow-y-auto custom-scrollbar pr-1">
+                    {allDepts.filter(d => !/super\s*admin/i.test(d.name)).map(dept => (
+                      <button
+                        key={dept.id}
+                        onClick={() => { setViewAsDept({ deptId: dept.id, deptName: dept.name }); setDeptSwitcherOpen(false); }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-[10px] font-bold text-white/50 hover:text-white hover:bg-white/10 transition-all truncate"
+                      >
+                        {dept.name}
+                      </button>
+                    ))}
+                    {allDepts.length === 0 && (
+                      <p className="px-3 py-2 text-[10px] text-white/30 italic">Loading…</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="p-3 border-t border-border/20 mb-2 space-y-1">
             <SidebarItem icon={Smartphone} label="Mobile Apps" onClick={() => setShowAppModal(true)} isCollapsed={isCollapsed} />
             <button
@@ -1304,6 +1354,19 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
         </aside>
 
         <main className="flex-1 overflow-y-auto custom-scrollbar relative z-10 w-full bg-[#FAF9F6]/50">
+          {/* Floating "Back to Admin" badge — only shown when super admin is impersonating a dept */}
+          {isImpersonating && (
+            <div className="fixed top-4 right-4 z-[200] animate-in slide-in-from-top-2 duration-300">
+              <button
+                onClick={() => setViewAsDept(null)}
+                className="flex items-center gap-2 bg-[#0f172a] text-white text-[11px] font-black px-4 py-2.5 rounded-2xl shadow-2xl border border-white/20 hover:bg-[#1e293b] active:scale-95 transition-all"
+                title="Return to Super Admin dashboard"
+              >
+                <ShieldAlert size={14} className="text-orange-400" />
+                <span>← Back to Admin</span>
+              </button>
+            </div>
+          )}
           <div className="rms-app-content p-3 pb-24 lg:p-5 lg:pb-5 max-w-full mx-auto animate-slide-up">
             {children}
           </div>
