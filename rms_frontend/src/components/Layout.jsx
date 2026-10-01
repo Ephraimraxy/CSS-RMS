@@ -800,6 +800,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
   const [showDeptMoreMenu, setShowDeptMoreMenu] = useState(false);
   const [deptSwitcherOpen, setDeptSwitcherOpen] = useState(false);
   const [allDepts, setAllDepts] = useState([]);
+  const [deptSearch, setDeptSearch] = useState('');
   const [parentDeptLabel, setParentDeptLabel] = useState(user?.parentDeptName || null);
 
   useEffect(() => {
@@ -1320,19 +1321,36 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
                   )}
                 </button>
                 {deptSwitcherOpen && !isCollapsed && (
-                  <div className="mt-1 space-y-0.5 animate-in slide-in-from-top-1 duration-200 max-h-52 overflow-y-auto custom-scrollbar pr-1">
-                    {allDepts.filter(d => !/super\s*admin/i.test(d.name)).map(dept => (
-                      <button
-                        key={dept.id}
-                        onClick={() => { setViewAsDept({ deptId: dept.id, deptName: dept.name }); setDeptSwitcherOpen(false); }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-[10px] font-bold text-white/50 hover:text-white hover:bg-white/10 transition-all truncate"
-                      >
-                        {dept.name}
-                      </button>
-                    ))}
-                    {allDepts.length === 0 && (
-                      <p className="px-3 py-2 text-[10px] text-white/30 italic">Loading…</p>
-                    )}
+                  <div className="mt-1 animate-in slide-in-from-top-1 duration-200">
+                    <div className="px-1 mb-1">
+                      <input
+                        type="text"
+                        placeholder="Search department…"
+                        value={deptSearch}
+                        onChange={e => setDeptSearch(e.target.value)}
+                        className="w-full bg-white/10 text-white placeholder-white/30 text-[10px] font-bold px-3 py-2 rounded-xl border border-white/10 focus:outline-none focus:border-white/30 transition-colors"
+                        autoFocus
+                      />
+                    </div>
+                    <div className="space-y-0.5 max-h-44 overflow-y-auto custom-scrollbar pr-1">
+                      {allDepts
+                        .filter(d => !/super\s*admin/i.test(d.name) && d.name.toLowerCase().includes(deptSearch.toLowerCase()))
+                        .map(dept => (
+                          <button
+                            key={dept.id}
+                            onClick={() => { setViewAsDept({ deptId: dept.id, deptName: dept.name }); setDeptSwitcherOpen(false); setDeptSearch(''); }}
+                            className="w-full text-left px-3 py-2 rounded-xl text-[10px] font-bold text-white/50 hover:text-white hover:bg-white/10 transition-all truncate"
+                          >
+                            {dept.name}
+                          </button>
+                        ))}
+                      {allDepts.length === 0 && (
+                        <p className="px-3 py-2 text-[10px] text-white/30 italic">Loading…</p>
+                      )}
+                      {allDepts.length > 0 && deptSearch && allDepts.filter(d => !/super\s*admin/i.test(d.name) && d.name.toLowerCase().includes(deptSearch.toLowerCase())).length === 0 && (
+                        <p className="px-3 py-2 text-[10px] text-white/30 italic">No match</p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1354,16 +1372,21 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
         </aside>
 
         <main className="flex-1 overflow-y-auto custom-scrollbar relative z-10 w-full bg-[#FAF9F6]/50">
-          {/* Floating "Back to Admin" badge — only shown when super admin is impersonating a dept */}
+          {/* Impersonation banner — sticky below the header, full-width, impossible to miss */}
           {isImpersonating && (
-            <div className="fixed top-4 right-4 z-[200] animate-in slide-in-from-top-2 duration-300">
+            <div className="sticky top-0 z-[55] w-full bg-[#0f172a] border-b-2 border-orange-500/60 px-4 py-2.5 flex items-center justify-between gap-3 animate-in slide-in-from-top-1 duration-300 shadow-lg">
+              <div className="flex items-center gap-2 min-w-0">
+                <ShieldAlert size={15} className="text-orange-400 shrink-0" />
+                <span className="text-orange-300 text-[10px] font-black uppercase tracking-widest shrink-0">Admin Preview</span>
+                <span className="text-white/40 text-[10px] hidden sm:inline">·</span>
+                <span className="text-white text-[11px] font-bold truncate">Viewing as <span className="text-orange-300">{user?.departmentName}</span></span>
+              </div>
               <button
                 onClick={() => setViewAsDept(null)}
-                className="flex items-center gap-2 bg-[#0f172a] text-white text-[11px] font-black px-4 py-2.5 rounded-2xl shadow-2xl border border-white/20 hover:bg-[#1e293b] active:scale-95 transition-all"
+                className="shrink-0 flex items-center gap-1.5 bg-orange-500 hover:bg-orange-400 active:scale-95 text-white text-[10px] font-black px-3 py-1.5 rounded-xl transition-all shadow-md"
                 title="Return to Super Admin dashboard"
               >
-                <ShieldAlert size={14} className="text-orange-400" />
-                <span>← Back to Admin</span>
+                ← Exit to Admin
               </button>
             </div>
           )}
