@@ -6529,26 +6529,67 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
         data: { headName: null, headTitle: null, headEmail: null, phone: null, staffId: null }
       });
 
-      // Restore staffId on the person's sub-account so they can still log in.
-      // When they were promoted to HEAD their sub-account's staffId was cleared to null
-      // (to avoid the @unique constraint). Demotion reverses that.
+      // Restore (or create) the sub-account so the demoted person can still log in.
       const personStaffId = (data.staffId ?? sub.staffId ?? '')?.toUpperCase() || null;
       const fullName = `${newFirst} ${newSurname}`;
       if (personStaffId && !isApprovedHead) {
+        // Search including soft-deleted records — promotion now marks them isDeleted:true
+        // so we must un-delete when demoting back.
         const subAccount = await prisma.department.findFirst({
           where: {
             parentId: oldDeptId,
             isSubAccount: true,
-            isDeleted: false,
-            staffId: null,
             name: { contains: fullName, mode: 'insensitive' },
           }
         });
         if (subAccount) {
+          // Reactivate (un-delete if needed) and restore staffId
           await prisma.department.update({
             where: { id: subAccount.id },
-            data: { staffId: personStaffId }
+            data: { staffId: personStaffId, isDeleted: false }
           });
+        } else {
+          // Person was always HEAD — no sub-account ever existed. Create one now.
+          const plainCode = await generateUniqueAccessCode(fullName);
+          const codeHash  = await bcrypt.hash(plainCode, 10);
+          await prisma.department.create({
+            data: {
+              name:           fullName,
+              isSubAccount:   true,
+              parentId:       oldDeptId,
+              staffId:        personStaffId,
+              headTitle:      newRole === 'ASSISTANT' ? 'Assistant' : 'Member',
+              accessCode:     codeHash,
+              accessCodeLabel: plainCode,
+              isDeleted:      false,
+            }
+          });
+          // Notify the person of their new sub-account credentials
+          const roleLabel = newRole === 'ASSISTANT' ? 'Assistant' : 'Member';
+          const dept = await prisma.department.findUnique({ where: { id: oldDeptId }, select: { name: true } }).catch(() => null);
+          const { text: nText, html: nHtml } = buildEmailContent({
+            title: 'CSS Group RMS — Your Role Has Been Updated',
+            lines: [
+              `Dear ${fullName},`,
+              ``,
+              `Your role in the RMS portal has been updated. You now have a personal login account.`,
+              ``,
+              `Staff ID:   ${personStaffId}`,
+              `Department: ${dept?.name || sub.deptName || 'N/A'}`,
+              `Role:       ${roleLabel}`,
+              `Access Code: ${plainCode}`,
+              ``,
+              `Use this Access Code to log in for the first time. You will be prompted to create your own password.`,
+            ],
+            actionLabel: 'Log in to RMS Portal',
+          });
+          sendEmail({ to: sub.personalEmail, subject: 'CSS Group RMS — Your Role Has Been Updated', text: nText, html: nHtml }).catch(() => {});
+          if (sub.phone) {
+            sendSms({
+              to: sub.phone,
+              message: `CSS RMS: Hello ${fullName}, your role has been updated to ${roleLabel}. Staff ID: ${personStaffId}. Access Code: ${plainCode}. Log in to the portal. - RMS Admin`,
+            }).catch(() => {});
+          }
         }
       }
     }
