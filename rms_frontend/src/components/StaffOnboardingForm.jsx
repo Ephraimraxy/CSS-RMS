@@ -104,6 +104,7 @@ export default function StaffOnboardingForm() {
   const [departments, setDepartments] = useState([]);
   const [deptLoading, setDeptLoading] = useState(true);
   const [roleAvail, setRoleAvail] = useState({ headTaken: false, assistantTaken: false });
+  const [roleCheckFailed, setRoleCheckFailed] = useState(false);
   const [roleChecking, setRoleChecking] = useState(false);
   const [showCustomDept, setShowCustomDept] = useState(false);
 
@@ -156,18 +157,24 @@ export default function StaffOnboardingForm() {
   }, []);
 
   const checkRoles = useCallback(async (deptId) => {
-    if (!deptId) { setRoleAvail({ headTaken: false, assistantTaken: false }); return; }
+    if (!deptId) { setRoleAvail({ headTaken: false, assistantTaken: false }); setRoleCheckFailed(false); return; }
     setRoleChecking(true);
     try {
       const r = await fetch(`/api/public/onboarding/dept-roles?deptId=${deptId}`);
+      if (!r.ok) throw new Error('check failed');
       const d = await r.json();
       setRoleAvail(d);
+      setRoleCheckFailed(false);
       setForm(prev => {
         if ((prev.role === 'HEAD' && d.headTaken) || (prev.role === 'ASSISTANT' && d.assistantTaken))
           return { ...prev, role: '' };
         return prev;
       });
-    } catch { setRoleAvail({ headTaken: false, assistantTaken: false }); }
+    } catch {
+      // Offline or server error — can't verify role availability; treat HEAD as unknown
+      setRoleAvail({ headTaken: false, assistantTaken: false });
+      setRoleCheckFailed(true);
+    }
     finally { setRoleChecking(false); }
   }, []);
 
@@ -727,6 +734,12 @@ export default function StaffOnboardingForm() {
                   <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:8, fontSize:13, color:'#6b7280', fontWeight:600 }}>
                     <div style={{ width:14, height:14, borderRadius:'50%', border:'2px solid #d1d5db', borderTopColor:'#16a34a', animation:'ob-spin 0.8s linear infinite', flexShrink:0 }} />
                     Checking role availability…
+                  </div>
+                )}
+                {roleCheckFailed && form.deptId && !roleChecking && (
+                  <div style={{ display:'flex', alignItems:'flex-start', gap:10, marginTop:10, background:'#fffbeb', border:'1px solid #fcd34d', borderRadius:12, padding:'10px 14px', fontSize:13, color:'#92400e', fontWeight:600, lineHeight:1.5 }}>
+                    <span style={{ fontSize:16, flexShrink:0 }}>⚠️</span>
+                    <span>Could not verify role availability — you may be offline. If you are applying as <strong>Head of Department</strong>, please ensure this position is not already filled. Your submission will be reviewed by the administrator before approval.</span>
                   </div>
                 )}
               </Field>

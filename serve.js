@@ -5706,12 +5706,12 @@ app.get('/api/public/onboarding/dept-roles', async (req, res) => {
     const deptId = parseInt(req.query.deptId);
     if (!deptId) return res.json({ headTaken: false, assistantTaken: false });
 
-    // Head is taken if dept already has a staff enrolled (staffId set)
+    // Head is taken if dept already has headName set (staffId may be null for manually-activated depts)
     const dept = await prisma.department.findUnique({
       where: { id: deptId },
       select: { staffId: true, headName: true }
     });
-    const deptHasHead = !!(dept?.staffId && dept?.headName);
+    const deptHasHead = !!dept?.headName;
 
     // Also check pending/approved submissions
     const [pendingHead, pendingAssist] = await Promise.all([
@@ -5929,6 +5929,16 @@ app.post('/api/admin/onboarding/:id/approve', authenticateToken, requireRoles(['
       if (!sub.deptId) return res.status(400).json({ error: 'No department ID on this HEAD submission.' });
       const dept = await prisma.department.findUnique({ where: { id: sub.deptId } });
       if (!dept) return res.status(404).json({ error: 'Department not found.' });
+
+      // Guard: if dept already has an active head, require explicit admin confirmation
+      // to prevent accidental overwrite. Frontend re-sends with { confirm: true }.
+      if (dept.headName && !req.body.confirm) {
+        return res.status(409).json({
+          error: `${dept.name} already has ${dept.headName} as Head of Department. Approving this will replace them.`,
+          existingHead: dept.headName,
+          requiresConfirm: true,
+        });
+      }
 
       plainCode = dept.accessCodeLabel || dept.accessCode || await generateUniqueAccessCode(dept.name);
       const hash = await bcrypt.hash(plainCode, 10);

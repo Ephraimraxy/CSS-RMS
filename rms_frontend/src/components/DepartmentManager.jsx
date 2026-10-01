@@ -1763,6 +1763,7 @@ const DepartmentManager = ({ onViewChange }) => {
   const [editModal, setEditModal]               = useState(null); // submission object or null
   const [editForm, setEditForm]                 = useState({});
   const [editSaving, setEditSaving]             = useState(false);
+  const [replaceHeadConfirm, setReplaceHeadConfirm] = useState(null); // { id, existingHead, msg }
 
   const loadOnboarding = useCallback(async (filter) => {
     setOnboardingLoading(true);
@@ -1815,13 +1816,20 @@ const DepartmentManager = ({ onViewChange }) => {
     return () => clearInterval(interval);
   }, [loadPendingCount]);
 
-  const handleApprove = async (id) => {
+  const handleApprove = async (id, force = false) => {
     setActioningId(id);
     try {
       const res = await fetch(`/api/admin/onboarding/${id}/approve`, {
-        method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' }
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
+        body: force ? JSON.stringify({ confirm: true }) : undefined,
       });
       const d = await res.json();
+      if (res.status === 409 && d.requiresConfirm) {
+        // Dept already has a head — ask admin to confirm replacement
+        setReplaceHeadConfirm({ id, existingHead: d.existingHead, msg: d.error });
+        return;
+      }
       if (!res.ok) { toast.error(d.error || 'Approval failed.'); return; }
       toast.success('Submission approved — credentials sent.');
       loadOnboarding(onboardingFilter); loadPendingCount(); loadDepts();
@@ -2376,6 +2384,31 @@ const DepartmentManager = ({ onViewChange }) => {
                     {editSaving ? 'Saving…' : 'Save Changes'}
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Replace Head Confirmation ── */}
+        {replaceHeadConfirm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-5">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
+                  <ShieldAlert size={18} className="text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-foreground">Department Already Has a Head</h3>
+                  <p className="text-sm text-muted-foreground mt-1">{replaceHeadConfirm.msg}</p>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">Are you sure you want to <span className="font-bold text-red-600">replace</span> the existing head and approve this new one?</p>
+              <div className="flex gap-3 pt-1">
+                <button onClick={() => setReplaceHeadConfirm(null)} className="flex-1 py-2.5 rounded-xl border border-border text-sm font-bold text-muted-foreground hover:bg-muted transition-all">Cancel</button>
+                <button
+                  onClick={async () => { const id = replaceHeadConfirm.id; setReplaceHeadConfirm(null); await handleApprove(id, true); }}
+                  className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-black hover:bg-red-700 transition-all"
+                >Yes, Replace Head</button>
               </div>
             </div>
           </div>
