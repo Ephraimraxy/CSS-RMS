@@ -6560,9 +6560,11 @@ app.patch('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global_
       // Department was created with their staffId (@unique). Clear it first so the
       // parent department update doesn't violate the unique constraint (P2002).
       if (personStaffId) {
+        // Clear staffId AND soft-delete the old sub-account so it no longer appears
+        // in the Sub-Accounts tab after the person is promoted to HEAD.
         await prisma.department.updateMany({
           where: { staffId: personStaffId, isSubAccount: true, id: { not: effectiveDeptId } },
-          data: { staffId: null }
+          data: { staffId: null, isDeleted: true }
         });
       }
       await prisma.department.update({
@@ -13266,6 +13268,19 @@ const server = app.listen(PORT, async () => {
         if (toUpperSubs.length > 0) logger.info(`[BOOT] Uppercased deptName in ${toUpperSubs.length} onboarding submission(s).`);
       } catch (e) {
         logger.warn('[BOOT] Submission deptName normalization skipped:', e.message);
+      }
+
+      // One-time: soft-delete orphaned sub-accounts whose staffId was cleared when
+      // the person was promoted to HEAD via the edit endpoint (the old code only
+      // nulled staffId but didn't set isDeleted=true, leaving a ghost sub-account).
+      try {
+        const orphaned = await prisma.department.updateMany({
+          where: { isSubAccount: true, isDeleted: false, staffId: null },
+          data: { isDeleted: true }
+        });
+        if (orphaned.count > 0) logger.info(`[BOOT] Soft-deleted ${orphaned.count} orphaned sub-account(s) with no staffId (promoted-to-HEAD cleanup).`);
+      } catch (e) {
+        logger.warn('[BOOT] Orphaned sub-account cleanup skipped:', e.message);
       }
 
       // Secondary setup tasks already in serve.js logic
