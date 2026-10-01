@@ -1758,6 +1758,7 @@ const DepartmentManager = ({ onViewChange }) => {
   const [batchActioning, setBatchActioning]     = useState(false);
   const [pendingCount, setPendingCount]         = useState(0);
   const [deletingId, setDeletingId]             = useState(null);
+  const [deleteSubConfirm, setDeleteSubConfirm] = useState(null); // submission id to delete
   const [deleteAllModal, setDeleteAllModal]     = useState(false);
   const [obExportOpen, setObExportOpen]         = useState(false);
   const [editModal, setEditModal]               = useState(null); // submission object or null
@@ -1902,7 +1903,12 @@ const DepartmentManager = ({ onViewChange }) => {
   };
 
   const handleDeleteSub = async (id) => {
-    if (!window.confirm('Delete this submission? This cannot be undone.')) return;
+    setDeleteSubConfirm(id);
+  };
+
+  const confirmDeleteSub = async () => {
+    const id = deleteSubConfirm;
+    setDeleteSubConfirm(null);
     setDeletingId(id);
     try {
       const res = await fetch(`/api/admin/onboarding/${id}`, {
@@ -2389,6 +2395,27 @@ const DepartmentManager = ({ onViewChange }) => {
                     {editSaving ? 'Saving…' : 'Save Changes'}
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Delete Submission Confirmation ── */}
+        {deleteSubConfirm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
+                  <Trash2 size={18} className="text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-foreground">Delete Submission?</h3>
+                  <p className="text-sm text-muted-foreground mt-1">This submission record will be permanently removed. This cannot be undone.</p>
+                </div>
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button onClick={() => setDeleteSubConfirm(null)} className="flex-1 py-2.5 rounded-xl border border-border text-sm font-bold text-muted-foreground hover:bg-muted transition-all">Cancel</button>
+                <button onClick={confirmDeleteSub} className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-black hover:bg-red-700 transition-all">Yes, Delete</button>
               </div>
             </div>
           </div>
