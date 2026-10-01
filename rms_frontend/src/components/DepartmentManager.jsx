@@ -2041,39 +2041,41 @@ const DepartmentManager = ({ onViewChange }) => {
               Manage operational units and strategic control departments.
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="Search departments..."
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="bg-white/80 border border-border/50 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 w-56 shadow-sm"
-              />
+          {activeTab === 'departments' && (
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search departments..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="bg-white/80 border border-border/50 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 w-56 shadow-sm"
+                />
+              </div>
+              <button
+                onClick={() => setImportOpen(true)}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-5 rounded-xl transition-all shadow-lg shadow-blue-500/20 text-sm"
+              >
+                <Upload size={16} />
+                Import HODs
+              </button>
+              <button
+                onClick={() => setExportOpen(true)}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-5 rounded-xl transition-all shadow-lg shadow-emerald-500/20 text-sm"
+              >
+                <FileDown size={16} />
+                Export
+              </button>
+              <button
+                onClick={() => setIsAddModalOpen(true)}
+                className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold py-3 px-5 rounded-xl transition-all shadow-lg shadow-primary/20 flex items-center gap-2 text-sm"
+              >
+                <Plus size={17} />
+                Add Department
+              </button>
             </div>
-            <button
-              onClick={() => setImportOpen(true)}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-5 rounded-xl transition-all shadow-lg shadow-blue-500/20 text-sm"
-            >
-              <Upload size={16} />
-              Import HODs
-            </button>
-            <button
-              onClick={() => setExportOpen(true)}
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-5 rounded-xl transition-all shadow-lg shadow-emerald-500/20 text-sm"
-            >
-              <FileDown size={16} />
-              Export
-            </button>
-            <button
-              onClick={() => setIsAddModalOpen(true)}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold py-3 px-5 rounded-xl transition-all shadow-lg shadow-primary/20 flex items-center gap-2 text-sm"
-            >
-              <Plus size={17} />
-              Add Department
-            </button>
-          </div>
+          )}
         </div>
 
         {/* ── Tab bar ── */}
