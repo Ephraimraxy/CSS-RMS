@@ -6333,8 +6333,23 @@ app.delete('/api/admin/onboarding/:id', authenticateToken, requireRoles(['global
   try {
     const sub = await prisma.onboardingSubmission.findUnique({ where: { id: req.params.id } });
     if (!sub) return res.status(404).json({ error: 'Submission not found.' });
+
+    // If approved, also free up the staffId from the Department table so the person can re-submit
+    let enrollmentCleared = false;
+    if (sub.staffId) {
+      const deptRecord = await prisma.department.findFirst({ where: { staffId: sub.staffId } });
+      if (deptRecord) {
+        if (deptRecord.isSubAccount) {
+          await prisma.department.update({ where: { id: deptRecord.id }, data: { isDeleted: true, staffId: null } });
+        } else {
+          await prisma.department.update({ where: { id: deptRecord.id }, data: { headName: null, headTitle: null, headEmail: null, phone: null, staffId: null } });
+        }
+        enrollmentCleared = true;
+      }
+    }
+
     await prisma.onboardingSubmission.delete({ where: { id: req.params.id } });
-    res.json({ success: true });
+    res.json({ success: true, enrollmentCleared });
   } catch (err) { sendError(res, 500, err.message); }
 });
 
@@ -6345,6 +6360,47 @@ app.post('/api/admin/onboarding/batch-delete', authenticateToken, requireRoles([
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids array required.' });
     const { count } = await prisma.onboardingSubmission.deleteMany({ where: { id: { in: ids } } });
     res.json({ success: true, count });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: look up who holds a staff ID across the whole system ───────────────
+app.get('/api/admin/staff-id-lookup', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const staffId = (req.query.staffId || '').trim().toUpperCase();
+    if (!staffId) return res.status(400).json({ error: 'staffId query param required.' });
+
+    const [deptRecord, submission] = await Promise.all([
+      prisma.department.findFirst({
+        where: { staffId },
+        select: { id: true, name: true, isSubAccount: true, isDeleted: true, parentId: true, headName: true },
+      }),
+      prisma.onboardingSubmission.findUnique({
+        where: { staffId },
+        select: { id: true, firstName: true, surname: true, status: true, deptName: true, role: true },
+      }),
+    ]);
+
+    res.json({ staffId, deptRecord: deptRecord || null, submission: submission || null, taken: !!(deptRecord || submission) });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin: clear a staff ID enrollment so the person can re-submit ────────────
+app.post('/api/admin/clear-enrollment', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const staffId = (req.body.staffId || '').trim().toUpperCase();
+    if (!staffId) return res.status(400).json({ error: 'staffId required.' });
+
+    const deptRecord = await prisma.department.findFirst({ where: { staffId } });
+    if (!deptRecord) return res.status(404).json({ error: `No enrollment found for Staff ID "${staffId}".` });
+
+    if (deptRecord.isSubAccount) {
+      await prisma.department.update({ where: { id: deptRecord.id }, data: { isDeleted: true, staffId: null } });
+    } else {
+      await prisma.department.update({ where: { id: deptRecord.id }, data: { headName: null, headTitle: null, headEmail: null, phone: null, staffId: null } });
+    }
+
+    logger.info(`[ADMIN] Enrollment cleared for staffId=${staffId} from dept "${deptRecord.name}" by ${req.user?.name || req.user?.id}`);
+    res.json({ success: true, clearedFrom: deptRecord.name, wasSubAccount: deptRecord.isSubAccount });
   } catch (err) { sendError(res, 500, err.message); }
 });
 

@@ -1753,6 +1753,10 @@ const DepartmentManager = ({ onViewChange }) => {
   const [onboardingFilter, setOnboardingFilter] = useState('PENDING');
   const [onboardingSearch, setOnboardingSearch] = useState('');
   const [selectedIds, setSelectedIds]           = useState([]);
+  const [staffIdLookup, setStaffIdLookup]       = useState('');
+  const [staffIdResult, setStaffIdResult]       = useState(null); // null | { taken, staffId, deptRecord, submission }
+  const [staffIdLooking, setStaffIdLooking]     = useState(false);
+  const [clearingEnrollment, setClearingEnrollment] = useState(false);
 
   const _obQ = onboardingSearch.trim().toLowerCase();
   const filteredOnboardingSubs = _obQ
@@ -1922,6 +1926,40 @@ const DepartmentManager = ({ onViewChange }) => {
 
   const handleDeleteSub = async (id) => {
     setDeleteSubConfirm(id);
+  };
+
+  const handleStaffIdLookup = async () => {
+    const q = staffIdLookup.trim().toUpperCase();
+    if (!q) return;
+    setStaffIdLooking(true);
+    setStaffIdResult(null);
+    try {
+      const res = await fetch(`/api/admin/staff-id-lookup?staffId=${encodeURIComponent(q)}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}` },
+      });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.error || 'Lookup failed.'); return; }
+      setStaffIdResult(d);
+    } catch { toast.error('Network error.'); }
+    finally { setStaffIdLooking(false); }
+  };
+
+  const handleClearEnrollment = async () => {
+    if (!staffIdResult?.staffId) return;
+    setClearingEnrollment(true);
+    try {
+      const res = await fetch('/api/admin/clear-enrollment', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('rms_token')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ staffId: staffIdResult.staffId }),
+      });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d.error || 'Clear failed.'); return; }
+      toast.success(`Enrollment cleared from "${d.clearedFrom}" — person can now re-submit.`);
+      setStaffIdResult(null); setStaffIdLookup('');
+      loadDepts();
+    } catch { toast.error('Network error.'); }
+    finally { setClearingEnrollment(false); }
   };
 
   const confirmDeleteSub = async () => {
@@ -2186,6 +2224,62 @@ const DepartmentManager = ({ onViewChange }) => {
                     <Trash2 size={11} />
                     Delete All ({onboardingSubs.length})
                   </button>
+                </div>
+              )}
+            </div>
+
+            {/* Staff ID Lookup */}
+            <div className="p-3 bg-muted/30 border border-border/40 rounded-2xl space-y-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-1.5"><Hash size={11} /> Staff ID Registry — lookup &amp; unblock</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={staffIdLookup}
+                  onChange={e => { setStaffIdLookup(e.target.value.toUpperCase()); setStaffIdResult(null); }}
+                  onKeyDown={e => { if (e.key === 'Enter' && staffIdLookup.trim()) handleStaffIdLookup(); }}
+                  placeholder="Enter Staff ID…"
+                  className="flex-1 bg-white/80 border border-border/50 rounded-xl py-2 px-3 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+                <button
+                  onClick={handleStaffIdLookup}
+                  disabled={!staffIdLookup.trim() || staffIdLooking}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-white text-[11px] font-black hover:bg-primary/90 transition-all disabled:opacity-50"
+                >
+                  {staffIdLooking ? <Loader2 size={11} className="animate-spin" /> : <Search size={11} />}
+                  Check
+                </button>
+              </div>
+              {staffIdResult && (
+                <div className={`rounded-xl p-3 text-xs space-y-1 ${staffIdResult.taken ? 'bg-red-50 border border-red-200' : 'bg-emerald-50 border border-emerald-200'}`}>
+                  {!staffIdResult.taken ? (
+                    <p className="font-bold text-emerald-700">✓ Staff ID <span className="font-mono">{staffIdResult.staffId}</span> is free — nobody holds it.</p>
+                  ) : (
+                    <>
+                      <p className="font-bold text-red-700">⚠ Staff ID <span className="font-mono">{staffIdResult.staffId}</span> is taken:</p>
+                      {staffIdResult.deptRecord && (
+                        <p className="text-red-600">
+                          Department record: <strong>{staffIdResult.deptRecord.name}</strong>
+                          {staffIdResult.deptRecord.isSubAccount ? ' (sub-account)' : ' (main dept — as Head)'}
+                          {staffIdResult.deptRecord.isDeleted ? ' [DELETED]' : ''}
+                        </p>
+                      )}
+                      {staffIdResult.submission && (
+                        <p className="text-red-600">
+                          Pending submission: <strong>{staffIdResult.submission.firstName} {staffIdResult.submission.surname}</strong> — {staffIdResult.submission.role} / {staffIdResult.submission.deptName} ({staffIdResult.submission.status})
+                        </p>
+                      )}
+                      {staffIdResult.deptRecord && !staffIdResult.deptRecord.isDeleted && (
+                        <button
+                          onClick={handleClearEnrollment}
+                          disabled={clearingEnrollment}
+                          className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 text-white text-[10px] font-black hover:bg-red-700 transition-all disabled:opacity-50"
+                        >
+                          {clearingEnrollment ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
+                          Clear enrollment — allow re-submission
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
             </div>
