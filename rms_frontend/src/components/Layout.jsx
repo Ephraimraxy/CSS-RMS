@@ -949,8 +949,11 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
           // Amber Alert: check if you have urgent in-flight items pending someone else's input
           const urgentElsewhere = all.filter(r => {
             const submittedByMe = Number(r.departmentId) === userDeptId;
-            const isInFlight = r.status === 'pending' ||
-              (r.finalApprovalStatus && !['treated', 'published', 'none'].includes(r.finalApprovalStatus));
+            // finalApprovalStatus='treated'/'published' is terminal — always settled, even if
+            // r.status is still 'pending' (treatment endpoint doesn't update status column).
+            const finalStatus = r.finalApprovalStatus || 'none';
+            const isInFlight = !['treated', 'published'].includes(finalStatus) &&
+              (r.status === 'pending' || !['none', 'rejected'].includes(finalStatus));
             const isUrgent = ['urgent', 'critical'].includes((r.urgency || '').toLowerCase());
             return submittedByMe && isInFlight && isUrgent;
           });
