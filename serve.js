@@ -2166,7 +2166,7 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
         isSubAccount: true, parentId: true,
         directRoute: true, allowedRouteDeptIds: true,
         privilegeAmount: true, approvalLimit: true,
-        cashPrivilege: true, memoPrivilege: true, materialPrivilege: true, canOverride: true, canReject: true,
+        cashPrivilege: true, memoPrivilege: true, materialPrivilege: true, canOverride: true, canReject: true, canRecall: true,
         parent: { select: { id: true, name: true } },
       }
     });
@@ -2200,6 +2200,7 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
       ...(dept.materialPrivilege        ? { materialPrivilege: true }                   : {}),
       ...(dept.canOverride              ? { canOverride: true }                         : {}),
       ...(dept.canReject               ? { canReject: true }                           : {}),
+      ...(dept.canRecall               ? { canRecall: true }                           : {}),
     };
 
     res.json({ user: freshUser });
@@ -10084,6 +10085,104 @@ app.delete('/api/admin/reject-privs/:deptId', authenticateToken, requireRoles(['
   } catch (err) { sendError(res, 500, err.message); }
 });
 
+// ── Recall privilege management (Super Admin only) ───────────────────────────
+app.get('/api/admin/recall-privs', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const depts = await prisma.department.findMany({
+      where: { canRecall: true, isDeleted: false },
+      select: { id: true, name: true, type: true }
+    });
+    res.json(depts);
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+app.post('/api/admin/recall-privs', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { deptIds } = req.body || {};
+    if (!Array.isArray(deptIds) || deptIds.length === 0) return res.status(400).json({ error: 'Provide an array of department IDs.' });
+    const ids = deptIds.map(Number).filter(Boolean);
+    await prisma.department.updateMany({ where: { id: { in: ids } }, data: { canRecall: true } });
+    await logAudit(req, 'Recall Privilege Granted', `Granted recall privilege to dept IDs: ${ids.join(', ')}`).catch(() => {});
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+app.delete('/api/admin/recall-privs/:deptId', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const deptId = parseInt(req.params.deptId);
+    await prisma.department.update({ where: { id: deptId }, data: { canRecall: false } });
+    await logAudit(req, 'Recall Privilege Revoked', `Revoked recall privilege from dept ID: ${deptId}`).catch(() => {});
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Recall requisition (originator pulls back a pending req) ─────────────────
+app.post('/api/requisitions/:id/recall', authenticateToken, async (req, res) => {
+  try {
+    const reqId = parseInt(req.params.id);
+    const userDeptId = req.user?.deptId ? parseInt(req.user.deptId) : null;
+    const isAdmin = normalizeRole(req.user.role) === 'global_admin';
+
+    if (!userDeptId) return res.status(403).json({ error: 'Only department accounts can recall a requisition.' });
+
+    // Check recall privilege
+    if (!isAdmin) {
+      const dept = await prisma.department.findUnique({ where: { id: userDeptId }, select: { canRecall: true } });
+      if (!dept?.canRecall) return res.status(403).json({ error: 'Your department does not have recall privilege.' });
+    }
+
+    const requisition = await prisma.requisition.findUnique({
+      where: { id: reqId },
+      select: { id: true, title: true, departmentId: true, status: true, targetDepartmentId: true }
+    });
+    if (!requisition) return res.status(404).json({ error: 'Requisition not found.' });
+    if (requisition.departmentId !== userDeptId && !isAdmin) {
+      return res.status(403).json({ error: 'You can only recall requisitions submitted by your department.' });
+    }
+    if (requisition.status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending requisitions that have not been actioned can be recalled.' });
+    }
+    if (requisition.targetDepartmentId === userDeptId && !isAdmin) {
+      return res.status(400).json({ error: 'This requisition is already on your desk.' });
+    }
+
+    await prisma.requisition.update({
+      where: { id: reqId },
+      data: {
+        targetDepartmentId: requisition.departmentId,
+        currentVettingDeptId: null,
+      }
+    });
+
+    await logAudit(req, 'Requisition Recalled', `Req #${reqId} recalled to originating dept ${userDeptId}`).catch(() => {});
+    broadcastUpdate(reqId).catch(() => {});
+
+    res.json({ ok: true, message: 'Requisition recalled to your desk.' });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Admin reroute requisition ─────────────────────────────────────────────────
+app.post('/api/admin/reroute-req', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const parsed = z.object({ reqId: z.number(), targetDeptId: z.number() }).safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ error: 'reqId and targetDeptId are required.' });
+    const { reqId, targetDeptId } = parsed.data;
+
+    const targetDept = await prisma.department.findUnique({ where: { id: targetDeptId }, select: { name: true } });
+    if (!targetDept) return res.status(404).json({ error: 'Target department not found.' });
+
+    await prisma.requisition.update({
+      where: { id: reqId },
+      data: { targetDepartmentId: targetDeptId, currentVettingDeptId: null }
+    });
+
+    await logAudit(req, 'Admin Reroute', `Req #${reqId} rerouted to dept ${targetDeptId} (${targetDept.name})`).catch(() => {});
+    broadcastUpdate(reqId).catch(() => {});
+
+    res.json({ ok: true, message: `Rerouted to ${targetDept.name}.` });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
 // ── Override privilege management (Super Admin only) ─────────────────────────
 app.get('/api/admin/override-depts', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
@@ -13671,9 +13770,10 @@ const server = app.listen(PORT, async () => {
       try {
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canOverride" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canReject" BOOLEAN NOT NULL DEFAULT false`;
-        logger.info('[BOOT] Department canOverride/canReject columns ensured');
+        await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canRecall" BOOLEAN NOT NULL DEFAULT false`;
+        logger.info('[BOOT] Department canOverride/canReject/canRecall columns ensured');
       } catch (e) {
-        logger.warn('[BOOT] canOverride/canReject column check skipped:', e.message);
+        logger.warn('[BOOT] canOverride/canReject/canRecall column check skipped:', e.message);
       }
 
       // ── WhatsApp (Baileys) — start after DB is ready ─────────────────────

@@ -436,6 +436,7 @@ export const vettingAPI = {
   },
   convertToCash: (reqId, { amount, comment }) =>
     api.post(`/requisitions/${reqId}/convert-to-cash`, { amount, comment }),
+  recallRequisition: (reqId) => api.post(`/requisitions/${reqId}/recall`),
 
   async vettingAction(reqId, { action, comment, nextDeptId, file, vetted, amountDisbursed, treatmentType, treatmentReason }) {
     const formData = new FormData();
@@ -475,6 +476,10 @@ export const adminAPI = {
   getOverrideDepts: () => api.get('/admin/override-depts'),
   grantOverride: (deptIds) => api.post('/admin/override-depts', { deptIds }),
   revokeOverride: (deptId) => api.delete(`/admin/override-depts/${deptId}`),
+  getRecallPrivDepts: () => api.get('/admin/recall-privs'),
+  grantRecallPriv: (deptIds) => api.post('/admin/recall-privs', { deptIds }),
+  revokeRecallPriv: (deptId) => api.delete(`/admin/recall-privs/${deptId}`),
+  rerouteRequisition: (reqId, targetDeptId) => api.post('/admin/reroute-req', { reqId, targetDeptId }),
 };
 
 export const kivAPI = {

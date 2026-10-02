@@ -1617,6 +1617,17 @@ const OverridePrivsPanel = ({ departments }) => (
       grantFn={adminAPI.grantRejectPriv}
       revokeFn={adminAPI.revokeRejectPriv}
     />
+    <PrivSection
+      title="Recall Requisition Privilege"
+      description="Departments with this privilege can recall (pull back) a pending requisition they submitted — if the recipient has not yet acted on it — and re-route it to the correct department."
+      accentClass="text-violet-700"
+      borderClass="border-violet-300/40"
+      bgClass="bg-violet-50/60"
+      departments={departments}
+      loadFn={adminAPI.getRecallPrivDepts}
+      grantFn={adminAPI.grantRecallPriv}
+      revokeFn={adminAPI.revokeRecallPriv}
+    />
   </div>
 );
 

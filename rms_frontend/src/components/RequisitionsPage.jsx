@@ -3657,6 +3657,13 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
   const canUnreject = !!detail && (user?.role === 'global_admin' || user?.canOverride) && req.status === 'rejected';
   // Can this department account reject a requisition (privileged dept reject)?
   const canDeptReject = !!detail && user?.role === 'department' && user?.canReject === true && req.status === 'pending';
+  // Can originating dept recall this pending req (pull back before recipient acts)?
+  const canRecall = !!detail && user?.role === 'department' && user?.canRecall === true
+    && req.status === 'pending'
+    && parseInt(req.departmentId) === parseInt(user?.deptId)
+    && parseInt(detail?.targetDepartmentId) !== parseInt(user?.deptId);
+  // Can admin reroute this pending req to a different department?
+  const canAdminReroute = !!detail && user?.role === 'global_admin' && req.status === 'pending';
   // Is the request financial?
   const isFinancial = req.type === 'Cash' || (req.amount && req.amount > 0);
 
@@ -3719,6 +3726,37 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Rejection could not be processed.');
     } finally { setActing(false); }
+  };
+
+  const [recallActing, setRecallActing] = useState(false);
+  const handleRecall = async () => {
+    if (!window.confirm('Recall this requisition back to your desk? The recipient will no longer see it.')) return;
+    setRecallActing(true);
+    try {
+      await reqAPI.recallRequisition(req.id);
+      toast.success('Requisition recalled to your desk. You can now re-forward it to the correct department.');
+      onAction();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Recall failed.');
+    } finally { setRecallActing(false); }
+  };
+
+  const [rerouteActing, setRerouteActing] = useState(false);
+  const [showReroute, setShowReroute] = useState(false);
+  const [rerouteDeptId, setRerouteDeptId] = useState('');
+  const handleAdminReroute = async () => {
+    if (!rerouteDeptId) { toast.error('Select a target department.'); return; }
+    setRerouteActing(true);
+    try {
+      await adminAPI.rerouteRequisition(req.id, parseInt(rerouteDeptId));
+      const deptName = departments.find(d => d.id === parseInt(rerouteDeptId))?.name || 'selected department';
+      toast.success(`Rerouted to ${deptName}.`);
+      setShowReroute(false);
+      setRerouteDeptId('');
+      onAction();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Reroute failed.');
+    } finally { setRerouteActing(false); }
   };
 
   const timeline    = detail ? buildTimeline(detail.approvals || [], detail.currentStage, detail.status) : [];
@@ -3922,6 +3960,54 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
             <Printer size={16} />
             Print Record
           </button>
+        )}
+
+        {canRecall && (
+          <button
+            onClick={handleRecall}
+            disabled={recallActing}
+            title="Pull this requisition back to your desk"
+            className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl transition-all shadow-md shadow-violet-500/20 flex items-center gap-2 font-bold text-xs uppercase tracking-wider disabled:opacity-50"
+          >
+            {recallActing ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
+            Recall
+          </button>
+        )}
+
+        {canAdminReroute && (
+          <div className="relative">
+            <button
+              onClick={() => setShowReroute(v => !v)}
+              title="Admin: redirect this req to a different department"
+              className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl transition-all shadow-md shadow-amber-500/20 flex items-center gap-2 font-bold text-xs uppercase tracking-wider"
+            >
+              <ArrowRight size={16} />
+              Reroute
+            </button>
+            {showReroute && (
+              <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-border/50 rounded-xl shadow-xl p-3 space-y-2 min-w-[220px]">
+                <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Send to Department</p>
+                <select
+                  value={rerouteDeptId}
+                  onChange={e => setRerouteDeptId(e.target.value)}
+                  className="w-full border border-border/50 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+                >
+                  <option value="">— Select department —</option>
+                  {departments.filter(d => d.id !== parseInt(detail?.targetDepartmentId)).map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowReroute(false)} className="flex-1 py-1.5 rounded-lg border text-xs font-bold text-muted-foreground hover:bg-muted">Cancel</button>
+                  <button onClick={handleAdminReroute} disabled={rerouteActing || !rerouteDeptId}
+                    className="flex-1 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold disabled:opacity-40 flex items-center justify-center gap-1">
+                    {rerouteActing ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
