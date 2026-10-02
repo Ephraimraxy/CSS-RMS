@@ -1327,35 +1327,6 @@ app.delete('/api/push/fcm-token', authenticateToken, async (req, res) => {
   } catch (err) { sendError(res, 500, err.message); }
 });
 
-// ── Super Admin Broadcast ─────────────────────────────────────────────────────
-// POST /api/push/broadcast  — send a manual push to all or specific depts
-app.post('/api/push/broadcast', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
-  const { title, body, url, deptIds } = req.body || {};
-  if (!title?.trim() || !body?.trim()) return res.status(400).json({ error: 'title and body are required' });
-  try {
-    let targetIds;
-    if (Array.isArray(deptIds) && deptIds.length > 0) {
-      targetIds = deptIds.map(Number).filter(Boolean);
-    } else {
-      // All departments
-      const all = await prisma.$queryRaw`SELECT id FROM "Department" WHERE type != 'Super-Admin'`;
-      targetIds = all.map(r => r.id);
-    }
-    // Store in-app notification for each target dept
-    await Promise.allSettled(targetIds.map(id =>
-      prisma.notification.create({ data: { departmentId: id, content: body, link: url || '/' } }).catch(() => {})
-    ));
-    // Push (VAPID + FCM)
-    await sendPushNotification(targetIds, { title: title.trim(), body: body.trim(), url: url || '/' });
-    // Also push to all global_admin users
-    const admins = await prisma.user.findMany({ where: { role: 'global_admin' }, select: { id: true } });
-    for (const u of admins) {
-      sendPushToUser(u.id, { title: title.trim(), body: body.trim(), url: url || '/' }).catch(() => {});
-    }
-    res.json({ ok: true, sentTo: targetIds.length });
-  } catch (err) { sendError(res, 500, err.message); }
-});
-
 async function getDepartmentLinkedRequisitionIds(deptId) {
   const departmentId = toIntOrNull(deptId);
   if (!departmentId) return [];
@@ -1693,6 +1664,31 @@ const requireRoles = (roles) => (req, res, next) => {
   if (allowed.includes(userRole) || userRole === 'global_admin') return next();
   return res.status(403).json({ error: 'You do not have permission to perform this action.' });
 };
+
+// ── Super Admin Broadcast ─────────────────────────────────────────────────────
+// POST /api/push/broadcast  — send a manual push to all or specific depts
+app.post('/api/push/broadcast', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  const { title, body, url, deptIds } = req.body || {};
+  if (!title?.trim() || !body?.trim()) return res.status(400).json({ error: 'title and body are required' });
+  try {
+    let targetIds;
+    if (Array.isArray(deptIds) && deptIds.length > 0) {
+      targetIds = deptIds.map(Number).filter(Boolean);
+    } else {
+      const all = await prisma.$queryRaw`SELECT id FROM "Department" WHERE type != 'Super-Admin'`;
+      targetIds = all.map(r => r.id);
+    }
+    await Promise.allSettled(targetIds.map(id =>
+      prisma.notification.create({ data: { departmentId: id, content: body, link: url || '/' } }).catch(() => {})
+    ));
+    await sendPushNotification(targetIds, { title: title.trim(), body: body.trim(), url: url || '/' });
+    const admins = await prisma.user.findMany({ where: { role: 'global_admin' }, select: { id: true } });
+    for (const u of admins) {
+      sendPushToUser(u.id, { title: title.trim(), body: body.trim(), url: url || '/' }).catch(() => {});
+    }
+    res.json({ ok: true, sentTo: targetIds.length });
+  } catch (err) { sendError(res, 500, err.message); }
+});
 
 const ensureActivePublicKey = async () => {
   if (!ACTIVE_PUBLIC_KEY || !ACTIVE_KID) return;
