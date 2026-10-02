@@ -1042,8 +1042,10 @@ app.use((req, res, next) => {
 });
 
 // Apply mutation limiter to all state-changing API requests
+// (SSE ticket + push subscribe use their own sseLimiter — exempted here)
+const _SSE_EXEMPT = new Set(['/api/events/ticket', '/api/push/subscribe', '/api/push/subscribe/']);
 app.use('/api', (req, res, next) => {
-  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && !_SSE_EXEMPT.has(req.path)) {
     return mutationLimiter(req, res, next);
   }
   next();
@@ -1120,6 +1122,16 @@ const mutationLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests. Please wait a moment and try again.' }
+});
+
+// SSE ticket + push-subscribe are POST but non-mutating infra calls — the
+// frontend requests these on reconnect/re-render so they need a much higher
+// budget than the general mutation limiter (80/5min) allows.
+const sseLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // ── Token Blacklist (hybrid: in-memory for speed + DB for persistence) ───────
@@ -1271,14 +1283,14 @@ const authenticateToken = async (req, res, next) => {
 // Issue a short-lived (30 s) single-use SSE ticket so the JWT never appears in
 // query strings / server logs. The client POSTs here with the normal Bearer
 // token, gets back a ticket, and opens EventSource with ?ticket=<value>.
-app.post('/api/events/ticket', authenticateToken, (req, res) => {
+app.post('/api/events/ticket', sseLimiter, authenticateToken, (req, res) => {
   const ticket = crypto.randomUUID();
   sseTickets.set(ticket, { user: req.user, expiresAt: Date.now() + 30_000 });
   res.json({ ticket });
 });
 
 // ── Push subscription endpoints (placed here: after authenticateToken) ────────
-app.post('/api/push/subscribe', authenticateToken, async (req, res) => {
+app.post('/api/push/subscribe', sseLimiter, authenticateToken, async (req, res) => {
   const { endpoint, p256dh, auth } = req.body || {};
   if (!endpoint || !p256dh || !auth) return res.status(400).json({ error: 'Missing subscription fields' });
   const deptId = req.user.deptId ? parseInt(req.user.deptId) : null;
