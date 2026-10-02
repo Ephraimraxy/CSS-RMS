@@ -9,6 +9,8 @@ module.exports = {
       watch: false,
       max_memory_restart: '400M',
       exp_backoff_restart_delay: 100,
+      max_restarts: 15,
+      min_uptime: '5s',
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
