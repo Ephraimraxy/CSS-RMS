@@ -1508,103 +1508,73 @@ const ImportHODModal = ({ onClose, onDone }) => {
 };
 
 
-// ── Override Privileges Panel ─────────────────────────────────────────────────
-const OverridePrivsPanel = ({ departments }) => {
-  const [privileged, setPrivileged] = React.useState(null); // null = loading
+// ── Reusable privilege section (used inside OverridePrivsPanel) ───────────────
+const PrivSection = ({ title, description, accentClass, borderClass, bgClass, departments, loadFn, grantFn, revokeFn }) => {
+  const [privileged, setPrivileged] = React.useState(null);
   const [selected, setSelected]     = React.useState(new Set());
   const [saving, setSaving]         = React.useState(false);
 
   const load = React.useCallback(async () => {
-    try {
-      const res = await adminAPI.getOverrideDepts();
-      setPrivileged(res.data || []);
-    } catch { setPrivileged([]); }
-  }, []);
+    try { const res = await loadFn(); setPrivileged(res.data || []); }
+    catch { setPrivileged([]); }
+  }, [loadFn]);
 
   React.useEffect(() => { load(); }, [load]);
 
   const privilegedIds = new Set((privileged || []).map(d => d.id));
   const eligible = (departments || []).filter(d => !d.isSubAccount && !d.isDeleted && !d.isDisabled);
 
-  const toggle = (id) => setSelected(prev => {
-    const n = new Set(prev);
-    n.has(id) ? n.delete(id) : n.add(id);
-    return n;
-  });
+  const toggle = id => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   const handleGrant = async () => {
-    if (selected.size === 0) return;
+    if (!selected.size) return;
     setSaving(true);
     try {
-      await adminAPI.grantOverride([...selected]);
-      toast.success(`Override privilege granted to ${selected.size} department(s).`);
-      setSelected(new Set());
-      load();
-    } catch (e) {
-      toast.error(e?.response?.data?.error || 'Failed to grant privilege.');
-    } finally { setSaving(false); }
+      await grantFn([...selected]);
+      toast.success(`Privilege granted to ${selected.size} department(s).`);
+      setSelected(new Set()); load();
+    } catch (e) { toast.error(e?.response?.data?.error || 'Failed to grant.'); }
+    finally { setSaving(false); }
   };
 
-  const handleRevoke = async (deptId, deptName) => {
-    if (!window.confirm(`Remove override privilege from "${deptName}"?`)) return;
+  const handleRevoke = async (id, name) => {
+    if (!window.confirm(`Remove privilege from "${name}"?`)) return;
     setSaving(true);
-    try {
-      await adminAPI.revokeOverride(deptId);
-      toast.success(`Privilege removed from ${deptName}.`);
-      load();
-    } catch (e) {
-      toast.error(e?.response?.data?.error || 'Failed to revoke privilege.');
-    } finally { setSaving(false); }
+    try { await revokeFn(id); toast.success(`Privilege removed from ${name}.`); load(); }
+    catch (e) { toast.error(e?.response?.data?.error || 'Failed to revoke.'); }
+    finally { setSaving(false); }
   };
 
   return (
-    <div className="space-y-5">
-      <div className="p-4 bg-amber-500/8 border border-amber-400/25 rounded-2xl">
-        <p className="text-[11px] font-black text-amber-700 uppercase tracking-widest mb-1">Override Privileges</p>
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          Departments granted override privilege can restore a <strong>rejected</strong> requisition back to pending status — the same power Super Admin has.
-          Super Admin can grant or revoke this at any time.
-        </p>
+    <div className="space-y-4 p-5 rounded-2xl border border-border/40 bg-card">
+      <div className={`p-3 rounded-xl border ${borderClass} ${bgClass}`}>
+        <p className={`text-[11px] font-black uppercase tracking-widest mb-1 ${accentClass}`}>{title}</p>
+        <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>
       </div>
 
-      {/* Currently privileged */}
       <div className="space-y-2">
-        <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Currently Privileged Departments</p>
-        {privileged === null ? (
-          <p className="text-xs text-muted-foreground">Loading…</p>
-        ) : privileged.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic">No departments have override privilege yet.</p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {privileged.map(d => (
-              <div key={d.id} className="flex items-center justify-between px-4 py-2.5 rounded-xl border border-amber-300/40 bg-amber-50/60">
-                <span className="text-sm font-semibold">{d.name}</span>
-                <button
-                  onClick={() => handleRevoke(d.id, d.name)}
-                  disabled={saving}
-                  className="text-[11px] font-bold text-destructive hover:underline disabled:opacity-50"
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Currently Privileged</p>
+        {privileged === null ? <p className="text-xs text-muted-foreground">Loading…</p>
+          : privileged.length === 0 ? <p className="text-xs text-muted-foreground italic">None assigned yet.</p>
+          : (
+            <div className="flex flex-col gap-1.5">
+              {privileged.map(d => (
+                <div key={d.id} className={`flex items-center justify-between px-4 py-2.5 rounded-xl border ${borderClass} ${bgClass}`}>
+                  <span className="text-sm font-semibold">{d.name}</span>
+                  <button onClick={() => handleRevoke(d.id, d.name)} disabled={saving}
+                    className="text-[11px] font-bold text-destructive hover:underline disabled:opacity-50">Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
       </div>
 
-      {/* Grant to more */}
       <div className="space-y-2">
-        <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Grant to Additional Departments</p>
-        <p className="text-[11px] text-muted-foreground mb-2">Select one or more departments below, then click <strong>Grant Privilege</strong>.</p>
-        <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto pr-1">
+        <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Grant to Departments</p>
+        <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-1">
           {eligible.filter(d => !privilegedIds.has(d.id)).map(d => (
             <label key={d.id} className="flex items-center gap-3 px-4 py-2 rounded-xl border border-border/50 hover:bg-muted/30 cursor-pointer transition-colors">
-              <input
-                type="checkbox"
-                checked={selected.has(d.id)}
-                onChange={() => toggle(d.id)}
-                className="accent-primary w-4 h-4"
-              />
+              <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggle(d.id)} className="accent-primary w-4 h-4" />
               <span className="text-sm">{d.name}</span>
               <span className="ml-auto text-[10px] text-muted-foreground">{d.type}</span>
             </label>
@@ -1613,17 +1583,42 @@ const OverridePrivsPanel = ({ departments }) => {
             <p className="text-xs text-muted-foreground italic px-2">All departments already have this privilege.</p>
           )}
         </div>
-        <button
-          onClick={handleGrant}
-          disabled={selected.size === 0 || saving}
-          className="mt-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-primary text-primary-foreground disabled:opacity-40 hover:opacity-90 transition-all"
-        >
-          {saving ? 'Saving…' : `Grant Privilege (${selected.size} selected)`}
+        <button onClick={handleGrant} disabled={!selected.size || saving}
+          className="mt-1 px-5 py-2.5 rounded-xl text-xs font-bold bg-primary text-primary-foreground disabled:opacity-40 hover:opacity-90 transition-all">
+          {saving ? 'Saving…' : `Grant Privilege${selected.size ? ` (${selected.size} selected)` : ''}`}
         </button>
       </div>
     </div>
   );
 };
+
+// ── Override Privileges Panel ─────────────────────────────────────────────────
+const OverridePrivsPanel = ({ departments }) => (
+  <div className="space-y-5">
+    <PrivSection
+      title="Restore Rejected Privilege"
+      description="Departments with this privilege can restore a rejected requisition back to pending status — the same power Super Admin has. Super Admin can grant or revoke anytime."
+      accentClass="text-amber-700"
+      borderClass="border-amber-300/40"
+      bgClass="bg-amber-50/60"
+      departments={departments}
+      loadFn={adminAPI.getOverrideDepts}
+      grantFn={adminAPI.grantOverride}
+      revokeFn={adminAPI.revokeOverride}
+    />
+    <PrivSection
+      title="Reject Requisition Privilege"
+      description="Departments with this privilege can reject a pending requisition they receive — without needing an admin or manager role. A reason is always required."
+      accentClass="text-destructive"
+      borderClass="border-destructive/20"
+      bgClass="bg-destructive/5"
+      departments={departments}
+      loadFn={adminAPI.getRejectPrivDepts}
+      grantFn={adminAPI.grantRejectPriv}
+      revokeFn={adminAPI.revokeRejectPriv}
+    />
+  </div>
+);
 
 // ── Main Component ────────────────────────────────────────────────────────────
 const DepartmentManager = ({ onViewChange }) => {

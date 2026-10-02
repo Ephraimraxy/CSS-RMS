@@ -2153,7 +2153,7 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
         isSubAccount: true, parentId: true,
         directRoute: true, allowedRouteDeptIds: true,
         privilegeAmount: true, approvalLimit: true,
-        cashPrivilege: true, memoPrivilege: true, materialPrivilege: true, canOverride: true,
+        cashPrivilege: true, memoPrivilege: true, materialPrivilege: true, canOverride: true, canReject: true,
         parent: { select: { id: true, name: true } },
       }
     });
@@ -2186,6 +2186,7 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
       ...(dept.memoPrivilege            ? { memoPrivilege: true }                       : {}),
       ...(dept.materialPrivilege        ? { materialPrivilege: true }                   : {}),
       ...(dept.canOverride              ? { canOverride: true }                         : {}),
+      ...(dept.canReject               ? { canReject: true }                           : {}),
     };
 
     res.json({ user: freshUser });
@@ -10007,6 +10008,65 @@ app.post('/api/admin/requisitions/:id/unreject', authenticateToken, async (req, 
     });
     await logAudit(req, 'Requisition Restored', `Req #${reqId} restored to pending by ${req.user?.name || 'Admin'}${remarks ? ': ' + remarks : ''}`).catch(() => {});
     broadcastUpdate(reqId, { action: 'restored', fromDept: req.user?.name || 'Admin' });
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Privileged dept: reject a requisition ────────────────────────────────────
+app.post('/api/requisitions/:id/dept-reject', authenticateToken, async (req, res) => {
+  try {
+    const reqId = parseInt(req.params.id);
+    const deptId = req.user?.deptId ? parseInt(req.user.deptId) : null;
+    if (!deptId) return res.status(403).json({ error: 'Only department accounts can use this endpoint.' });
+
+    const dept = await prisma.department.findUnique({ where: { id: deptId }, select: { canReject: true, name: true } });
+    if (!dept?.canReject) return res.status(403).json({ error: 'Your department does not have reject privilege.' });
+
+    const _isIcc = isIccDept(req.user?.name);
+    if (!_isIcc && await blockIfIccFrozen(reqId, res)) return;
+
+    const r = await prisma.requisition.findUnique({ where: { id: reqId } });
+    if (!r) return res.status(404).json({ error: 'Requisition not found.' });
+    if (r.status !== 'pending') return res.status(400).json({ error: `Requisition is not pending (status: ${r.status}).` });
+
+    const { remarks } = req.body || {};
+    if (!remarks?.trim()) return res.status(400).json({ error: 'Please state a reason for rejection.' });
+
+    await prisma.requisition.update({ where: { id: reqId }, data: { status: 'rejected' } });
+    await logAudit(req, 'Requisition Rejected', `Req #${reqId} rejected by department "${dept.name}"${remarks ? ': ' + remarks : ''}`).catch(() => {});
+    broadcastUpdate(reqId, { action: 'rejected', fromDept: dept.name });
+    pushToTaggedDepts(reqId, { title: 'Requisition Rejected', body: `Req #${reqId} was rejected by ${dept.name}.`, url: `/?req=${reqId}` });
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Reject privilege management (Super Admin only) ────────────────────────────
+app.get('/api/admin/reject-privs', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const depts = await prisma.department.findMany({
+      where: { canReject: true, isDeleted: false },
+      select: { id: true, name: true, type: true }
+    });
+    res.json(depts);
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+app.post('/api/admin/reject-privs', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { deptIds } = req.body || {};
+    if (!Array.isArray(deptIds) || deptIds.length === 0) return res.status(400).json({ error: 'Provide an array of department IDs.' });
+    const ids = deptIds.map(Number).filter(Boolean);
+    await prisma.department.updateMany({ where: { id: { in: ids } }, data: { canReject: true } });
+    await logAudit(req, 'Reject Privilege Granted', `Granted reject privilege to dept IDs: ${ids.join(', ')}`).catch(() => {});
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+app.delete('/api/admin/reject-privs/:deptId', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const deptId = parseInt(req.params.deptId);
+    await prisma.department.update({ where: { id: deptId }, data: { canReject: false } });
+    await logAudit(req, 'Reject Privilege Revoked', `Revoked reject privilege from dept ID: ${deptId}`).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
 });

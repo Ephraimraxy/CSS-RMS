@@ -3658,6 +3658,8 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
   const canApprove = !!detail && user?.role !== 'department' && req.status === 'pending' && !isInterDept;
   // Can current user restore a rejected requisition to pending?
   const canUnreject = !!detail && (user?.role === 'global_admin' || user?.canOverride) && req.status === 'rejected';
+  // Can this department account reject a requisition (privileged dept reject)?
+  const canDeptReject = !!detail && user?.role === 'department' && user?.canReject === true && req.status === 'pending';
   // Is the request financial?
   const isFinancial = req.type === 'Cash' || (req.amount && req.amount > 0);
 
@@ -3704,6 +3706,21 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
       onAction();
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Could not restore requisition.');
+    } finally { setActing(false); }
+  };
+
+  const [deptRejectRemarks, setDeptRejectRemarks] = useState('');
+  const handleDeptReject = async () => {
+    if (!deptRejectRemarks.trim()) { toast.error('Please state a reason for rejection.'); return; }
+    if (!window.confirm('Reject this requisition? This action cannot be undone.')) return;
+    setActing(true);
+    try {
+      await reqAPI.deptRejectRequisition(req.id, deptRejectRemarks);
+      toast.success('Requisition rejected.');
+      setDeptRejectRemarks('');
+      onAction();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Rejection could not be processed.');
     } finally { setActing(false); }
   };
 
@@ -4375,6 +4392,33 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                       onReject={handleReject}
                       onEscalate={handleEscalate}
                     />
+                  </div>
+                </div>
+              )}
+
+              {/* Department Reject Panel — for depts granted canReject privilege */}
+              {!isTaggedObserver && !loading && canDeptReject && !isFrozen && !isOnKiv && (
+                <div className="space-y-3 pt-4 border-t border-border/50">
+                  <div className="flex items-center space-x-2">
+                    <XCircle size={13} className="text-destructive" />
+                    <p className="text-[10px] font-black text-destructive uppercase tracking-[0.1em]">Department Rejection</p>
+                  </div>
+                  <div className={acting ? 'opacity-60 pointer-events-none' : ''}>
+                    <textarea
+                      value={deptRejectRemarks}
+                      onChange={e => setDeptRejectRemarks(e.target.value)}
+                      placeholder="State reason for rejection (required)..."
+                      rows={3}
+                      className="w-full bg-white border border-border/50 rounded-2xl p-4 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-destructive/40 text-sm resize-none"
+                    />
+                    <button
+                      onClick={handleDeptReject}
+                      disabled={acting || !deptRejectRemarks.trim()}
+                      className="mt-2 w-full bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold py-3 rounded-2xl transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      <XCircle size={16} />
+                      <span>Reject Requisition</span>
+                    </button>
                   </div>
                 </div>
               )}

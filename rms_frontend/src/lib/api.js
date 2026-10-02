@@ -317,6 +317,9 @@ export const reqAPI = {
   async rejectRequisition(id, remarks) {
     return api.post(`/requisitions/${id}/reject`, { remarks });
   },
+  async deptRejectRequisition(id, remarks) {
+    return api.post(`/requisitions/${id}/dept-reject`, { remarks });
+  },
   async getSignedPdf(id) {
     return api.get(`/requisitions/${id}/signed-pdf`, { responseType: 'blob' });
   },
@@ -466,6 +469,9 @@ export const adminAPI = {
   getAiCaps: () => api.get('/admin/ai-caps'),
   saveAiCaps: (caps) => api.post('/admin/ai-caps', caps),
   unrejectRequisition: (id, remarks) => api.post(`/admin/requisitions/${id}/unreject`, { remarks }),
+  getRejectPrivDepts: () => api.get('/admin/reject-privs'),
+  grantRejectPriv: (deptIds) => api.post('/admin/reject-privs', { deptIds }),
+  revokeRejectPriv: (deptId) => api.delete(`/admin/reject-privs/${deptId}`),
   getOverrideDepts: () => api.get('/admin/override-depts'),
   grantOverride: (deptIds) => api.post('/admin/override-depts', { deptIds }),
   revokeOverride: (deptId) => api.delete(`/admin/override-depts/${deptId}`),
