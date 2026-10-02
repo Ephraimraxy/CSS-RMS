@@ -142,7 +142,7 @@ jobs:
       # to sit in that gap, stretching a few seconds of version skew into
       # however long it takes to scp a mobile binary to a single-core box.
       # Users filing requisitions during a deploy saw the errors from it.
-      - name: Restart PM2
+      - name: Restart PM2 + reload nginx
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -160,6 +160,22 @@ jobs:
             pm2 save
 
             _log "  restart   $(( $(date -u +%s) - T_RESTART ))s  [OK]"
+
+            # ── Sync nginx config from repo and reload ──
+            NGINX_SRC="/var/www/cssrms/nginx/cssrms.conf"
+            NGINX_DST="/etc/nginx/sites-available/cssrms"
+            if [ -f "$NGINX_SRC" ]; then
+              cp "$NGINX_SRC" "$NGINX_DST"
+              if nginx -t 2>/dev/null; then
+                systemctl reload nginx
+                _log "  nginx     reloaded [OK]"
+                echo "  ✓ nginx config updated and reloaded"
+              else
+                _log "  nginx     config test FAILED — keeping previous config"
+                echo "  ⚠ nginx -t failed — previous nginx config kept, app still running"
+              fi
+            fi
+
             _log "--------------------------------------"
             _log "SUCCESS   $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
             _log "======================================"
