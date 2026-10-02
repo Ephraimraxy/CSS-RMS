@@ -13571,3 +13571,16 @@ const gracefulShutdown = (signal) => {
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Unhandled promise rejections — log and continue; do NOT crash the server.
+// Node 15+ crashes the process by default, causing PM2 to restart and users
+// to see "Server temporarily unavailable" for a few seconds on every rejection.
+process.on('unhandledRejection', (reason) => {
+  logger.error({ reason: reason?.stack || reason }, '[WARN] unhandledRejection — caught at process level');
+});
+
+// Truly unexpected synchronous throws — log and exit so PM2 can restart cleanly.
+process.on('uncaughtException', (err) => {
+  logger.error({ err }, '[FATAL] uncaughtException — restarting');
+  process.exit(1);
+});
