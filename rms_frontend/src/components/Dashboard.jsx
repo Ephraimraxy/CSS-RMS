@@ -502,7 +502,7 @@ const Dashboard = ({ onViewChange }) => {
                     <table className="w-full text-left border-separate border-spacing-y-2">
                       <thead>
                         <tr className="text-muted-foreground text-[10px] font-black uppercase tracking-[0.2em]">
-                          <th className="pb-3 px-4">Ref</th>
+                          <th className="pb-3 px-4">S/N</th>
                           <th className="pb-3 px-4">Type</th>
                           <th className="pb-3 px-4">Title</th>
                           <th className="pb-3 px-4">Amount</th>
@@ -1084,7 +1084,7 @@ const Dashboard = ({ onViewChange }) => {
                             <table className="w-full text-left border-separate border-spacing-y-2">
                               <thead>
                                 <tr className="text-muted-foreground text-[10px] font-black uppercase tracking-[0.2em]">
-                                  <th className="pb-3 px-4">Ref</th>
+                                  <th className="pb-3 px-4">S/N</th>
                                   <th className="pb-3 px-4">Title</th>
                                   <th className="pb-3 px-4">{user?.role === 'global_admin' ? 'Department' : 'My Role'}</th>
                                   <th className="pb-3 px-4">Amount</th>
@@ -1106,7 +1106,7 @@ const Dashboard = ({ onViewChange }) => {
                             <table className="w-full text-left border-separate border-spacing-y-2">
                               <thead>
                                 <tr className="text-muted-foreground text-[10px] font-black uppercase tracking-[0.2em]">
-                                  <th className="pb-3 px-4">Ref</th>
+                                  <th className="pb-3 px-4">S/N</th>
                                   <th className="pb-3 px-4">Title</th>
                                   <th className="pb-3 px-4">{user?.role === 'global_admin' ? 'Department' : 'My Role'}</th>
                                   <th className="pb-3 px-4">Amount</th>
