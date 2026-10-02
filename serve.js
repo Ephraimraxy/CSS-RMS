@@ -13662,6 +13662,16 @@ const server = app.listen(PORT, async () => {
       try { await ensureHelpDeskTable(); logger.info('[BOOT] HelpDesk table ready'); }
       catch (e) { logger.warn('[BOOT] HelpDesk table setup deferred:', e.message); }
 
+      // Self-healing: ensure canOverride + canReject columns exist on Department
+      // (Prisma migrate deploy can silently skip these if the migration state is out of sync)
+      try {
+        await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canOverride" BOOLEAN NOT NULL DEFAULT false`;
+        await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canReject" BOOLEAN NOT NULL DEFAULT false`;
+        logger.info('[BOOT] Department canOverride/canReject columns ensured');
+      } catch (e) {
+        logger.warn('[BOOT] canOverride/canReject column check skipped:', e.message);
+      }
+
       // ── WhatsApp (Baileys) — start after DB is ready ─────────────────────
       if (process.env.WHATSAPP_ENABLED === 'true') {
         whatsapp.setPrisma(prisma);
