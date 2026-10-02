@@ -11412,18 +11412,19 @@ app.get('/api/requisitions/:id/dynamic-pdf', authenticateToken, async (req, res)
         textY -= 13;
 
         if (evt.note) {
-          const noteStr = sanitizeText(`Comment: "${evt.note}"`);
+          const noteStr = sanitizeText(`Comment: "${evt.note}"`).replace(/[\r\n]+/g, ' ');
           const maxNC = Math.floor((leftColMax - margin - 30) / (italicFont.widthOfTextAtSize('M', 8) * 0.6));
           const words = noteStr.split(' ');
           let line = '';
           for (const w of words) {
             const t = line ? `${line} ${w}` : w;
             if (t.length > maxNC && line) {
+              ensureSpace(16);
               page.drawText(line, { x: margin + 30, y: textY, size: 8, font: italicFont, color: rgb(0.2, 0.2, 0.2) });
               textY -= 11; line = w;
             } else { line = t; }
           }
-          if (line) { page.drawText(line, { x: margin + 30, y: textY, size: 8, font: italicFont, color: rgb(0.2, 0.2, 0.2) }); textY -= 11; }
+          if (line) { ensureSpace(16); page.drawText(line, { x: margin + 30, y: textY, size: 8, font: italicFont, color: rgb(0.2, 0.2, 0.2) }); textY -= 11; }
         }
 
         // ── RIGHT COLUMN: signature + seal ───────────────
@@ -11461,7 +11462,7 @@ app.get('/api/requisitions/:id/dynamic-pdf', authenticateToken, async (req, res)
         if (showStampOnPdf) await drawSeal(page, sealCX, sealCY, evt.fromDepartment?.name || '', sealDate);
 
         // Advance y past both columns + breathing room
-        y = Math.min(textY, showStampOnPdf ? sealCY - 38 : textY - 8) - 12;
+        y = Math.min(textY, showStampOnPdf ? sealCY - 38 : textY - 8) - 20;
       }
     }
 
@@ -11532,17 +11533,19 @@ app.get('/api/requisitions/:id/dynamic-pdf', authenticateToken, async (req, res)
         textY -= 13;
 
         if (evtComment) {
+          const vNoteStr = `Comment: "${evtComment}"`.replace(/[\r\n]+/g, ' ');
           const maxNC = Math.floor((vLeftColMax - margin - 30) / (italicFont.widthOfTextAtSize('M', 8) * 0.6));
-          const words = `Comment: "${evtComment}"`.split(' ');
+          const words = vNoteStr.split(' ');
           let line = '';
           for (const w of words) {
             const t = line ? `${line} ${w}` : w;
             if (t.length > maxNC && line) {
+              ensureSpace(16);
               page.drawText(line, { x: margin + 30, y: textY, size: 8, font: italicFont, color: rgb(0.2, 0.2, 0.2) });
               textY -= 11; line = w;
             } else { line = t; }
           }
-          if (line) { page.drawText(line, { x: margin + 30, y: textY, size: 8, font: italicFont, color: rgb(0.2, 0.2, 0.2) }); textY -= 11; }
+          if (line) { ensureSpace(16); page.drawText(line, { x: margin + 30, y: textY, size: 8, font: italicFont, color: rgb(0.2, 0.2, 0.2) }); textY -= 11; }
         }
 
         // ── RIGHT COLUMN: signature + seal ──────────────
@@ -11575,7 +11578,7 @@ app.get('/api/requisitions/:id/dynamic-pdf', authenticateToken, async (req, res)
         const vSealCY = rowTopY - 38;
         if (showStampOnPdf) await drawSeal(page, vSealCX, vSealCY, evt.deptName || '', sealDate);
 
-        y = Math.min(textY, showStampOnPdf ? vSealCY - 38 : textY - 8) - 12;
+        y = Math.min(textY, showStampOnPdf ? vSealCY - 38 : textY - 8) - 20;
       }
     }
 
