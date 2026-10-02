@@ -86,6 +86,7 @@ model Department {
   materialPrivilege    Boolean          @default(false)
   canOverride          Boolean          @default(false) // Super Admin can grant: allows dept to restore rejected requisitions
   canReject            Boolean          @default(false) // Super Admin can grant: allows dept to reject requisitions they receive
+  canRecall            Boolean          @default(false) // Super Admin can grant: allows dept to recall their own pending requisitions
   // Per-sub-account routing: if false, all requests route through parent head first
   directRoute          Boolean          @default(false)
   // JSON array of dept IDs the sub-account may target directly; null = any department
