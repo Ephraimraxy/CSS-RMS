@@ -21,7 +21,7 @@ import {
   Lock, Unlock, ShieldAlert, MessageCircle, Check, Shield, AlertCircle, ArrowUp,
   UserCheck, Paperclip as PaperclipIcon, Flag
 } from 'lucide-react';
-import { reqAPI, forwardAPI, discountAPI } from '../lib/api';
+import { reqAPI, forwardAPI, discountAPI, adminAPI } from '../lib/api';
 
 // Highlights the first occurrence of `query` inside `text` with a yellow mark
 const Highlight = ({ text, query }) => {
@@ -3656,6 +3656,8 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
   const isInterDept = detail?.targetDepartmentId && !detail?.currentStageId;
   // Can current user take approval action — requires detail to be loaded to avoid flash of wrong panel
   const canApprove = !!detail && user?.role !== 'department' && req.status === 'pending' && !isInterDept;
+  // Can current user restore a rejected requisition to pending?
+  const canUnreject = !!detail && (user?.role === 'global_admin' || user?.canOverride) && req.status === 'rejected';
   // Is the request financial?
   const isFinancial = req.type === 'Cash' || (req.amount && req.amount > 0);
 
@@ -3692,6 +3694,18 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
 
   const handleEscalate = () =>
     toast('Use Reject with remarks to escalate manually.', { icon: 'ℹ️' });
+
+  const handleUnreject = async () => {
+    if (!window.confirm('Restore this requisition to pending? It will re-enter the approval pipeline from the beginning.')) return;
+    setActing(true);
+    try {
+      await adminAPI.unrejectRequisition(req.id);
+      toast.success('Requisition restored to pending.');
+      onAction();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not restore requisition.');
+    } finally { setActing(false); }
+  };
 
   const timeline    = detail ? buildTimeline(detail.approvals || [], detail.currentStage, detail.status) : [];
   const attachments = detail?.attachments || [];
@@ -4881,9 +4895,21 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                       <span className="text-xs font-bold">Document Fully Authenticated</span>
                    </div>
                  ) : req.status === 'rejected' ? (
-                   <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 flex items-center gap-2 text-destructive">
-                      <AlertTriangle size={16} />
-                      <span className="text-xs font-bold">Rejected</span>
+                   <div className="flex flex-col gap-2">
+                     <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 flex items-center gap-2 text-destructive">
+                       <AlertTriangle size={16} />
+                       <span className="text-xs font-bold">Rejected</span>
+                     </div>
+                     {canUnreject && (
+                       <button
+                         onClick={handleUnreject}
+                         disabled={acting}
+                         className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold border border-amber-400/50 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-all disabled:opacity-50"
+                       >
+                         <RotateCcw size={13} />
+                         Restore to Pending
+                       </button>
+                     )}
                    </div>
                  ) : (
                    <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 flex items-center gap-2 text-destructive">

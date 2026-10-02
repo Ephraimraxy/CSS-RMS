@@ -2153,7 +2153,7 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
         isSubAccount: true, parentId: true,
         directRoute: true, allowedRouteDeptIds: true,
         privilegeAmount: true, approvalLimit: true,
-        cashPrivilege: true, memoPrivilege: true, materialPrivilege: true,
+        cashPrivilege: true, memoPrivilege: true, materialPrivilege: true, canOverride: true,
         parent: { select: { id: true, name: true } },
       }
     });
@@ -2185,6 +2185,7 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
       ...(dept.approvalLimit    != null ? { approvalLimit: dept.approvalLimit }         : {}),
       ...(dept.memoPrivilege            ? { memoPrivilege: true }                       : {}),
       ...(dept.materialPrivilege        ? { materialPrivilege: true }                   : {}),
+      ...(dept.canOverride              ? { canOverride: true }                         : {}),
     };
 
     res.json({ user: freshUser });
@@ -8093,8 +8094,7 @@ app.post('/api/requisitions/:id/kiv', authenticateToken, async (req, res) => {
     const userDeptId = req.user?.deptId ? parseInt(req.user.deptId) : null;
     const isAdmin = normalizeRole(req.user.role) === 'global_admin';
     const isIcc = isIccDept(req.user?.name);
-    // ICC acts immediately on any request; non-ICC blocked when frozen
-    if (!isIcc && await blockIfIccFrozen(reqId, res)) return;
+    if (!isAdmin && !isIcc && await blockIfIccFrozen(reqId, res)) return;
     const requisition = await prisma.requisition.findUnique({ where: { id: reqId } });
     if (!requisition) return res.status(404).json({ error: 'Requisition not found' });
     const isHolder = userDeptId && (
@@ -8119,7 +8119,7 @@ app.post('/api/requisitions/:id/un-kiv', authenticateToken, async (req, res) => 
     const userDeptId = req.user?.deptId ? parseInt(req.user.deptId) : null;
     const isAdmin = normalizeRole(req.user.role) === 'global_admin';
     const isIcc = isIccDept(req.user?.name);
-    if (!isIcc && await blockIfIccFrozen(reqId, res)) return;
+    if (!isAdmin && !isIcc && await blockIfIccFrozen(reqId, res)) return;
     const requisition = await prisma.requisition.findUnique({ where: { id: reqId } });
     if (!requisition) return res.status(404).json({ error: 'Requisition not found' });
     const isHolder = userDeptId && (
@@ -9937,7 +9937,8 @@ app.post('/api/requisitions/:id/publish-memo', authenticateToken, async (req, re
 app.post('/api/requisitions/:id/approve', authenticateToken, approvalLimiter, async (req, res) => {
   try {
     const { id } = req.params;
-    if (await blockIfIccFrozen(parseInt(id), res)) return;
+    const _iA = normalizeRole(req.user.role) === 'global_admin';
+    if (!_iA && !isIccDept(req.user?.name) && await blockIfIccFrozen(parseInt(id), res)) return;
     const parsed = z.object({ remarks: z.string().optional() }).safeParse(req.body || {});
     if (!parsed.success) return res.status(400).json({ error: 'Invalid approval payload' });
     const updated = await processApprovalAction({ requisitionId: parseInt(id), action: 'approved', remarks: parsed.data.remarks, user: req.user });
@@ -9952,7 +9953,8 @@ app.post('/api/requisitions/:id/approve', authenticateToken, approvalLimiter, as
 app.post('/api/requisitions/:id/reject', authenticateToken, approvalLimiter, async (req, res) => {
   try {
     const { id } = req.params;
-    if (await blockIfIccFrozen(parseInt(id), res)) return;
+    const _iA = normalizeRole(req.user.role) === 'global_admin';
+    if (!_iA && !isIccDept(req.user?.name) && await blockIfIccFrozen(parseInt(id), res)) return;
     const parsed = z.object({ remarks: z.string().optional() }).safeParse(req.body || {});
     if (!parsed.success) return res.status(400).json({ error: 'Invalid rejection payload' });
     const updated = await processApprovalAction({ requisitionId: parseInt(id), action: 'rejected', remarks: parsed.data.remarks, user: req.user });
@@ -9967,7 +9969,8 @@ app.post('/api/requisitions/:id/reject', authenticateToken, approvalLimiter, asy
 // Backward compatible status endpoint
 app.post('/api/requisitions/:id/status', authenticateToken, approvalLimiter, async (req, res) => {
   try {
-    if (await blockIfIccFrozen(parseInt(req.params.id), res)) return;
+    const _iA = normalizeRole(req.user.role) === 'global_admin';
+    if (!_iA && !isIccDept(req.user?.name) && await blockIfIccFrozen(parseInt(req.params.id), res)) return;
     const { status, remarks } = req.body || {};
     if (!['approved', 'rejected'].includes(status)) {
       return res.status(400).json({ error: 'Unsupported status change' });
@@ -9977,6 +9980,68 @@ app.post('/api/requisitions/:id/status', authenticateToken, approvalLimiter, asy
   } catch (error) {
     res.status(error.status || 500).json({ error: error.message });
   }
+});
+
+// ── Super Admin (or privileged dept): restore rejected requisition to pending ───
+app.post('/api/admin/requisitions/:id/unreject', authenticateToken, async (req, res) => {
+  try {
+    const reqId = parseInt(req.params.id);
+    const isAdmin = normalizeRole(req.user.role) === 'global_admin';
+    let hasDeptPrivilege = false;
+    if (!isAdmin && req.user?.deptId) {
+      const dept = await prisma.department.findUnique({ where: { id: parseInt(req.user.deptId) }, select: { canOverride: true } });
+      hasDeptPrivilege = dept?.canOverride === true;
+    }
+    if (!isAdmin && !hasDeptPrivilege) {
+      return res.status(403).json({ error: 'Only Super Admin or privileged departments can restore a rejected requisition.' });
+    }
+    const r = await prisma.requisition.findUnique({ where: { id: reqId } });
+    if (!r) return res.status(404).json({ error: 'Requisition not found.' });
+    if (r.status !== 'rejected') {
+      return res.status(400).json({ error: `This requisition is not rejected (current status: ${r.status}).` });
+    }
+    const { remarks } = req.body || {};
+    await prisma.requisition.update({
+      where: { id: reqId },
+      data: { status: 'pending', currentStageId: null }
+    });
+    await logAudit(req, 'Requisition Restored', `Req #${reqId} restored to pending by ${req.user?.name || 'Admin'}${remarks ? ': ' + remarks : ''}`).catch(() => {});
+    broadcastUpdate(reqId, { action: 'restored', fromDept: req.user?.name || 'Admin' });
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Override privilege management (Super Admin only) ─────────────────────────
+app.get('/api/admin/override-depts', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const depts = await prisma.department.findMany({
+      where: { canOverride: true, isDeleted: false },
+      select: { id: true, name: true, type: true }
+    });
+    res.json(depts);
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+app.post('/api/admin/override-depts', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { deptIds } = req.body || {};
+    if (!Array.isArray(deptIds) || deptIds.length === 0) {
+      return res.status(400).json({ error: 'Provide an array of department IDs.' });
+    }
+    const ids = deptIds.map(Number).filter(Boolean);
+    await prisma.department.updateMany({ where: { id: { in: ids } }, data: { canOverride: true } });
+    await logAudit(req, 'Override Privilege Granted', `Granted un-reject privilege to dept IDs: ${ids.join(', ')}`).catch(() => {});
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+app.delete('/api/admin/override-depts/:deptId', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const deptId = parseInt(req.params.deptId);
+    await prisma.department.update({ where: { id: deptId }, data: { canOverride: false } });
+    await logAudit(req, 'Override Privilege Revoked', `Revoked un-reject privilege from dept ID: ${deptId}`).catch(() => {});
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
 });
 
 app.get('/api/requisitions/:id/signed-pdf', authenticateToken, async (req, res) => {

@@ -465,6 +465,10 @@ export const adminAPI = {
   getMigrationsLogbook: () => api.get('/admin/migrations'),
   getAiCaps: () => api.get('/admin/ai-caps'),
   saveAiCaps: (caps) => api.post('/admin/ai-caps', caps),
+  unrejectRequisition: (id, remarks) => api.post(`/admin/requisitions/${id}/unreject`, { remarks }),
+  getOverrideDepts: () => api.get('/admin/override-depts'),
+  grantOverride: (deptIds) => api.post('/admin/override-depts', { deptIds }),
+  revokeOverride: (deptId) => api.delete(`/admin/override-depts/${deptId}`),
 };
 
 export const kivAPI = {

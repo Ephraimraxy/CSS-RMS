@@ -84,6 +84,7 @@ model Department {
   cashPrivilege        Boolean          @default(false)
   memoPrivilege        Boolean          @default(false)
   materialPrivilege    Boolean          @default(false)
+  canOverride          Boolean          @default(false) // Super Admin can grant: allows dept to restore rejected requisitions
   // Per-sub-account routing: if false, all requests route through parent head first
   directRoute          Boolean          @default(false)
   // JSON array of dept IDs the sub-account may target directly; null = any department
