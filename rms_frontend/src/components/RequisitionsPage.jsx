@@ -1282,8 +1282,8 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
     );
   }
 
-  // ── Post-approval destination: Account only (ICC removed, Audit is pre-approval reviewer) ──
-  const vettingDepts = departments.filter(d => /\baccount\b/i.test(d.name || ''));
+  // ── Post-approval destination: Account, Store, or Procurement ──
+  const vettingDepts = departments.filter(d => /\baccount\b|\bstore\b|\bprocurement\b/i.test(d.name || ''));
 
   // ── Audit must review and return before approval is unlocked (all request types) ──
   const auditDeptForGate = departments.find(d => /\baudit\b/i.test(d.name));
@@ -1416,14 +1416,14 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
           {/* Both cash and material show Account selector; material makes it optional */}
           <div className="space-y-1.5">
             <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">
-              Send to Account for Treatment{isMaterial ? ' — Optional' : ' — Required *'}
+              Route to Department{isMaterial ? ' — Optional' : ' — Required *'}
             </label>
             <select
               value={vetDeptId}
               onChange={e => setVetDeptId(e.target.value)}
               className="w-full bg-white border border-emerald-300 rounded-xl p-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-300 appearance-none shadow-sm"
             >
-              <option value="">{isMaterial ? '— No payment needed, issue items directly —' : '— Select Account department —'}</option>
+              <option value="">{isMaterial ? '— No further routing needed —' : '— Select department —'}</option>
               {vettingDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               {vettingDepts.length === 0 && <option disabled>No Account department found</option>}
             </select>
