@@ -1361,68 +1361,41 @@ async function getDepartmentLinkedRequisitionIds(deptId) {
   if (!departmentId) return [];
 
   const ids = new Set();
-  const addId = (value) => {
-    const id = toIntOrNull(value);
-    if (id) ids.add(id);
-  };
+  const addId = (value) => { const id = toIntOrNull(value); if (id) ids.add(id); };
 
-  // Resolve sub-account relationships so parent sees sub-account reqs and vice versa
+  // Phase 1: all independent queries run in parallel — dept info + 4 event/tag lookups
+  const [deptResult, vettingColsResult, forwardResult, vettingEventResult, tagResult] = await Promise.allSettled([
+    prisma.department.findUnique({ where: { id: departmentId }, select: { isSubAccount: true, parentId: true } }),
+    prisma.$queryRaw`SELECT id FROM "Requisition" WHERE "currentVettingDeptId" = ${departmentId} OR "finalApprovedByDeptId" = ${departmentId} OR "treatedByDeptId" = ${departmentId}`,
+    prisma.forwardEvent.findMany({ where: { OR: [{ fromDeptId: departmentId }, { toDeptId: departmentId }] }, select: { requisitionId: true } }),
+    prisma.$queryRaw`SELECT DISTINCT "requisitionId" FROM "VettingEvent" WHERE "deptId" = ${departmentId}`,
+    prisma.requisitionTag.findMany({ where: { deptId: departmentId }, select: { requisitionId: true } }),
+  ]);
+
+  for (const row of (vettingColsResult.value || [])) addId(row.id);
+  for (const row of (forwardResult.value || [])) addId(row.requisitionId);
+  for (const row of (vettingEventResult.value || [])) addId(row.requisitionId);
+  for (const row of (tagResult.value || [])) addId(row.requisitionId);
+
+  // Phase 2: resolve related dept IDs using dept info from phase 1
+  const dept = deptResult.value;
   let relatedDeptIds = [departmentId];
   try {
-    const dept = await prisma.department.findUnique({ where: { id: departmentId }, select: { isSubAccount: true, parentId: true } });
     if (dept?.isSubAccount && dept?.parentId) {
-      // This is a sub-account — also look up reqs from the parent dept
       relatedDeptIds.push(dept.parentId);
     } else {
-      // This is a parent — also look up reqs from its sub-accounts
       const subs = await prisma.department.findMany({ where: { parentId: departmentId, isSubAccount: true }, select: { id: true } });
       for (const s of subs) relatedDeptIds.push(s.id);
     }
   } catch (_) {}
 
-  for (const dId of relatedDeptIds) {
-    try {
-      const rows = await prisma.requisition.findMany({
-        where: { OR: [{ departmentId: dId }, { creatorDeptId: dId }, { targetDepartmentId: dId }] },
-        select: { id: true }
-      });
-      for (const row of rows || []) addId(row.id);
-    } catch (_) {}
-  }
-
-  try {
-    const rows = await prisma.$queryRaw`
-      SELECT id FROM "Requisition"
-      WHERE "currentVettingDeptId" = ${departmentId}
-         OR "finalApprovedByDeptId" = ${departmentId}
-         OR "treatedByDeptId" = ${departmentId}
-    `;
-    for (const row of rows || []) addId(row.id);
-  } catch (_) {}
-
-  try {
-    const rows = await prisma.forwardEvent.findMany({
-      where: { OR: [{ fromDeptId: departmentId }, { toDeptId: departmentId }] },
-      select: { requisitionId: true }
-    });
-    for (const row of rows || []) addId(row.requisitionId);
-  } catch (_) {}
-
-  try {
-    const rows = await prisma.$queryRaw`
-      SELECT DISTINCT "requisitionId" FROM "VettingEvent"
-      WHERE "deptId" = ${departmentId}
-    `;
-    for (const row of rows || []) addId(row.requisitionId);
-  } catch (_) {}
-
-  try {
-    const rows = await prisma.requisitionTag.findMany({
-      where: { deptId: departmentId },
-      select: { requisitionId: true }
-    });
-    for (const row of rows || []) addId(row.requisitionId);
-  } catch (_) {}
+  // Phase 3: fetch requisitions for all related dept IDs in parallel
+  await Promise.allSettled(relatedDeptIds.map(dId =>
+    prisma.requisition.findMany({
+      where: { OR: [{ departmentId: dId }, { creatorDeptId: dId }, { targetDepartmentId: dId }] },
+      select: { id: true }
+    }).then(rows => { for (const row of rows || []) addId(row.id); })
+  ));
 
   return [...ids];
 }
