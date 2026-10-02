@@ -49,6 +49,7 @@ const {
 const { sendEmail } = require('./lib/mailer');
 const whatsapp = require('./lib/whatsapp');
 const webpush = require('web-push');
+const compression = require('compression');
 
 
 const app = express();
@@ -882,6 +883,8 @@ if (trustProxy !== undefined) {
 } else if (isProd) {
   app.set('trust proxy', 1);
 }
+
+app.use(compression({ threshold: 1024 }));
 
 app.use(helmet({
   contentSecurityPolicy: {
@@ -10178,7 +10181,7 @@ app.get('/api/department/signature/image', authenticateToken, async (req, res) =
     const buf = await getObjectBuffer(headUser.signature.imageKey);
     const ext = headUser.signature.imageKey.split('.').pop().toLowerCase();
     const mime = ext === 'webp' ? 'image/webp' : ext === 'png' ? 'image/png' : 'image/jpeg';
-    res.set({ 'Content-Type': mime, 'Cache-Control': 'no-store' });
+    res.set({ 'Content-Type': mime, 'Cache-Control': 'private, max-age=300, stale-while-revalidate=60' });
     res.send(buf);
   } catch (error) { sendError(res, 500, error.message); }
 });
@@ -10195,23 +10198,23 @@ app.get('/api/departments/:id/signature/image', authenticateToken, async (req, r
     const deptId = parseInt(req.params.id);
     const requesterDeptId = req.user.deptId ? parseInt(req.user.deptId) : null;
     if (!isAdmin && requesterDeptId !== deptId) {
-      res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+      res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=300' });
       return res.send(TRANSPARENT_PNG);
     }
     const dept = await prisma.department.findUnique({ where: { id: deptId }, select: { headEmail: true } });
     if (!dept?.headEmail) {
-      res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+      res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=300' });
       return res.send(TRANSPARENT_PNG);
     }
     const headUser = await prisma.user.findFirst({ where: { email: dept.headEmail }, include: { signature: true } });
     if (!headUser?.signature?.imageKey) {
-      res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+      res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=300' });
       return res.send(TRANSPARENT_PNG);
     }
     const buf = await getObjectBuffer(headUser.signature.imageKey);
     const ext = headUser.signature.imageKey.split('.').pop().toLowerCase();
     const mime = ext === 'webp' ? 'image/webp' : ext === 'png' ? 'image/png' : 'image/jpeg';
-    res.set({ 'Content-Type': mime, 'Cache-Control': 'no-store' });
+    res.set({ 'Content-Type': mime, 'Cache-Control': 'private, max-age=300, stale-while-revalidate=60' });
     res.send(buf);
   } catch (error) { sendError(res, 500, error.message); }
 });
