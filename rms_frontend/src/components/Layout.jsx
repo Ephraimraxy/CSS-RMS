@@ -863,6 +863,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
         es = new EventSource(`/api/events?ticket=${encodeURIComponent(ticket)}`);
         es.addEventListener('requisition_updated', () => {
           getNotifications().then(data => setNotifications(data)).catch(() => {});
+          window.dispatchEvent(new CustomEvent('requisitionUpdated'));
         });
         es.addEventListener('chat_message', (e) => {
           window.dispatchEvent(new CustomEvent('rms:chatMessage', { detail: e.data }));
@@ -967,11 +968,13 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
     };
 
     checkActions();
-    const interval = setInterval(checkActions, 60000);
+    const interval = setInterval(checkActions, 30000);
     window.addEventListener('requisitionUpdated', checkActions);
+    window.addEventListener('globalHardRefresh', checkActions);
     return () => {
       clearInterval(interval);
       window.removeEventListener('requisitionUpdated', checkActions);
+      window.removeEventListener('globalHardRefresh', checkActions);
     };
   }, [user?.deptId]);
 
