@@ -57,6 +57,7 @@ const prisma = new PrismaClient();
 let isSystemReady = false; // Flag for database/seed readiness
 
 const BRAND_LOGO_CANDIDATES = [
+  path.join(__dirname, 'rms_frontend', 'public', 'CSS_Group.png'),
   path.join(__dirname, 'samples', 'logo.png'),
   path.join(__dirname, 'rms_frontend', 'public', 'logo.png'),
   path.join(__dirname, 'rms_frontend', 'public', 'logo.jpg'),
