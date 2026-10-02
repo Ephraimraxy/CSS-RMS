@@ -2379,9 +2379,10 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
     );
   }
 
-  // Account and Chairman always treat — for material, the target dept issues directly
+  // Account and Chairman always treat — for material, target dept OR current vetting dept (Store/Procurement) acts
   const _isTargetDept = detail?.targetDepartmentId === user?.deptId;
-  const canTreat = isAccount || isChairman || (_isMaterialReq && _isTargetDept);
+  const _isVettingDept = detail?.currentVettingDeptId === user?.deptId;
+  const canTreat = isAccount || isChairman || (_isMaterialReq && (_isTargetDept || _isVettingDept));
 
   // Disbursement calculations — ICC override takes priority over Audit (ICC acts post-approval)
   const reqAmount        = (detail?.hasIccOverride && detail?.iccOverrideAmount != null)
@@ -3089,8 +3090,8 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
     </>
   )}
 
-      {/* Convert Material → Cash — visible to target dept when items can't be fulfilled from stock */}
-      {_isMaterialReq && _isTargetDept && (
+      {/* Convert Material → Cash — visible to target dept or current vetting dept (Procurement/Store) */}
+      {_isMaterialReq && (_isTargetDept || _isVettingDept) && (
         <div className="mt-3 border-t border-orange-200 pt-3">
           {!showConvert ? (
             <button
