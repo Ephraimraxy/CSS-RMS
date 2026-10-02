@@ -1467,11 +1467,11 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
 
           <button
             onClick={handleApprove}
-            disabled={acting || !vetDeptId}
+            disabled={acting || (!isMaterial && !vetDeptId)}
             className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl transition-all disabled:opacity-50 text-sm shadow-md shadow-emerald-500/20"
           >
             {acting ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-            {acting ? 'Processing…' : 'Final Approve & Send to Account'}
+            {acting ? 'Processing…' : isMaterial ? 'Final Approve' : 'Final Approve & Send to Account'}
           </button>
         </div>
       )}
