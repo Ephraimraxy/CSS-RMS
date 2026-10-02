@@ -589,6 +589,14 @@ const WorkflowBuilder = ({ onViewChange }) => {
   const [savingAccessCash,     setSavingAccessCash]     = useState(false);
   const [savingAccessMaterial, setSavingAccessMaterial] = useState(false);
 
+  // ── Push Broadcast ─────────────────────────────────────────────────────────
+  const [bcastTitle,    setBcastTitle]    = useState('');
+  const [bcastBody,     setBcastBody]     = useState('');
+  const [bcastUrl,      setBcastUrl]      = useState('');
+  const [bcastDeptIds,  setBcastDeptIds]  = useState([]); // [] = all
+  const [sendingBcast,  setSendingBcast]  = useState(false);
+  const [bcastResult,   setBcastResult]   = useState(null); // { ok, sentTo } | { error }
+
   // ── AIGC feature toggle ────────────────────────────────────────────────────
   const { refreshAI } = useAIFeatures();
   const [aiToggle, setAiToggle]   = useState(true);
@@ -1041,6 +1049,32 @@ const WorkflowBuilder = ({ onViewChange }) => {
     await _persistAccessMaterial([]);
   };
 
+  // ── Push Broadcast ─────────────────────────────────────────────────────────
+  const sendBroadcast = async () => {
+    if (!bcastTitle.trim() || !bcastBody.trim()) { toast.error('Title and message are required.'); return; }
+    setSendingBcast(true); setBcastResult(null);
+    try {
+      const res = await fetch('/api/push/broadcast', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: bcastTitle.trim(),
+          body: bcastBody.trim(),
+          url: bcastUrl.trim() || '/',
+          deptIds: bcastDeptIds.length > 0 ? bcastDeptIds : undefined
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Broadcast failed');
+      setBcastResult({ ok: true, sentTo: data.sentTo });
+      toast.success(`Announcement sent to ${data.sentTo} department${data.sentTo !== 1 ? 's' : ''}.`);
+      setBcastTitle(''); setBcastBody(''); setBcastUrl(''); setBcastDeptIds([]);
+    } catch (err) {
+      setBcastResult({ error: err.message });
+      toast.error(err.message);
+    } finally { setSendingBcast(false); }
+  };
+
   // ── AI features ────────────────────────────────────────────────────────────
   const loadAISetting = async () => {
     try {
@@ -1377,6 +1411,7 @@ const WorkflowBuilder = ({ onViewChange }) => {
               { id: 'stages',    label: 'Workflow, Types & Ref Code' },
               { id: 'print',     label: 'Print, Stamp & Contact' },
               { id: 'images',    label: 'Images' },
+              { id: 'broadcast', label: '📣 Push Announcements' },
               { id: 'zkteco',     label: 'ZKTeco & Desktop Sync' },
               { id: 'onboarding', label: 'Staff Onboarding SMS' },
               { id: 'whatsapp',   label: 'WhatsApp' },
@@ -4070,6 +4105,98 @@ const WorkflowBuilder = ({ onViewChange }) => {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+
+        ) : activeTab === 'broadcast' ? (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+            {/* Header */}
+            <div className="glass bg-white/70 rounded-3xl border border-border/50 p-6 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-orange-50 border border-orange-200 flex items-center justify-center text-xl">📣</div>
+                <div>
+                  <h2 className="text-xl font-bold text-foreground">Push Announcements</h2>
+                  <p className="text-sm text-muted-foreground">Send a manual push notification to all users or specific departments. Appears instantly on their phone and in the in-app bell.</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Compose card */}
+            <div className="glass bg-white/70 rounded-3xl border border-border/50 p-6 shadow-sm flex flex-col gap-5">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Notification Title *</label>
+                <input
+                  value={bcastTitle}
+                  onChange={e => setBcastTitle(e.target.value)}
+                  placeholder="e.g. System Maintenance Tonight"
+                  maxLength={80}
+                  className="w-full border border-border rounded-xl px-4 py-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Message *</label>
+                <textarea
+                  value={bcastBody}
+                  onChange={e => setBcastBody(e.target.value)}
+                  placeholder="e.g. The portal will be unavailable from 11 PM – 1 AM for scheduled maintenance."
+                  rows={3}
+                  maxLength={300}
+                  className="w-full border border-border rounded-xl px-4 py-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                />
+                <span className="text-[10px] text-muted-foreground/60 self-end">{bcastBody.length}/300</span>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Deep Link (optional)</label>
+                <input
+                  value={bcastUrl}
+                  onChange={e => setBcastUrl(e.target.value)}
+                  placeholder="e.g. /requisitions or leave blank for home"
+                  className="w-full border border-border rounded-xl px-4 py-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Send To</label>
+                <p className="text-[10px] text-muted-foreground/60">Leave nothing checked = send to ALL departments. Tick specific ones to target only those.</p>
+                <div className="flex gap-2 mb-1">
+                  <button onClick={() => setBcastDeptIds([])} className="px-2.5 py-1 rounded-lg bg-muted hover:bg-muted/80 text-muted-foreground font-bold text-[9px] uppercase tracking-widest border border-border/40 transition-all">All</button>
+                  <button onClick={() => setBcastDeptIds(allDepts.filter(d => !/super\s*admin/i.test(d.name)).map(d => d.id))} className="px-2.5 py-1 rounded-lg bg-muted hover:bg-muted/80 text-muted-foreground font-bold text-[9px] uppercase tracking-widest border border-border/40 transition-all">Select All</button>
+                </div>
+                <div className="max-h-[260px] overflow-y-auto custom-scrollbar pr-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {allDepts.filter(d => !/super\s*admin/i.test(d.name)).map(d => {
+                    const checked = bcastDeptIds.includes(d.id);
+                    return (
+                      <button
+                        key={d.id}
+                        onClick={() => setBcastDeptIds(prev => prev.includes(d.id) ? prev.filter(x => x !== d.id) : [...prev, d.id])}
+                        className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all ${checked ? 'bg-orange-50 border-orange-300 text-orange-800' : 'bg-white border-border/40 text-muted-foreground hover:border-orange-200'}`}
+                      >
+                        <div className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${checked ? 'bg-orange-500 border-orange-500' : 'border-border'}`}>
+                          {checked && <CheckCircle2 size={10} className="text-white" />}
+                        </div>
+                        <span className="text-[11px] font-bold truncate">{d.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {bcastResult?.ok && (
+                <div className="flex items-center gap-2 px-4 py-3 bg-green-50 border border-green-200 rounded-xl text-green-800 text-[11px] font-semibold">
+                  <CheckCircle2 size={14} /> Sent to {bcastResult.sentTo} department{bcastResult.sentTo !== 1 ? 's' : ''} — appearing on their devices now.
+                </div>
+              )}
+
+              <button
+                onClick={sendBroadcast}
+                disabled={sendingBcast || !bcastTitle.trim() || !bcastBody.trim()}
+                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-[11px] uppercase tracking-widest transition-all disabled:opacity-50 shadow-md shadow-orange-200 active:scale-[0.98] self-start"
+              >
+                {sendingBcast ? <Loader2 size={14} className="animate-spin" /> : <span>📣</span>}
+                {sendingBcast ? 'Sending...' : bcastDeptIds.length > 0 ? `Send to ${bcastDeptIds.length} Department${bcastDeptIds.length !== 1 ? 's' : ''}` : 'Send to All Departments'}
+              </button>
             </div>
           </div>
 

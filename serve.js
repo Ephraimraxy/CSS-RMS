@@ -352,12 +352,15 @@ async function runPriorityEscalationCheck() {
         `This ${urgencyLabel} request has exceeded its response time limit. Please take immediate action or escalate to the appropriate authority.`,
       ].filter(l => l !== null);
 
-      // Notify Super Admin user(s) in-app
+      // Notify Super Admin user(s) in-app + push
       try {
         const adminUsers = await prisma.user.findMany({ where: { role: 'global_admin' }, select: { id: true } });
         await Promise.all(adminUsers.map(u =>
           prisma.notification.create({ data: { userId: u.id, content: subject, link: `/requisitions/${req.id}` } }).catch(() => {})
         ));
+        for (const u of adminUsers) {
+          sendPushToUser(u.id, { title: subject, body: `Held by: ${currentHolder} — waiting ${waitStr}`, url: `/?req=${req.id}` }).catch(() => {});
+        }
       } catch (_) {}
 
       // Notify each configured escalation department (in-app + email)
@@ -1318,6 +1321,35 @@ app.delete('/api/push/fcm-token', authenticateToken, async (req, res) => {
   try {
     await prisma.$executeRaw`DELETE FROM "FcmToken" WHERE token = ${token}`;
     res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── Super Admin Broadcast ─────────────────────────────────────────────────────
+// POST /api/push/broadcast  — send a manual push to all or specific depts
+app.post('/api/push/broadcast', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  const { title, body, url, deptIds } = req.body || {};
+  if (!title?.trim() || !body?.trim()) return res.status(400).json({ error: 'title and body are required' });
+  try {
+    let targetIds;
+    if (Array.isArray(deptIds) && deptIds.length > 0) {
+      targetIds = deptIds.map(Number).filter(Boolean);
+    } else {
+      // All departments
+      const all = await prisma.$queryRaw`SELECT id FROM "Department" WHERE type != 'Super-Admin'`;
+      targetIds = all.map(r => r.id);
+    }
+    // Store in-app notification for each target dept
+    await Promise.allSettled(targetIds.map(id =>
+      prisma.notification.create({ data: { departmentId: id, content: body, link: url || '/' } }).catch(() => {})
+    ));
+    // Push (VAPID + FCM)
+    await sendPushNotification(targetIds, { title: title.trim(), body: body.trim(), url: url || '/' });
+    // Also push to all global_admin users
+    const admins = await prisma.user.findMany({ where: { role: 'global_admin' }, select: { id: true } });
+    for (const u of admins) {
+      sendPushToUser(u.id, { title: title.trim(), body: body.trim(), url: url || '/' }).catch(() => {});
+    }
+    res.json({ ok: true, sentTo: targetIds.length });
   } catch (err) { sendError(res, 500, err.message); }
 });
 
@@ -2949,9 +2981,59 @@ async function notifyDepartmentHead({ departmentId, requisition, subject, lines 
     } else {
       logger.info(`[MAIL] ✅ Email sent successfully to: ${dept.headEmail}`);
     }
+
+    // Push notification — mirrors every email as a native/PWA push
+    if (departmentId) {
+      const pushBody = lines.filter(Boolean).slice(0, 2).join(' · ');
+      sendPushNotification([departmentId], {
+        title: subject,
+        body: pushBody || subject,
+        url: recordPath || '/'
+      }).catch(() => {});
+    }
   } catch (err) {
     logger.error(`[MAIL] Department head notify FAILED for dept ${departmentId}:`, err.message, err.stack);
   }
+}
+
+// Push to a specific user (e.g. Super Admin) by userId
+async function sendPushToUser(userId, { title, body, url }) {
+  try {
+    await Promise.allSettled([
+      // VAPID
+      (async () => {
+        if (!VAPID_PUBLIC || !VAPID_PRIVATE) return;
+        const rows = await prisma.$queryRaw`SELECT endpoint, p256dh, auth FROM "PushSubscription" WHERE "userId" = ${userId}`;
+        for (const row of rows) {
+          try {
+            await webpush.sendNotification(
+              { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },
+              JSON.stringify({ title, body, url: url || '/' })
+            );
+          } catch (e) {
+            if (e.statusCode === 410) await prisma.$executeRaw`DELETE FROM "PushSubscription" WHERE endpoint = ${row.endpoint}`;
+          }
+        }
+      })(),
+      // FCM
+      (async () => {
+        if (!_fbApp) return;
+        const rows = await prisma.$queryRaw`SELECT token FROM "FcmToken" WHERE "userId" = ${userId}`;
+        if (!rows.length) return;
+        const tokens = rows.map(r => r.token);
+        const res = await admin.messaging(_fbApp).sendEachForMulticast({
+          tokens,
+          notification: { title, body },
+          data: { url: url || '/' },
+          android: { priority: 'high', notification: { channelId: 'rms-alerts', color: '#206e33', icon: 'ic_launcher' } }
+        });
+        const dead = res.responses.flatMap((r, i) =>
+          (!r.success && ['messaging/registration-token-not-registered', 'messaging/invalid-registration-token'].includes(r.error?.code)) ? [tokens[i]] : []
+        );
+        if (dead.length) await prisma.$executeRaw`DELETE FROM "FcmToken" WHERE token = ANY(${dead}::text[])`;
+      })()
+    ]);
+  } catch (_) {}
 }
 
 async function notifyRole(roleName, message, requisitionId, departmentId = null) {
