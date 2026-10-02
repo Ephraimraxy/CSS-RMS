@@ -104,26 +104,99 @@ if (VAPID_PUBLIC && VAPID_PRIVATE) {
   webpush.setVapidDetails(vapidEmail, VAPID_PUBLIC, VAPID_PRIVATE);
 }
 
-async function sendPushNotification(deptIds, { title, body, url }) {
-  if (!VAPID_PUBLIC || !VAPID_PRIVATE) return;
+// ── Firebase FCM (native Android APK push) ────────────────────────────────────
+// FIREBASE_SERVICE_ACCOUNT: either inline JSON string or a file path
+const admin = require('firebase-admin');
+let _fbApp = null;
+(function initFirebase() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!raw) return;
+  try {
+    const credential = raw.trim().startsWith('{')
+      ? admin.credential.cert(JSON.parse(raw))
+      : admin.credential.cert(raw); // file path
+    _fbApp = admin.initializeApp({ credential }, 'rms');
+    // Self-healing: create FcmToken table if it doesn't exist yet
+    prisma.$executeRaw`
+      CREATE TABLE IF NOT EXISTS "FcmToken" (
+        id        SERIAL PRIMARY KEY,
+        token     TEXT UNIQUE NOT NULL,
+        "deptId"  INTEGER,
+        "userId"  INTEGER,
+        platform  TEXT NOT NULL DEFAULT 'android',
+        "lastSeen" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `.catch(() => {});
+  } catch (e) {
+    console.error('[FCM] Firebase Admin init failed:', e.message);
+  }
+})();
+
+async function _sendFcmPush(deptIds, { title, body, url }) {
+  if (!_fbApp) return;
   try {
     const rows = await prisma.$queryRaw`
-      SELECT endpoint, p256dh, auth FROM "PushSubscription"
+      SELECT token FROM "FcmToken"
       WHERE "deptId" = ANY(${deptIds}::int[])
     `;
-    for (const row of rows) {
-      try {
-        await webpush.sendNotification(
-          { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },
-          JSON.stringify({ title, body, url: url || '/' })
-        );
-      } catch (err) {
-        if (err.statusCode === 410) {
-          await prisma.$executeRaw`DELETE FROM "PushSubscription" WHERE endpoint = ${row.endpoint}`;
+    if (!rows.length) return;
+    const tokens = rows.map(r => r.token);
+    const result = await admin.messaging(_fbApp).sendEachForMulticast({
+      tokens,
+      notification: { title, body },
+      data: { url: url || '/' },
+      android: {
+        priority: 'high',
+        notification: { channelId: 'rms-alerts', color: '#206e33', icon: 'ic_launcher' }
+      }
+    });
+    // Remove stale/invalid FCM tokens
+    const dead = [];
+    result.responses.forEach((r, i) => {
+      if (!r.success) {
+        const code = r.error?.code;
+        if (['messaging/registration-token-not-registered', 'messaging/invalid-registration-token'].includes(code)) {
+          dead.push(tokens[i]);
         }
       }
+    });
+    if (dead.length) {
+      await prisma.$executeRaw`DELETE FROM "FcmToken" WHERE token = ANY(${dead}::text[])`;
     }
-  } catch (_) {}
+  } catch (e) {
+    console.error('[FCM] sendEachForMulticast error:', e.message);
+  }
+}
+
+async function sendPushNotification(deptIds, { title, body, url }) {
+  // Fire both delivery channels in parallel; neither blocks the other
+  await Promise.allSettled([
+    // Channel 1: Web Push (VAPID) — browsers and PWA WebView
+    (async () => {
+      if (!VAPID_PUBLIC || !VAPID_PRIVATE) return;
+      try {
+        const rows = await prisma.$queryRaw`
+          SELECT endpoint, p256dh, auth FROM "PushSubscription"
+          WHERE "deptId" = ANY(${deptIds}::int[])
+        `;
+        for (const row of rows) {
+          try {
+            await webpush.sendNotification(
+              { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },
+              JSON.stringify({ title, body, url: url || '/' })
+            );
+          } catch (err) {
+            if (err.statusCode === 410) {
+              await prisma.$executeRaw`DELETE FROM "PushSubscription" WHERE endpoint = ${row.endpoint}`;
+            }
+          }
+        }
+      } catch (_) {}
+    })(),
+    // Channel 2: FCM — native Android APK
+    _sendFcmPush(deptIds, { title, body, url })
+  ]);
 }
 
 // Auto-migrate: add new columns if they don't exist yet (idempotent)
@@ -1219,6 +1292,31 @@ app.delete('/api/push/subscribe', authenticateToken, async (req, res) => {
   if (!endpoint) return res.status(400).json({ error: 'Missing endpoint' });
   try {
     await prisma.$executeRaw`DELETE FROM "PushSubscription" WHERE endpoint = ${endpoint}`;
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+// ── FCM token endpoints (native Android APK) ─────────────────────────────────
+app.post('/api/push/fcm-token', authenticateToken, async (req, res) => {
+  const { token, platform = 'android' } = req.body || {};
+  if (!token) return res.status(400).json({ error: 'Missing token' });
+  const deptId = req.user.deptId ? parseInt(req.user.deptId) : null;
+  const userId = getNumericUserId(req.user) || null;
+  try {
+    await prisma.$executeRaw`
+      INSERT INTO "FcmToken" (token, "deptId", "userId", platform, "lastSeen", "createdAt")
+      VALUES (${token}, ${deptId}, ${userId}, ${platform}, NOW(), NOW())
+      ON CONFLICT (token) DO UPDATE SET "deptId"=${deptId}, "userId"=${userId}, "lastSeen"=NOW()
+    `;
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+app.delete('/api/push/fcm-token', authenticateToken, async (req, res) => {
+  const { token } = req.body || {};
+  if (!token) return res.status(400).json({ error: 'Missing token' });
+  try {
+    await prisma.$executeRaw`DELETE FROM "FcmToken" WHERE token = ${token}`;
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
 });

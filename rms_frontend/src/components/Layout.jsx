@@ -975,42 +975,71 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
     };
   }, [user?.deptId]);
 
-  // PWA push notification subscription — register/refresh on every login
+  // Push notification subscription — VAPID (web/PWA) + FCM (native APK)
   useEffect(() => {
     if (!user) return;
-    const subscribeToPush = async () => {
+
+    // ── Channel 1: Web Push (VAPID) — runs in browser & PWA WebView ──────────
+    const subscribeVapid = async () => {
       if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
       try {
         const { key } = await fetch('/api/push/vapid-public').then(r => r.json());
-        if (!key) return; // VAPID not configured — skip silently
-
+        if (!key) return;
         const permission = await Notification.requestPermission();
         if (permission !== 'granted') return;
-
         const appKey = (() => {
           const b64 = key.replace(/-/g, '+').replace(/_/g, '/');
           const raw = atob(b64);
           return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
         })();
-
         const reg = await navigator.serviceWorker.ready;
-        // Reuse existing subscription or create a new one
         let sub = await reg.pushManager.getSubscription();
         if (!sub) {
           sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
         }
-
-        // Always re-POST so the server has the latest deptId/userId binding
         const { endpoint, keys } = sub.toJSON();
         await fetch('/api/push/subscribe', {
-          method: 'POST',
-          credentials: 'include',
+          method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ endpoint, p256dh: keys.p256dh, auth: keys.auth })
         });
       } catch (_) {}
     };
-    subscribeToPush();
+
+    // ── Channel 2: FCM — native Android APK (Capacitor.isNativePlatform()) ───
+    const subscribeFcm = async () => {
+      try {
+        const { Capacitor } = await import('@capacitor/core');
+        if (!Capacitor.isNativePlatform()) return;
+        const { PushNotifications } = await import('@capacitor/push-notifications');
+        const perm = await PushNotifications.requestPermissions();
+        if (perm.receive !== 'granted') return;
+        await PushNotifications.register();
+        // Token received from FCM — send to backend
+        PushNotifications.addListener('registration', async ({ value: token }) => {
+          const cached = localStorage.getItem('rms_fcm_token');
+          if (cached === token) return; // no change
+          await fetch('/api/push/fcm-token', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, platform: 'android' })
+          }).then(() => { try { localStorage.setItem('rms_fcm_token', token); } catch {} })
+            .catch(() => {});
+        });
+        // Show foreground notifications as toasts
+        PushNotifications.addListener('pushNotificationReceived', (n) => {
+          toast(n.title || 'RMS', { description: n.body });
+        });
+        // Navigate to linked page on notification tap
+        PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+          const url = action.notification.data?.url;
+          if (url && url !== '/') window.location.href = url;
+        });
+      } catch (_) {}
+    };
+
+    subscribeVapid();
+    subscribeFcm();
   }, [user?.id]);
 
   useEffect(() => {
