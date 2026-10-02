@@ -1312,8 +1312,8 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
         }
       }
 
-      if (isMaterial) {
-        // Material requests go directly to target dept — no vetting chain needed
+      if (isMaterial && !vetDeptId) {
+        // Material with no Account selected — target dept issues items directly
         if (approveResult === null) toast('Approval queued — will process when reconnected.');
         else toast.success('Approved — target department can now issue the items.');
       } else if (approveResult === null) {
@@ -1321,7 +1321,7 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
         toast('Approval & vetting queued — will process when reconnected.');
       } else {
         await sendToVettingRequisition(req.id, parseInt(vetDeptId));
-        toast.success('Approved, signed & sent to vetting in one step.');
+        toast.success(isMaterial ? 'Approved & sent to Account for payment.' : 'Approved, signed & sent to vetting in one step.');
       }
       onApproved();
     } catch (err) {
@@ -1413,30 +1413,26 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
             className="w-full bg-white border border-emerald-200 rounded-xl p-3 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-emerald-300 min-h-[60px] resize-none shadow-inner"
           />
 
-          {/* Cash: select Account for treatment. Material: target dept acts directly */}
-          {isMaterial ? (
+          {/* Both cash and material show Account selector; material makes it optional */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">
+              Send to Account for Treatment{isMaterial ? ' — Optional' : ' — Required *'}
+            </label>
+            <select
+              value={vetDeptId}
+              onChange={e => setVetDeptId(e.target.value)}
+              className="w-full bg-white border border-emerald-300 rounded-xl p-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-300 appearance-none shadow-sm"
+            >
+              <option value="">{isMaterial ? '— No payment needed, issue items directly —' : '— Select Account department —'}</option>
+              {vettingDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              {vettingDepts.length === 0 && <option disabled>No Account department found</option>}
+            </select>
             <p className="text-[11px] font-semibold px-3 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
-              After approval, the target department will be able to issue the items directly — no vetting step required.
+              {isMaterial && !vetDeptId
+                ? 'After approval, the target department will be able to issue the items directly.'
+                : 'After approval, the request goes directly to Account for payment treatment.'}
             </p>
-          ) : (
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">
-                Send to Account for Treatment — Required *
-              </label>
-              <select
-                value={vetDeptId}
-                onChange={e => setVetDeptId(e.target.value)}
-                className="w-full bg-white border border-emerald-300 rounded-xl p-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-300 appearance-none shadow-sm"
-              >
-                <option value="">— Select Account department —</option>
-                {vettingDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                {vettingDepts.length === 0 && <option disabled>No Account department found</option>}
-              </select>
-              <p className="text-[11px] font-semibold px-3 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
-                After approval, the request goes directly to Account for payment treatment.
-              </p>
-            </div>
-          )}
+          </div>
 
           {/* Optional file attachment */}
           <div>
@@ -1471,7 +1467,7 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
             className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl transition-all disabled:opacity-50 text-sm shadow-md shadow-emerald-500/20"
           >
             {acting ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-            {acting ? 'Processing…' : isMaterial ? 'Final Approve' : 'Final Approve & Send to Account'}
+            {acting ? 'Processing…' : (isMaterial && !vetDeptId) ? 'Final Approve' : 'Final Approve & Send to Account'}
           </button>
         </div>
       )}
