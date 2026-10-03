@@ -2169,10 +2169,19 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
         isSubAccount: true, parentId: true,
         directRoute: true, allowedRouteDeptIds: true,
         privilegeAmount: true, approvalLimit: true,
-        cashPrivilege: true, cashApprovalPrivilege: true, memoPrivilege: true, materialPrivilege: true, canOverride: true, canReject: true, canRecall: true, canSeeHeadReqs: true, canSeeHeadMemos: true,
+        cashPrivilege: true, memoPrivilege: true, materialPrivilege: true,
         parent: { select: { id: true, name: true } },
       }
     });
+    // Fetch post-init privilege columns via raw SQL (Prisma client may predate these fields)
+    let deptPrivs = {};
+    try {
+      const privRows = await prisma.$queryRaw`
+        SELECT "cashApprovalPrivilege","canOverride","canReject","canRecall","canSeeHeadReqs","canSeeHeadMemos"
+        FROM "Department" WHERE id = ${deptId} LIMIT 1
+      `;
+      deptPrivs = privRows[0] || {};
+    } catch (_) {}
 
     // If dept is gone or disabled, return null — frontend will ignore silently
     if (!dept || dept.isDeleted || dept.isDisabled) return res.json({ user: null });
@@ -2199,14 +2208,14 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
       } : {}),
       ...(dept.privilegeAmount  != null ? { privilegeAmount: dept.privilegeAmount }   : {}),
       ...(dept.approvalLimit    != null ? { approvalLimit: dept.approvalLimit }         : {}),
-      ...(dept.cashApprovalPrivilege     ? { cashApprovalPrivilege: true }               : {}),
+      ...(deptPrivs.cashApprovalPrivilege ? { cashApprovalPrivilege: true }               : {}),
       ...(dept.memoPrivilege            ? { memoPrivilege: true }                       : {}),
       ...(dept.materialPrivilege        ? { materialPrivilege: true }                   : {}),
-      ...(dept.canOverride              ? { canOverride: true }                         : {}),
-      ...(dept.canReject               ? { canReject: true }                           : {}),
-      ...(dept.canRecall               ? { canRecall: true }                           : {}),
-      ...(dept.canSeeHeadReqs          ? { canSeeHeadReqs: true }                      : {}),
-      ...(dept.canSeeHeadMemos         ? { canSeeHeadMemos: true }                     : {}),
+      ...(deptPrivs.canOverride         ? { canOverride: true }                         : {}),
+      ...(deptPrivs.canReject           ? { canReject: true }                           : {}),
+      ...(deptPrivs.canRecall           ? { canRecall: true }                           : {}),
+      ...(deptPrivs.canSeeHeadReqs      ? { canSeeHeadReqs: true }                      : {}),
+      ...(deptPrivs.canSeeHeadMemos     ? { canSeeHeadMemos: true }                     : {}),
     };
 
     res.json({ user: freshUser });
@@ -10019,8 +10028,8 @@ app.post('/api/admin/requisitions/:id/unreject', authenticateToken, async (req, 
     const isAdmin = normalizeRole(req.user.role) === 'global_admin';
     let hasDeptPrivilege = false;
     if (!isAdmin && req.user?.deptId) {
-      const dept = await prisma.department.findUnique({ where: { id: parseInt(req.user.deptId) }, select: { canOverride: true } });
-      hasDeptPrivilege = dept?.canOverride === true;
+      const rows = await prisma.$queryRaw`SELECT "canOverride" FROM "Department" WHERE id = ${parseInt(req.user.deptId)} LIMIT 1`;
+      hasDeptPrivilege = rows[0]?.canOverride === true;
     }
     if (!isAdmin && !hasDeptPrivilege) {
       return res.status(403).json({ error: 'Only Super Admin or privileged departments can restore a rejected requisition.' });
@@ -10048,7 +10057,8 @@ app.post('/api/requisitions/:id/dept-reject', authenticateToken, async (req, res
     const deptId = req.user?.deptId ? parseInt(req.user.deptId) : null;
     if (!deptId) return res.status(403).json({ error: 'Only department accounts can use this endpoint.' });
 
-    const dept = await prisma.department.findUnique({ where: { id: deptId }, select: { canReject: true, name: true } });
+    const deptRows = await prisma.$queryRaw`SELECT "canReject", name FROM "Department" WHERE id = ${deptId} LIMIT 1`;
+    const dept = deptRows[0];
     if (!dept?.canReject) return res.status(403).json({ error: 'Your department does not have reject privilege.' });
 
     const _isIcc = isIccDept(req.user?.name);
@@ -10138,8 +10148,8 @@ app.post('/api/requisitions/:id/recall', authenticateToken, async (req, res) => 
 
     // Check recall privilege
     if (!isAdmin) {
-      const dept = await prisma.department.findUnique({ where: { id: userDeptId }, select: { canRecall: true } });
-      if (!dept?.canRecall) return res.status(403).json({ error: 'Your department does not have recall privilege.' });
+      const recallRows = await prisma.$queryRaw`SELECT "canRecall" FROM "Department" WHERE id = ${userDeptId} LIMIT 1`;
+      if (!recallRows[0]?.canRecall) return res.status(403).json({ error: 'Your department does not have recall privilege.' });
     }
 
     const requisition = await prisma.requisition.findUnique({
