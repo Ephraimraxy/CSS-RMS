@@ -1515,7 +1515,7 @@ const PrivSection = ({ title, description, accentClass, borderClass, bgClass, de
   const [saving, setSaving]         = React.useState(false);
 
   const load = React.useCallback(async () => {
-    try { const res = await loadFn(); setPrivileged(res.data || []); }
+    try { const res = await loadFn(); setPrivileged(Array.isArray(res) ? res : (res?.data || [])); }
     catch { setPrivileged([]); }
   }, [loadFn]);
 
