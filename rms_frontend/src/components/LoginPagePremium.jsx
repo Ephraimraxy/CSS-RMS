@@ -6,8 +6,6 @@ import { toast } from 'react-hot-toast';
 
 const LoginPagePremium = () => {
   const [selectedDept, setSelectedDept] = useState('');
-  const [subAccounts, setSubAccounts] = useState([]);
-  const [selectedSubAccount, setSelectedSubAccount] = useState('');
   const [accessCode, setAccessCode] = useState('');
   const [departments, setDepartments] = useState([]);
   const [showAccessCode, setShowAccessCode] = useState(false);
@@ -32,20 +30,14 @@ const LoginPagePremium = () => {
 
   const handleDeptChange = async (name) => {
     setSelectedDept(name);
-    setSelectedSubAccount('');
-    setSubAccounts([]);
     setDeptActivated(null);
     if (!name || /^super\s*admin$/i.test(name)) {
       setDeptActivated(/^super\s*admin$/i.test(name) ? true : null);
       return;
     }
     try {
-      const [statusRes, subsRes] = await Promise.all([
-        fetch(`/api/departments/login-status?name=${encodeURIComponent(name)}`),
-        fetch(`/api/departments/login-sub-accounts?deptName=${encodeURIComponent(name)}`),
-      ]);
-      if (statusRes.ok) { const data = await statusRes.json(); setDeptActivated(data.activated); }
-      if (subsRes.ok)   { const data = await subsRes.json();  setSubAccounts(data.subAccounts || []); }
+      const res = await fetch(`/api/departments/login-status?name=${encodeURIComponent(name)}`);
+      if (res.ok) { const data = await res.json(); setDeptActivated(data.activated); }
     } catch (_) { /* network error — leave as null */ }
   };
 
@@ -56,9 +48,7 @@ const LoginPagePremium = () => {
     setIsSubmitting(true);
     try {
       if (!selectedDept) throw new Error('Please select a department');
-      if (subAccounts.length > 0 && !selectedSubAccount) throw new Error('Please select who you are logging in as.');
-      const subName = (selectedSubAccount && selectedSubAccount !== '__head__') ? selectedSubAccount : null;
-      await deptLogin(selectedDept, accessCode, mfaCode, null, subName);
+      await deptLogin(selectedDept, accessCode, mfaCode, null);
     } catch (err) {
       const status = err.response?.status;
       let msg;
@@ -226,24 +216,6 @@ const LoginPagePremium = () => {
                       </select>
                     </div>
                   </div>
-
-                  {subAccounts.length > 0 && (
-                    <div className="space-y-1.5 animate-in slide-in-from-top-2 duration-200">
-                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Log in as</label>
-                      <div className="relative group">
-                        <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground/50 group-focus-within:text-primary transition-colors" size={15} />
-                        <select
-                          value={selectedSubAccount} onChange={(e) => setSelectedSubAccount(e.target.value)}
-                          disabled={isSubmitting} required
-                          className="w-full bg-white border border-border rounded-xl pl-10 pr-4 py-3 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 transition-all disabled:opacity-50 appearance-none cursor-pointer"
-                        >
-                          <option value="">— Select your account —</option>
-                          <option value="__head__">Head / {selectedDept}</option>
-                          {subAccounts.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  )}
 
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
