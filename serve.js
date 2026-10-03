@@ -670,7 +670,7 @@ async function getSubPrivilege(deptId) {
   try {
     const rows = await prisma.$queryRaw`
       SELECT "privilegeAmount", "approvalLimit", "cashPrivilege", "memoPrivilege", "materialPrivilege",
-             "directRoute", "allowedRouteDeptIds"
+             "directRoute", "allowedRouteDeptIds", "canSeeHeadReqs", "canSeeHeadMemos"
       FROM "Department" WHERE id = ${parseInt(deptId)} LIMIT 1
     `;
     const d = rows?.[0];
@@ -684,8 +684,10 @@ async function getSubPrivilege(deptId) {
       materialPrivilege:   d?.materialPrivilege ?? false,
       directRoute:         d?.directRoute       ?? false,
       allowedRouteDeptIds,
+      canSeeHeadReqs:      d?.canSeeHeadReqs    ?? false,
+      canSeeHeadMemos:     d?.canSeeHeadMemos   ?? false,
     };
-  } catch { return { privilegeAmount: null, approvalLimit: null, cashPrivilege: false, memoPrivilege: false, materialPrivilege: false, directRoute: false, allowedRouteDeptIds: [] }; }
+  } catch { return { privilegeAmount: null, approvalLimit: null, cashPrivilege: false, memoPrivilege: false, materialPrivilege: false, directRoute: false, allowedRouteDeptIds: [], canSeeHeadReqs: false, canSeeHeadMemos: false }; }
 }
 // Legacy compat — returns just the amount
 async function getSubPrivilegeAmount(deptId) {
@@ -2166,7 +2168,7 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
         isSubAccount: true, parentId: true,
         directRoute: true, allowedRouteDeptIds: true,
         privilegeAmount: true, approvalLimit: true,
-        cashPrivilege: true, memoPrivilege: true, materialPrivilege: true, canOverride: true, canReject: true, canRecall: true,
+        cashPrivilege: true, memoPrivilege: true, materialPrivilege: true, canOverride: true, canReject: true, canRecall: true, canSeeHeadReqs: true, canSeeHeadMemos: true,
         parent: { select: { id: true, name: true } },
       }
     });
@@ -2201,6 +2203,8 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
       ...(dept.canOverride              ? { canOverride: true }                         : {}),
       ...(dept.canReject               ? { canReject: true }                           : {}),
       ...(dept.canRecall               ? { canRecall: true }                           : {}),
+      ...(dept.canSeeHeadReqs          ? { canSeeHeadReqs: true }                      : {}),
+      ...(dept.canSeeHeadMemos         ? { canSeeHeadMemos: true }                     : {}),
     };
 
     res.json({ user: freshUser });
@@ -4945,15 +4949,15 @@ app.get('/api/sub-accounts/:id/privilege', authenticateToken, async (req, res) =
     const isAdmin = normalizeRole(req.user.role) === 'global_admin';
     const deptId  = req.user.deptId ? parseInt(req.user.deptId) : null;
     if (!isAdmin && deptId !== sub.parentId) return res.status(403).json({ error: 'Access denied.' });
-    let priv = { privilegeAmount: null, cashPrivilege: false, memoPrivilege: false, materialPrivilege: false };
+    let priv = { privilegeAmount: null, cashPrivilege: false, memoPrivilege: false, materialPrivilege: false, canSeeHeadReqs: false, canSeeHeadMemos: false };
     try {
       const rows = await prisma.$queryRaw`
-        SELECT "privilegeAmount", "cashPrivilege", "memoPrivilege", "materialPrivilege"
+        SELECT "privilegeAmount", "cashPrivilege", "memoPrivilege", "materialPrivilege", "canSeeHeadReqs", "canSeeHeadMemos"
         FROM "Department" WHERE id = ${subId} LIMIT 1
       `;
       if (rows?.[0]) {
         const r = rows[0];
-        priv = { privilegeAmount: r.privilegeAmount ?? null, cashPrivilege: r.cashPrivilege ?? false, memoPrivilege: r.memoPrivilege ?? false, materialPrivilege: r.materialPrivilege ?? false };
+        priv = { privilegeAmount: r.privilegeAmount ?? null, cashPrivilege: r.cashPrivilege ?? false, memoPrivilege: r.memoPrivilege ?? false, materialPrivilege: r.materialPrivilege ?? false, canSeeHeadReqs: r.canSeeHeadReqs ?? false, canSeeHeadMemos: r.canSeeHeadMemos ?? false };
       }
     } catch (_) {}
     res.json(priv);
@@ -4984,11 +4988,13 @@ app.put('/api/sub-accounts/:id/privilege', authenticateToken, checkHeadCanSetSub
       materialPrivilege:   z.boolean().optional(),
       directRoute:         z.boolean().optional(),
       allowedRouteDeptIds: z.array(z.number().int()).nullable().optional(),
+      canSeeHeadReqs:      z.boolean().optional(),
+      canSeeHeadMemos:     z.boolean().optional(),
     }).safeParse(req.body || {});
     if (!parsed.success) return res.status(400).json({ error: 'Invalid privilege payload.' });
 
-    const { maxAmount, approvalLimit, cashPrivilege, memoPrivilege, materialPrivilege, directRoute, allowedRouteDeptIds } = parsed.data;
-    if (maxAmount === undefined && approvalLimit === undefined && cashPrivilege === undefined && memoPrivilege === undefined && materialPrivilege === undefined && directRoute === undefined && allowedRouteDeptIds === undefined)
+    const { maxAmount, approvalLimit, cashPrivilege, memoPrivilege, materialPrivilege, directRoute, allowedRouteDeptIds, canSeeHeadReqs, canSeeHeadMemos } = parsed.data;
+    if (maxAmount === undefined && approvalLimit === undefined && cashPrivilege === undefined && memoPrivilege === undefined && materialPrivilege === undefined && directRoute === undefined && allowedRouteDeptIds === undefined && canSeeHeadReqs === undefined && canSeeHeadMemos === undefined)
       return res.status(400).json({ error: 'No privilege fields provided.' });
 
     // Ensure columns exist in DB regardless of Prisma client schema version
@@ -5000,6 +5006,8 @@ app.put('/api/sub-accounts/:id/privilege', authenticateToken, checkHeadCanSetSub
       await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "materialPrivilege" BOOLEAN NOT NULL DEFAULT false`;
       await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "directRoute" BOOLEAN NOT NULL DEFAULT false`;
       await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "allowedRouteDeptIds" TEXT`;
+      await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canSeeHeadReqs" BOOLEAN NOT NULL DEFAULT false`;
+      await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canSeeHeadMemos" BOOLEAN NOT NULL DEFAULT false`;
     } catch (_) {}
 
     // Build and run raw UPDATE to bypass Prisma client field validation
@@ -5012,6 +5020,8 @@ app.put('/api/sub-accounts/:id/privilege', authenticateToken, checkHeadCanSetSub
     if (materialPrivilege !== undefined) { setClauses.push(`"materialPrivilege" = $${setClauses.length + 1}`); values.push(materialPrivilege); }
     if (directRoute !== undefined) { setClauses.push(`"directRoute" = $${setClauses.length + 1}`); values.push(directRoute); }
     if (allowedRouteDeptIds !== undefined) { setClauses.push(`"allowedRouteDeptIds" = $${setClauses.length + 1}`); values.push(allowedRouteDeptIds === null || allowedRouteDeptIds.length === 0 ? null : JSON.stringify(allowedRouteDeptIds)); }
+    if (canSeeHeadReqs !== undefined) { setClauses.push(`"canSeeHeadReqs" = $${setClauses.length + 1}`); values.push(canSeeHeadReqs); }
+    if (canSeeHeadMemos !== undefined) { setClauses.push(`"canSeeHeadMemos" = $${setClauses.length + 1}`); values.push(canSeeHeadMemos); }
     values.push(subId);
     await prisma.$executeRawUnsafe(
       `UPDATE "Department" SET ${setClauses.join(', ')} WHERE id = $${values.length}`,
@@ -5028,11 +5038,11 @@ app.put('/api/sub-accounts/:id/privilege', authenticateToken, checkHeadCanSetSub
       });
     } catch (_) {}
 
-    let updated = { privilegeAmount: null, approvalLimit: null, cashPrivilege: false, memoPrivilege: false, materialPrivilege: false, directRoute: false, allowedRouteDeptIds: [] };
+    let updated = { privilegeAmount: null, approvalLimit: null, cashPrivilege: false, memoPrivilege: false, materialPrivilege: false, directRoute: false, allowedRouteDeptIds: [], canSeeHeadReqs: false, canSeeHeadMemos: false };
     try {
       const rows = await prisma.$queryRaw`
         SELECT "privilegeAmount", "approvalLimit", "cashPrivilege", "memoPrivilege", "materialPrivilege",
-               "directRoute", "allowedRouteDeptIds"
+               "directRoute", "allowedRouteDeptIds", "canSeeHeadReqs", "canSeeHeadMemos"
         FROM "Department" WHERE id = ${subId} LIMIT 1
       `;
       if (rows?.[0]) {
@@ -9944,7 +9954,7 @@ app.post('/api/requisitions/:id/publish-memo', authenticateToken, async (req, re
       } catch (_) { }
     }));
 
-    try { await logAudit(req, 'Memo Published', `Memo #${reqId} published to all depts by ${deptName}`); } catch (_) { }
+    try { await prisma.activityLog.create({ data: { action: 'Memo Published', details: `Memo #${reqId} published to all depts by ${deptName}` } }); } catch (_) { }
     res.json({ ok: true, published: allDepts.length });
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -10020,7 +10030,7 @@ app.post('/api/admin/requisitions/:id/unreject', authenticateToken, async (req, 
       where: { id: reqId },
       data: { status: 'pending', currentStageId: null }
     });
-    await logAudit(req, 'Requisition Restored', `Req #${reqId} restored to pending by ${req.user?.name || 'Admin'}${remarks ? ': ' + remarks : ''}`).catch(() => {});
+    prisma.activityLog.create({ data: { action: 'Requisition Restored', details: `Req #${reqId} restored to pending by ${req.user?.name || 'Admin'}${remarks ? ': ' + remarks : ''}` } }).catch(() => {});
     broadcastUpdate(reqId, { action: 'restored', fromDept: req.user?.name || 'Admin' });
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
@@ -10047,7 +10057,7 @@ app.post('/api/requisitions/:id/dept-reject', authenticateToken, async (req, res
     if (!remarks?.trim()) return res.status(400).json({ error: 'Please state a reason for rejection.' });
 
     await prisma.requisition.update({ where: { id: reqId }, data: { status: 'rejected' } });
-    await logAudit(req, 'Requisition Rejected', `Req #${reqId} rejected by department "${dept.name}"${remarks ? ': ' + remarks : ''}`).catch(() => {});
+    prisma.activityLog.create({ data: { action: 'Requisition Rejected', details: `Req #${reqId} rejected by department "${dept.name}"${remarks ? ': ' + remarks : ''}` } }).catch(() => {});
     broadcastUpdate(reqId, { action: 'rejected', fromDept: dept.name });
     pushToTaggedDepts(reqId, { title: 'Requisition Rejected', body: `Req #${reqId} was rejected by ${dept.name}.`, url: `/?req=${reqId}` });
     res.json({ ok: true });
@@ -10071,7 +10081,7 @@ app.post('/api/admin/reject-privs', authenticateToken, requireRoles(['global_adm
     if (!Array.isArray(deptIds) || deptIds.length === 0) return res.status(400).json({ error: 'Provide an array of department IDs.' });
     const ids = deptIds.map(Number).filter(Boolean);
     await prisma.department.updateMany({ where: { id: { in: ids } }, data: { canReject: true } });
-    await logAudit(req, 'Reject Privilege Granted', `Granted reject privilege to dept IDs: ${ids.join(', ')}`).catch(() => {});
+    prisma.activityLog.create({ data: { action: 'Reject Privilege Granted', details: `Granted reject privilege to dept IDs: ${ids.join(', ')}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -10080,7 +10090,7 @@ app.delete('/api/admin/reject-privs/:deptId', authenticateToken, requireRoles(['
   try {
     const deptId = parseInt(req.params.deptId);
     await prisma.department.update({ where: { id: deptId }, data: { canReject: false } });
-    await logAudit(req, 'Reject Privilege Revoked', `Revoked reject privilege from dept ID: ${deptId}`).catch(() => {});
+    prisma.activityLog.create({ data: { action: 'Reject Privilege Revoked', details: `Revoked reject privilege from dept ID: ${deptId}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -10102,7 +10112,7 @@ app.post('/api/admin/recall-privs', authenticateToken, requireRoles(['global_adm
     if (!Array.isArray(deptIds) || deptIds.length === 0) return res.status(400).json({ error: 'Provide an array of department IDs.' });
     const ids = deptIds.map(Number).filter(Boolean);
     await prisma.department.updateMany({ where: { id: { in: ids } }, data: { canRecall: true } });
-    await logAudit(req, 'Recall Privilege Granted', `Granted recall privilege to dept IDs: ${ids.join(', ')}`).catch(() => {});
+    prisma.activityLog.create({ data: { action: 'Recall Privilege Granted', details: `Granted recall privilege to dept IDs: ${ids.join(', ')}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -10111,7 +10121,7 @@ app.delete('/api/admin/recall-privs/:deptId', authenticateToken, requireRoles(['
   try {
     const deptId = parseInt(req.params.deptId);
     await prisma.department.update({ where: { id: deptId }, data: { canRecall: false } });
-    await logAudit(req, 'Recall Privilege Revoked', `Revoked recall privilege from dept ID: ${deptId}`).catch(() => {});
+    prisma.activityLog.create({ data: { action: 'Recall Privilege Revoked', details: `Revoked recall privilege from dept ID: ${deptId}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -10154,7 +10164,7 @@ app.post('/api/requisitions/:id/recall', authenticateToken, async (req, res) => 
       }
     });
 
-    await logAudit(req, 'Requisition Recalled', `Req #${reqId} recalled to originating dept ${userDeptId}`).catch(() => {});
+    prisma.activityLog.create({ data: { action: 'Requisition Recalled', details: `Req #${reqId} recalled to originating dept ${userDeptId}` } }).catch(() => {});
     broadcastUpdate(reqId).catch(() => {});
 
     res.json({ ok: true, message: 'Requisition recalled to your desk.' });
@@ -10176,7 +10186,7 @@ app.post('/api/admin/reroute-req', authenticateToken, requireRoles(['global_admi
       data: { targetDepartmentId: targetDeptId, currentVettingDeptId: null }
     });
 
-    await logAudit(req, 'Admin Reroute', `Req #${reqId} rerouted to dept ${targetDeptId} (${targetDept.name})`).catch(() => {});
+    prisma.activityLog.create({ data: { action: 'Admin Reroute', details: `Req #${reqId} rerouted to dept ${targetDeptId} (${targetDept.name})` } }).catch(() => {});
     broadcastUpdate(reqId).catch(() => {});
 
     res.json({ ok: true, message: `Rerouted to ${targetDept.name}.` });
@@ -10202,7 +10212,7 @@ app.post('/api/admin/override-depts', authenticateToken, requireRoles(['global_a
     }
     const ids = deptIds.map(Number).filter(Boolean);
     await prisma.department.updateMany({ where: { id: { in: ids } }, data: { canOverride: true } });
-    await logAudit(req, 'Override Privilege Granted', `Granted un-reject privilege to dept IDs: ${ids.join(', ')}`).catch(() => {});
+    prisma.activityLog.create({ data: { action: 'Override Privilege Granted', details: `Granted un-reject privilege to dept IDs: ${ids.join(', ')}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -10211,7 +10221,7 @@ app.delete('/api/admin/override-depts/:deptId', authenticateToken, requireRoles(
   try {
     const deptId = parseInt(req.params.deptId);
     await prisma.department.update({ where: { id: deptId }, data: { canOverride: false } });
-    await logAudit(req, 'Override Privilege Revoked', `Revoked un-reject privilege from dept ID: ${deptId}`).catch(() => {});
+    prisma.activityLog.create({ data: { action: 'Override Privilege Revoked', details: `Revoked un-reject privilege from dept ID: ${deptId}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -11831,7 +11841,7 @@ app.get('/api/requisitions', authenticateToken, async (req, res) => {
         const tagged = await prisma.requisitionTag.findMany({ where: { deptId }, select: { requisitionId: true } });
         taggedReqIds = tagged.map(t => t.requisitionId);
       } catch (_) {}
-      // Parent dept also sees its sub-accounts' requisitions
+      // Parent dept also sees its sub-accounts' submitted (non-draft) requisitions
       let subDeptIds = [];
       if (!req.user.isSubAccount) {
         try {
@@ -11842,11 +11852,12 @@ app.get('/api/requisitions', authenticateToken, async (req, res) => {
           subDeptIds = subDepts.map(d => d.id);
         } catch (_) {}
       }
-      // Sub-accounts see parent dept requests made visible to all, or specifically to them
+      // Sub-accounts see parent dept requests only if specifically shared or privileged
       let parentVisibleClause = [];
       if (req.user.isSubAccount && req.user.parentDeptId) {
+        // Per-req share: head explicitly marked the req visible to all sub-accounts
         parentVisibleClause = [{ departmentId: parseInt(req.user.parentDeptId), visibleToSubAccounts: true }];
-        // Also include requests where this sub-account has specific visibility (junction table — may not exist yet)
+        // Specific per-req share via junction table (may not exist yet)
         try {
           const specificVis = await prisma.requisitionSubVisibility.findMany({
             where: { subAccountId: deptId },
@@ -11898,13 +11909,26 @@ app.get('/api/requisitions', authenticateToken, async (req, res) => {
           const materialTypes = ['Material', 'material', 'Material Request', 'material request'];
           privilegeClause.push({ targetDepartmentId: parentId, type: { in: materialTypes } });
         }
+
+        // canSeeHeadReqs: see all non-draft requisitions (cash+material) that the parent dept submitted
+        if (req.user.canSeeHeadReqs || subPriv.canSeeHeadReqs) {
+          const reqTypes = ['Cash', 'cash', 'Cash Requisition', 'cash requisition', 'Material', 'material', 'Material Request', 'material request'];
+          privilegeClause.push({ departmentId: parentId, status: { not: 'draft' }, type: { in: reqTypes } });
+        }
+
+        // canSeeHeadMemos: see all non-draft memos that the parent dept submitted
+        if (req.user.canSeeHeadMemos || subPriv.canSeeHeadMemos) {
+          const memoTypes = ['Memo', 'memo', 'Memorandum', 'memorandum'];
+          privilegeClause.push({ departmentId: parentId, status: { not: 'draft' }, type: { in: memoTypes } });
+        }
       }
 
       const accessWhere = {
         OR: [
           { departmentId: deptId },
           { targetDepartmentId: deptId },
-          ...(subDeptIds.length > 0 ? [{ departmentId: { in: subDeptIds } }] : []),
+          // Parent sees sub-account reqs — but only submitted ones (not drafts)
+          ...(subDeptIds.length > 0 ? [{ departmentId: { in: subDeptIds }, status: { not: 'draft' } }] : []),
           ...(linkedReqIds.length > 0 ? [{ id: { in: linkedReqIds } }] : []),
           ...(taggedReqIds.length > 0 ? [{ id: { in: taggedReqIds } }] : []),
           ...parentVisibleClause,
@@ -13771,7 +13795,9 @@ const server = app.listen(PORT, async () => {
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canOverride" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canReject" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canRecall" BOOLEAN NOT NULL DEFAULT false`;
-        logger.info('[BOOT] Department canOverride/canReject/canRecall columns ensured');
+        await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canSeeHeadReqs" BOOLEAN NOT NULL DEFAULT false`;
+        await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canSeeHeadMemos" BOOLEAN NOT NULL DEFAULT false`;
+        logger.info('[BOOT] Department privilege columns ensured (canOverride/canReject/canRecall/canSeeHeadReqs/canSeeHeadMemos)');
       } catch (e) {
         logger.warn('[BOOT] canOverride/canReject/canRecall column check skipped:', e.message);
       }

@@ -87,6 +87,8 @@ model Department {
   canOverride          Boolean          @default(false) // Super Admin can grant: allows dept to restore rejected requisitions
   canReject            Boolean          @default(false) // Super Admin can grant: allows dept to reject requisitions they receive
   canRecall            Boolean          @default(false) // Super Admin can grant: allows dept to recall their own pending requisitions
+  canSeeHeadReqs       Boolean          @default(false) // Head can grant: sub-account sees all non-draft requisitions (cash/material) from parent dept
+  canSeeHeadMemos      Boolean          @default(false) // Head can grant: sub-account sees all non-draft memos from parent dept
   // Per-sub-account routing: if false, all requests route through parent head first
   directRoute          Boolean          @default(false)
   // JSON array of dept IDs the sub-account may target directly; null = any department

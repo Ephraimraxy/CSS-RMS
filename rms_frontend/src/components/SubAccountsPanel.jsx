@@ -163,6 +163,8 @@ const PrivilegeEditor = ({ sub, onUpdatePrivilege }) => {
   const [savingApproval, setSavingApproval]   = useState(false);
   const [memoOn, setMemoOn]             = useState(!!sub.memoPrivilege);
   const [materialOn, setMaterialOn]     = useState(!!sub.materialPrivilege);
+  const [seeHeadReqs, setSeeHeadReqs]   = useState(!!sub.canSeeHeadReqs);
+  const [seeHeadMemos, setSeeHeadMemos] = useState(!!sub.canSeeHeadMemos);
   const [savingCash, setSavingCash]     = useState(false);
   const [savingToggles, setSavingToggles] = useState(false);
 
@@ -274,7 +276,7 @@ const PrivilegeEditor = ({ sub, onUpdatePrivilege }) => {
 
   const saveToggle = async (field, value, extraPayload = {}) => {
     setSavingToggles(true);
-    const labels = { cashPrivilege: 'Cash', memoPrivilege: 'Memo', materialPrivilege: 'Material' };
+    const labels = { cashPrivilege: 'Cash', memoPrivilege: 'Memo', materialPrivilege: 'Material', canSeeHeadReqs: 'See head\'s requisitions', canSeeHeadMemos: 'See head\'s memos' };
     try {
       await subAccountAPI.setPrivilege(sub.id, { [field]: value, ...extraPayload });
       toast.success(`${labels[field] || field} requests ${value ? 'enabled' : 'disabled'}.`);
@@ -283,6 +285,8 @@ const PrivilegeEditor = ({ sub, onUpdatePrivilege }) => {
       if (field === 'cashPrivilege') setCashOn(!value);
       if (field === 'memoPrivilege') setMemoOn(!value);
       if (field === 'materialPrivilege') setMaterialOn(!value);
+      if (field === 'canSeeHeadReqs') setSeeHeadReqs(!value);
+      if (field === 'canSeeHeadMemos') setSeeHeadMemos(!value);
       toast.error(err?.response?.data?.error || 'Failed to update.');
     } finally { setSavingToggles(false); }
   };
@@ -303,6 +307,8 @@ const PrivilegeEditor = ({ sub, onUpdatePrivilege }) => {
   };
   const handleMemoToggle = (v) => { setMemoOn(v); saveToggle('memoPrivilege', v); };
   const handleMaterialToggle = (v) => { setMaterialOn(v); saveToggle('materialPrivilege', v); };
+  const handleSeeHeadReqsToggle = (v) => { setSeeHeadReqs(v); saveToggle('canSeeHeadReqs', v); };
+  const handleSeeHeadMemosToggle = (v) => { setSeeHeadMemos(v); saveToggle('canSeeHeadMemos', v); };
 
   const handleDirectRouteToggle = async (v) => {
     if (v) {
@@ -497,6 +503,24 @@ const PrivilegeEditor = ({ sub, onUpdatePrivilege }) => {
           <p className="text-[9px] text-muted-foreground/60">Can create &amp; handle material requests</p>
         </div>
         <Toggle on={materialOn} onChange={handleMaterialToggle} disabled={savingToggles} />
+      </div>
+
+      {/* See Head's Requisitions toggle */}
+      <div className="flex items-center justify-between py-2 border-t border-border/10">
+        <div>
+          <p className="text-[11px] font-semibold text-foreground">See Head's Requisitions</p>
+          <p className="text-[9px] text-muted-foreground/60">Can view all submitted cash &amp; material reqs from your desk</p>
+        </div>
+        <Toggle on={seeHeadReqs} onChange={handleSeeHeadReqsToggle} disabled={savingToggles} />
+      </div>
+
+      {/* See Head's Memos toggle */}
+      <div className="flex items-center justify-between py-2 border-t border-border/10">
+        <div>
+          <p className="text-[11px] font-semibold text-foreground">See Head's Memos</p>
+          <p className="text-[9px] text-muted-foreground/60">Can view all submitted memos from your desk</p>
+        </div>
+        <Toggle on={seeHeadMemos} onChange={handleSeeHeadMemosToggle} disabled={savingToggles} />
       </div>
 
       {/* Direct Route toggle + allowed departments */}
