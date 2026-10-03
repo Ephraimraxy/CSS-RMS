@@ -10073,7 +10073,7 @@ app.post('/api/requisitions/:id/dept-reject', authenticateToken, async (req, res
 app.get('/api/admin/reject-privs', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
     const depts = await prisma.$queryRaw`SELECT id, name, type FROM "Department" WHERE "canReject" = true AND "isDeleted" = false`;
-    res.json(depts);
+    res.json(depts.map(d => ({ id: Number(d.id), name: d.name, type: d.type })));
   } catch (err) { sendError(res, 500, err.message); }
 });
 
@@ -10102,7 +10102,7 @@ app.delete('/api/admin/reject-privs/:deptId', authenticateToken, requireRoles(['
 app.get('/api/admin/recall-privs', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
     const depts = await prisma.$queryRaw`SELECT id, name, type FROM "Department" WHERE "canRecall" = true AND "isDeleted" = false`;
-    res.json(depts);
+    res.json(depts.map(d => ({ id: Number(d.id), name: d.name, type: d.type })));
   } catch (err) { sendError(res, 500, err.message); }
 });
 
@@ -10198,7 +10198,7 @@ app.post('/api/admin/reroute-req', authenticateToken, requireRoles(['global_admi
 app.get('/api/admin/override-depts', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
     const depts = await prisma.$queryRaw`SELECT id, name, type FROM "Department" WHERE "canOverride" = true AND "isDeleted" = false`;
-    res.json(depts);
+    res.json(depts.map(d => ({ id: Number(d.id), name: d.name, type: d.type })));
   } catch (err) { sendError(res, 500, err.message); }
 });
 
