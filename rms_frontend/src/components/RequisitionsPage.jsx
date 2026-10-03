@@ -3666,6 +3666,16 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
     && parseInt(detail?.targetDepartmentId) !== parseInt(user?.deptId);
   // Can admin reroute this pending req to a different department?
   const canAdminReroute = !!detail && user?.role === 'global_admin' && req.status === 'pending';
+  // Can a privileged dept reroute (directRoute = true AND they currently hold it)?
+  const canDeptReroute  = !!detail && user?.role === 'department' && user?.directRoute === true
+    && req.status === 'pending'
+    && parseInt(detail?.targetDepartmentId) === parseInt(user?.deptId);
+  // Allowed reroute targets for dept (empty = all; non-empty = restricted list)
+  const deptRerouteTargets = canDeptReroute
+    ? (user?.allowedRouteDeptIds?.length
+        ? (departments || []).filter(d => (user.allowedRouteDeptIds || []).includes(d.id) && d.id !== parseInt(detail?.targetDepartmentId))
+        : (departments || []).filter(d => d.id !== parseInt(detail?.targetDepartmentId)))
+    : [];
   // Is the request financial?
   const isFinancial = req.type === 'Cash' || (req.amount && req.amount > 0);
 
@@ -3976,11 +3986,11 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
           </button>
         )}
 
-        {canAdminReroute && (
+        {(canAdminReroute || canDeptReroute) && (
           <div className="relative">
             <button
               onClick={() => setShowReroute(v => !v)}
-              title="Admin: redirect this req to a different department"
+              title={canAdminReroute ? 'Admin: redirect this req to a different department' : 'Reroute this requisition to another department'}
               className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl transition-all shadow-md shadow-amber-500/20 flex items-center gap-2 font-bold text-xs uppercase tracking-wider"
             >
               <ArrowRight size={16} />
@@ -3995,7 +4005,7 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
                   className="w-full border border-border/50 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
                 >
                   <option value="">— Select department —</option>
-                  {departments.filter(d => d.id !== parseInt(detail?.targetDepartmentId)).map(d => (
+                  {(canDeptReroute ? deptRerouteTargets : (departments || []).filter(d => d.id !== parseInt(detail?.targetDepartmentId))).map(d => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>

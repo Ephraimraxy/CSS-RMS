@@ -10182,12 +10182,31 @@ app.post('/api/requisitions/:id/recall', authenticateToken, async (req, res) => 
   } catch (err) { sendError(res, 500, err.message); }
 });
 
-// ── Admin reroute requisition ─────────────────────────────────────────────────
-app.post('/api/admin/reroute-req', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+// ── Admin / privileged-dept reroute requisition ───────────────────────────────
+app.post('/api/admin/reroute-req', authenticateToken, requireRoles(['global_admin', 'department']), async (req, res) => {
   try {
     const parsed = z.object({ reqId: z.number(), targetDeptId: z.number() }).safeParse(req.body || {});
     if (!parsed.success) return res.status(400).json({ error: 'reqId and targetDeptId are required.' });
     const { reqId, targetDeptId } = parsed.data;
+
+    // Department users must have directRoute privilege and currently hold the req
+    if (req.user.role === 'department') {
+      const deptId = parseInt(req.user.deptId);
+      const privRows = await prisma.$queryRaw`SELECT "directRoute", "allowedRouteDeptIds" FROM "Department" WHERE id = ${deptId} LIMIT 1`;
+      const priv = privRows[0];
+      if (!priv?.directRoute) return res.status(403).json({ error: 'Reroute privilege not granted.' });
+
+      const reqRecord = await prisma.requisition.findUnique({ where: { id: reqId }, select: { targetDepartmentId: true, status: true } });
+      if (!reqRecord) return res.status(404).json({ error: 'Requisition not found.' });
+      if (reqRecord.status !== 'pending') return res.status(400).json({ error: 'Can only reroute pending requisitions.' });
+      if (parseInt(reqRecord.targetDepartmentId) !== deptId) return res.status(403).json({ error: 'Your department is not the current holder.' });
+
+      if (priv.allowedRouteDeptIds) {
+        let allowed = [];
+        try { allowed = JSON.parse(priv.allowedRouteDeptIds) || []; } catch {}
+        if (allowed.length > 0 && !allowed.includes(targetDeptId)) return res.status(403).json({ error: 'Target department is not in your allowed reroute list.' });
+      }
+    }
 
     const targetDept = await prisma.department.findUnique({ where: { id: targetDeptId }, select: { name: true } });
     if (!targetDept) return res.status(404).json({ error: 'Target department not found.' });
@@ -10197,7 +10216,8 @@ app.post('/api/admin/reroute-req', authenticateToken, requireRoles(['global_admi
       data: { targetDepartmentId: targetDeptId, currentVettingDeptId: null }
     });
 
-    prisma.activityLog.create({ data: { action: 'Admin Reroute', details: `Req #${reqId} rerouted to dept ${targetDeptId} (${targetDept.name})` } }).catch(() => {});
+    const actor = req.user.role === 'global_admin' ? 'Admin' : req.user.deptName || 'Dept';
+    prisma.activityLog.create({ data: { action: 'Reroute', details: `Req #${reqId} rerouted to dept ${targetDeptId} (${targetDept.name}) by ${actor}` } }).catch(() => {});
     broadcastUpdate(reqId).catch(() => {});
 
     res.json({ ok: true, message: `Rerouted to ${targetDept.name}.` });
