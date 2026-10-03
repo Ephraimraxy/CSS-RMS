@@ -1639,6 +1639,17 @@ const OverridePrivsPanel = ({ departments }) => (
       grantFn={adminAPI.grantRecallPriv}
       revokeFn={adminAPI.revokeRecallPriv}
     />
+    <PrivSection
+      title="Reroute Requisition Privilege"
+      description="Departments with this privilege can redirect a pending requisition they currently hold to any other department — the same yellow Reroute action Super Admin sees."
+      accentClass="text-amber-600"
+      borderClass="border-amber-200/50"
+      bgClass="bg-amber-50/40"
+      departments={departments}
+      loadFn={adminAPI.getReroutePrivDepts}
+      grantFn={adminAPI.grantReroutePriv}
+      revokeFn={adminAPI.revokeReroutePriv}
+    />
   </div>
 );
 

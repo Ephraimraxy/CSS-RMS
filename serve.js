@@ -2177,7 +2177,7 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
     let deptPrivs = {};
     try {
       const privRows = await prisma.$queryRaw`
-        SELECT "cashApprovalPrivilege","canOverride","canReject","canRecall","canSeeHeadReqs","canSeeHeadMemos"
+        SELECT "cashApprovalPrivilege","canOverride","canReject","canRecall","canReroute","canSeeHeadReqs","canSeeHeadMemos"
         FROM "Department" WHERE id = ${deptId} LIMIT 1
       `;
       deptPrivs = privRows[0] || {};
@@ -2214,6 +2214,7 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
       ...(deptPrivs.canOverride         ? { canOverride: true }                         : {}),
       ...(deptPrivs.canReject           ? { canReject: true }                           : {}),
       ...(deptPrivs.canRecall           ? { canRecall: true }                           : {}),
+      ...(deptPrivs.canReroute          ? { canReroute: true }                          : {}),
       ...(deptPrivs.canSeeHeadReqs      ? { canSeeHeadReqs: true }                      : {}),
       ...(deptPrivs.canSeeHeadMemos     ? { canSeeHeadMemos: true }                     : {}),
     };
@@ -10137,6 +10138,35 @@ app.delete('/api/admin/recall-privs/:deptId', authenticateToken, requireRoles(['
   } catch (err) { sendError(res, 500, err.message); }
 });
 
+// ── Reroute privilege management (Super Admin only) ──────────────────────────
+app.get('/api/admin/reroute-privs', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const depts = await prisma.$queryRaw`SELECT id, name, type FROM "Department" WHERE "canReroute" = true AND "isDeleted" = false`;
+    res.json(depts.map(d => ({ id: Number(d.id), name: d.name, type: d.type })));
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+app.post('/api/admin/reroute-privs', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const { deptIds } = req.body || {};
+    if (!Array.isArray(deptIds) || deptIds.length === 0) return res.status(400).json({ error: 'Provide an array of department IDs.' });
+    const ids = deptIds.map(Number).filter(Boolean);
+    if (ids.length === 0) return res.status(400).json({ error: 'No valid IDs.' });
+    await prisma.$executeRawUnsafe(`UPDATE "Department" SET "canReroute" = true WHERE id IN (${ids.join(',')})`);
+    prisma.activityLog.create({ data: { action: 'Reroute Privilege Granted', details: `Granted reroute privilege to dept IDs: ${ids.join(', ')}` } }).catch(() => {});
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
+app.delete('/api/admin/reroute-privs/:deptId', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
+  try {
+    const deptId = parseInt(req.params.deptId);
+    await prisma.$executeRaw`UPDATE "Department" SET "canReroute" = false WHERE id = ${deptId}`;
+    prisma.activityLog.create({ data: { action: 'Reroute Privilege Revoked', details: `Revoked reroute privilege from dept ID: ${deptId}` } }).catch(() => {});
+    res.json({ ok: true });
+  } catch (err) { sendError(res, 500, err.message); }
+});
+
 // ── Recall requisition (originator pulls back a pending req) ─────────────────
 app.post('/api/requisitions/:id/recall', authenticateToken, async (req, res) => {
   try {
@@ -10189,23 +10219,17 @@ app.post('/api/admin/reroute-req', authenticateToken, requireRoles(['global_admi
     if (!parsed.success) return res.status(400).json({ error: 'reqId and targetDeptId are required.' });
     const { reqId, targetDeptId } = parsed.data;
 
-    // Department users must have directRoute privilege and currently hold the req
+    // Department users must have canReroute privilege and currently hold the req
     if (req.user.role === 'department') {
       const deptId = parseInt(req.user.deptId);
-      const privRows = await prisma.$queryRaw`SELECT "directRoute", "allowedRouteDeptIds" FROM "Department" WHERE id = ${deptId} LIMIT 1`;
+      const privRows = await prisma.$queryRaw`SELECT "canReroute" FROM "Department" WHERE id = ${deptId} LIMIT 1`;
       const priv = privRows[0];
-      if (!priv?.directRoute) return res.status(403).json({ error: 'Reroute privilege not granted.' });
+      if (!priv?.canReroute) return res.status(403).json({ error: 'Reroute privilege not granted.' });
 
       const reqRecord = await prisma.requisition.findUnique({ where: { id: reqId }, select: { targetDepartmentId: true, status: true } });
       if (!reqRecord) return res.status(404).json({ error: 'Requisition not found.' });
       if (reqRecord.status !== 'pending') return res.status(400).json({ error: 'Can only reroute pending requisitions.' });
       if (parseInt(reqRecord.targetDepartmentId) !== deptId) return res.status(403).json({ error: 'Your department is not the current holder.' });
-
-      if (priv.allowedRouteDeptIds) {
-        let allowed = [];
-        try { allowed = JSON.parse(priv.allowedRouteDeptIds) || []; } catch {}
-        if (allowed.length > 0 && !allowed.includes(targetDeptId)) return res.status(403).json({ error: 'Target department is not in your allowed reroute list.' });
-      }
     }
 
     const targetDept = await prisma.department.findUnique({ where: { id: targetDeptId }, select: { name: true } });
@@ -13825,6 +13849,7 @@ const server = app.listen(PORT, async () => {
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canOverride" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canReject" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canRecall" BOOLEAN NOT NULL DEFAULT false`;
+        await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canReroute" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "cashApprovalPrivilege" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canSeeHeadReqs" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canSeeHeadMemos" BOOLEAN NOT NULL DEFAULT false`;

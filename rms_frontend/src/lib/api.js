@@ -479,6 +479,9 @@ export const adminAPI = {
   getRecallPrivDepts: () => api.get('/admin/recall-privs'),
   grantRecallPriv: (deptIds) => api.post('/admin/recall-privs', { deptIds }),
   revokeRecallPriv: (deptId) => api.delete(`/admin/recall-privs/${deptId}`),
+  getReroutePrivDepts: () => api.get('/admin/reroute-privs'),
+  grantReroutePriv: (deptIds) => api.post('/admin/reroute-privs', { deptIds }),
+  revokeReroutePriv: (deptId) => api.delete(`/admin/reroute-privs/${deptId}`),
   rerouteRequisition: (reqId, targetDeptId) => api.post('/admin/reroute-req', { reqId, targetDeptId }),
 };
 
