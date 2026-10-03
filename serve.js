@@ -2365,6 +2365,19 @@ app.post('/api/auth/dept-login', authLimiter, async (req, res) => {
     const adminUser = isSuperAdmin
       ? await prisma.user.findFirst({ where: { role: 'global_admin' } })
       : null;
+
+    // Fetch post-init privilege columns (not in Prisma schema) for immediate JWT inclusion
+    let loginPrivs = {};
+    if (!isSuperAdmin) {
+      try {
+        const privRows = await prisma.$queryRaw`
+          SELECT "cashApprovalPrivilege","canOverride","canReject","canRecall","canReroute","canSeeHeadReqs","canSeeHeadMemos"
+          FROM "Department" WHERE id = ${resolved.id} LIMIT 1
+        `;
+        loginPrivs = privRows[0] || {};
+      } catch (_) {}
+    }
+
     const userData = {
       id: isSuperAdmin ? (adminUser?.id || 1) : `dept_${resolved.id}`,
       name: resolved.name,
@@ -2382,7 +2395,14 @@ app.post('/api/auth/dept-login', authLimiter, async (req, res) => {
       ...(resolved.privilegeAmount != null ? { privilegeAmount: resolved.privilegeAmount } : {}),
       ...(resolved.approvalLimit   != null ? { approvalLimit: resolved.approvalLimit }     : {}),
       ...(resolved.memoPrivilege           ? { memoPrivilege: true }                       : {}),
-      ...(resolved.materialPrivilege       ? { materialPrivilege: true }                   : {})
+      ...(resolved.materialPrivilege       ? { materialPrivilege: true }                   : {}),
+      ...(loginPrivs.cashApprovalPrivilege ? { cashApprovalPrivilege: true }               : {}),
+      ...(loginPrivs.canOverride           ? { canOverride: true }                         : {}),
+      ...(loginPrivs.canReject             ? { canReject: true }                           : {}),
+      ...(loginPrivs.canRecall             ? { canRecall: true }                           : {}),
+      ...(loginPrivs.canReroute            ? { canReroute: true }                          : {}),
+      ...(loginPrivs.canSeeHeadReqs        ? { canSeeHeadReqs: true }                      : {}),
+      ...(loginPrivs.canSeeHeadMemos       ? { canSeeHeadMemos: true }                     : {}),
     };
 
     clearLoginAttempts(deptKey);
@@ -2452,6 +2472,7 @@ app.post('/api/departments/activate', async (req, res) => {
         ...(updated.approvalLimit   != null ? { approvalLimit: updated.approvalLimit }     : {}),
         ...(updated.memoPrivilege           ? { memoPrivilege: true }                      : {}),
         ...(updated.materialPrivilege       ? { materialPrivilege: true }                  : {}),
+        ...await (async () => { try { const r = await prisma.$queryRaw`SELECT "cashApprovalPrivilege","canOverride","canReject","canRecall","canReroute","canSeeHeadReqs","canSeeHeadMemos" FROM "Department" WHERE id = ${updated.id} LIMIT 1`; const p = r[0]||{}; return { ...(p.cashApprovalPrivilege?{cashApprovalPrivilege:true}:{}), ...(p.canOverride?{canOverride:true}:{}), ...(p.canReject?{canReject:true}:{}), ...(p.canRecall?{canRecall:true}:{}), ...(p.canReroute?{canReroute:true}:{}), ...(p.canSeeHeadReqs?{canSeeHeadReqs:true}:{}), ...(p.canSeeHeadMemos?{canSeeHeadMemos:true}:{}) }; } catch { return {}; } })(),
       };
       const token = jwt.sign(userData, JWT_SECRET, { expiresIn: '12h' });
       await prisma.activityLog.create({ data: { action: 'Sub-Account Activation', details: `${updated.name} completed first-time password setup` } });
@@ -2473,6 +2494,8 @@ app.post('/api/departments/activate', async (req, res) => {
         codeChangedByDept: true,
       }
     });
+    let headActivationPrivs = {};
+    try { const r = await prisma.$queryRaw`SELECT "cashApprovalPrivilege","canOverride","canReject","canRecall","canReroute","canSeeHeadReqs","canSeeHeadMemos" FROM "Department" WHERE id = ${updated.id} LIMIT 1`; const p = r[0]||{}; headActivationPrivs = { ...(p.cashApprovalPrivilege?{cashApprovalPrivilege:true}:{}), ...(p.canOverride?{canOverride:true}:{}), ...(p.canReject?{canReject:true}:{}), ...(p.canRecall?{canRecall:true}:{}), ...(p.canReroute?{canReroute:true}:{}), ...(p.canSeeHeadReqs?{canSeeHeadReqs:true}:{}), ...(p.canSeeHeadMemos?{canSeeHeadMemos:true}:{}) }; } catch (_) {}
     const userData = {
       id: `dept_${updated.id}`,
       name: updated.name,
@@ -2480,6 +2503,11 @@ app.post('/api/departments/activate', async (req, res) => {
       deptId: updated.id,
       tokenVersion: updated.tokenVersion || 0,
       email: updated.headEmail,
+      ...(updated.privilegeAmount != null ? { privilegeAmount: updated.privilegeAmount } : {}),
+      ...(updated.approvalLimit   != null ? { approvalLimit: updated.approvalLimit }     : {}),
+      ...(updated.memoPrivilege           ? { memoPrivilege: true }                      : {}),
+      ...(updated.materialPrivilege       ? { materialPrivilege: true }                  : {}),
+      ...headActivationPrivs,
     };
     const token = jwt.sign(userData, JWT_SECRET, { expiresIn: '12h' });
     await prisma.activityLog.create({ data: { action: 'Activation', details: `${updated.name} completed first-time account activation` } });
