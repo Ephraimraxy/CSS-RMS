@@ -10072,10 +10072,7 @@ app.post('/api/requisitions/:id/dept-reject', authenticateToken, async (req, res
 // ── Reject privilege management (Super Admin only) ────────────────────────────
 app.get('/api/admin/reject-privs', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
-    const depts = await prisma.department.findMany({
-      where: { canReject: true, isDeleted: false },
-      select: { id: true, name: true, type: true }
-    });
+    const depts = await prisma.$queryRaw`SELECT id, name, type FROM "Department" WHERE "canReject" = true AND "isDeleted" = false`;
     res.json(depts);
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -10085,7 +10082,8 @@ app.post('/api/admin/reject-privs', authenticateToken, requireRoles(['global_adm
     const { deptIds } = req.body || {};
     if (!Array.isArray(deptIds) || deptIds.length === 0) return res.status(400).json({ error: 'Provide an array of department IDs.' });
     const ids = deptIds.map(Number).filter(Boolean);
-    await prisma.department.updateMany({ where: { id: { in: ids } }, data: { canReject: true } });
+    if (ids.length === 0) return res.status(400).json({ error: 'No valid IDs.' });
+    await prisma.$executeRawUnsafe(`UPDATE "Department" SET "canReject" = true WHERE id IN (${ids.join(',')})`);
     prisma.activityLog.create({ data: { action: 'Reject Privilege Granted', details: `Granted reject privilege to dept IDs: ${ids.join(', ')}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
@@ -10094,7 +10092,7 @@ app.post('/api/admin/reject-privs', authenticateToken, requireRoles(['global_adm
 app.delete('/api/admin/reject-privs/:deptId', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
     const deptId = parseInt(req.params.deptId);
-    await prisma.department.update({ where: { id: deptId }, data: { canReject: false } });
+    await prisma.$executeRaw`UPDATE "Department" SET "canReject" = false WHERE id = ${deptId}`;
     prisma.activityLog.create({ data: { action: 'Reject Privilege Revoked', details: `Revoked reject privilege from dept ID: ${deptId}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
@@ -10103,10 +10101,7 @@ app.delete('/api/admin/reject-privs/:deptId', authenticateToken, requireRoles(['
 // ── Recall privilege management (Super Admin only) ───────────────────────────
 app.get('/api/admin/recall-privs', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
-    const depts = await prisma.department.findMany({
-      where: { canRecall: true, isDeleted: false },
-      select: { id: true, name: true, type: true }
-    });
+    const depts = await prisma.$queryRaw`SELECT id, name, type FROM "Department" WHERE "canRecall" = true AND "isDeleted" = false`;
     res.json(depts);
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -10116,7 +10111,8 @@ app.post('/api/admin/recall-privs', authenticateToken, requireRoles(['global_adm
     const { deptIds } = req.body || {};
     if (!Array.isArray(deptIds) || deptIds.length === 0) return res.status(400).json({ error: 'Provide an array of department IDs.' });
     const ids = deptIds.map(Number).filter(Boolean);
-    await prisma.department.updateMany({ where: { id: { in: ids } }, data: { canRecall: true } });
+    if (ids.length === 0) return res.status(400).json({ error: 'No valid IDs.' });
+    await prisma.$executeRawUnsafe(`UPDATE "Department" SET "canRecall" = true WHERE id IN (${ids.join(',')})`);
     prisma.activityLog.create({ data: { action: 'Recall Privilege Granted', details: `Granted recall privilege to dept IDs: ${ids.join(', ')}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
@@ -10125,7 +10121,7 @@ app.post('/api/admin/recall-privs', authenticateToken, requireRoles(['global_adm
 app.delete('/api/admin/recall-privs/:deptId', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
     const deptId = parseInt(req.params.deptId);
-    await prisma.department.update({ where: { id: deptId }, data: { canRecall: false } });
+    await prisma.$executeRaw`UPDATE "Department" SET "canRecall" = false WHERE id = ${deptId}`;
     prisma.activityLog.create({ data: { action: 'Recall Privilege Revoked', details: `Revoked recall privilege from dept ID: ${deptId}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
@@ -10201,10 +10197,7 @@ app.post('/api/admin/reroute-req', authenticateToken, requireRoles(['global_admi
 // ── Override privilege management (Super Admin only) ─────────────────────────
 app.get('/api/admin/override-depts', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
-    const depts = await prisma.department.findMany({
-      where: { canOverride: true, isDeleted: false },
-      select: { id: true, name: true, type: true }
-    });
+    const depts = await prisma.$queryRaw`SELECT id, name, type FROM "Department" WHERE "canOverride" = true AND "isDeleted" = false`;
     res.json(depts);
   } catch (err) { sendError(res, 500, err.message); }
 });
@@ -10216,7 +10209,8 @@ app.post('/api/admin/override-depts', authenticateToken, requireRoles(['global_a
       return res.status(400).json({ error: 'Provide an array of department IDs.' });
     }
     const ids = deptIds.map(Number).filter(Boolean);
-    await prisma.department.updateMany({ where: { id: { in: ids } }, data: { canOverride: true } });
+    if (ids.length === 0) return res.status(400).json({ error: 'No valid IDs.' });
+    await prisma.$executeRawUnsafe(`UPDATE "Department" SET "canOverride" = true WHERE id IN (${ids.join(',')})`);
     prisma.activityLog.create({ data: { action: 'Override Privilege Granted', details: `Granted un-reject privilege to dept IDs: ${ids.join(', ')}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
@@ -10225,7 +10219,7 @@ app.post('/api/admin/override-depts', authenticateToken, requireRoles(['global_a
 app.delete('/api/admin/override-depts/:deptId', authenticateToken, requireRoles(['global_admin']), async (req, res) => {
   try {
     const deptId = parseInt(req.params.deptId);
-    await prisma.department.update({ where: { id: deptId }, data: { canOverride: false } });
+    await prisma.$executeRaw`UPDATE "Department" SET "canOverride" = false WHERE id = ${deptId}`;
     prisma.activityLog.create({ data: { action: 'Override Privilege Revoked', details: `Revoked un-reject privilege from dept ID: ${deptId}` } }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { sendError(res, 500, err.message); }
