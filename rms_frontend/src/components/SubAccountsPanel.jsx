@@ -155,18 +155,19 @@ const Toggle = ({ on, onChange, disabled }) => (
 
 // ── Privilege editor for one sub-account ─────────────────────────────────────
 const PrivilegeEditor = ({ sub, onUpdatePrivilege }) => {
-  const [cashOn, setCashOn]             = useState(!!sub.cashPrivilege || sub.privilegeAmount != null);
-  const [cashInput, setCashInput]       = useState(sub.privilegeAmount != null ? String(sub.privilegeAmount) : '');
-  const [editingCash, setEditingCash]   = useState(false);
+  const [cashOn, setCashOn]                   = useState(!!sub.cashPrivilege || sub.privilegeAmount != null);
+  const [cashInput, setCashInput]             = useState(sub.privilegeAmount != null ? String(sub.privilegeAmount) : '');
+  const [editingCash, setEditingCash]         = useState(false);
+  const [cashApprovalOn, setCashApprovalOn]   = useState(!!sub.cashApprovalPrivilege || sub.approvalLimit != null);
   const [approvalInput, setApprovalInput]     = useState(sub.approvalLimit != null ? String(sub.approvalLimit) : '');
   const [editingApproval, setEditingApproval] = useState(false);
   const [savingApproval, setSavingApproval]   = useState(false);
-  const [memoOn, setMemoOn]             = useState(!!sub.memoPrivilege);
-  const [materialOn, setMaterialOn]     = useState(!!sub.materialPrivilege);
-  const [seeHeadReqs, setSeeHeadReqs]   = useState(!!sub.canSeeHeadReqs);
-  const [seeHeadMemos, setSeeHeadMemos] = useState(!!sub.canSeeHeadMemos);
-  const [savingCash, setSavingCash]     = useState(false);
-  const [savingToggles, setSavingToggles] = useState(false);
+  const [memoOn, setMemoOn]                   = useState(!!sub.memoPrivilege);
+  const [materialOn, setMaterialOn]           = useState(!!sub.materialPrivilege);
+  const [seeHeadReqs, setSeeHeadReqs]         = useState(!!sub.canSeeHeadReqs);
+  const [seeHeadMemos, setSeeHeadMemos]       = useState(!!sub.canSeeHeadMemos);
+  const [savingCash, setSavingCash]           = useState(false);
+  const [savingToggles, setSavingToggles]     = useState(false);
 
   // Direct route state
   const [directRouteOn, setDirectRouteOn]           = useState(!!sub.directRoute);
@@ -276,13 +277,14 @@ const PrivilegeEditor = ({ sub, onUpdatePrivilege }) => {
 
   const saveToggle = async (field, value, extraPayload = {}) => {
     setSavingToggles(true);
-    const labels = { cashPrivilege: 'Cash', memoPrivilege: 'Memo', materialPrivilege: 'Material', canSeeHeadReqs: 'See head\'s requisitions', canSeeHeadMemos: 'See head\'s memos' };
+    const labels = { cashPrivilege: 'Cash creation', cashApprovalPrivilege: 'Cash handling', memoPrivilege: 'Memo', materialPrivilege: 'Material', canSeeHeadReqs: 'See head\'s requisitions', canSeeHeadMemos: 'See head\'s memos' };
     try {
       await subAccountAPI.setPrivilege(sub.id, { [field]: value, ...extraPayload });
       toast.success(`${labels[field] || field} requests ${value ? 'enabled' : 'disabled'}.`);
       onUpdatePrivilege({ [field]: value, ...extraPayload });
     } catch (err) {
       if (field === 'cashPrivilege') setCashOn(!value);
+      if (field === 'cashApprovalPrivilege') setCashApprovalOn(!value);
       if (field === 'memoPrivilege') setMemoOn(!value);
       if (field === 'materialPrivilege') setMaterialOn(!value);
       if (field === 'canSeeHeadReqs') setSeeHeadReqs(!value);
@@ -297,12 +299,27 @@ const PrivilegeEditor = ({ sub, onUpdatePrivilege }) => {
       setCashInput('');
       setEditingCash(false);
       setSavingToggles(true);
-      subAccountAPI.setPrivilege(sub.id, { cashPrivilege: false, maxAmount: null, approvalLimit: null })
-        .then(() => { toast.success('Cash requests disabled.'); onUpdatePrivilege({ cashPrivilege: false, privilegeAmount: null, approvalLimit: null }); setApprovalInput(''); })
-        .catch(err => { setCashOn(true); toast.error(err?.response?.data?.error || 'Failed to disable cash requests.'); })
+      subAccountAPI.setPrivilege(sub.id, { cashPrivilege: false, maxAmount: null })
+        .then(() => { toast.success('Cash request creation disabled.'); onUpdatePrivilege({ cashPrivilege: false, privilegeAmount: null }); })
+        .catch(err => { setCashOn(true); toast.error(err?.response?.data?.error || 'Failed.'); })
         .finally(() => setSavingToggles(false));
     } else {
       saveToggle('cashPrivilege', true);
+    }
+  };
+
+  const handleCashApprovalToggle = (v) => {
+    setCashApprovalOn(v);
+    if (!v) {
+      setApprovalInput('');
+      setEditingApproval(false);
+      setSavingToggles(true);
+      subAccountAPI.setPrivilege(sub.id, { cashApprovalPrivilege: false, approvalLimit: null })
+        .then(() => { toast.success('Cash request handling disabled.'); onUpdatePrivilege({ cashApprovalPrivilege: false, approvalLimit: null }); })
+        .catch(err => { setCashApprovalOn(true); toast.error(err?.response?.data?.error || 'Failed.'); })
+        .finally(() => setSavingToggles(false));
+    } else {
+      saveToggle('cashApprovalPrivilege', true);
     }
   };
   const handleMemoToggle = (v) => { setMemoOn(v); saveToggle('memoPrivilege', v); };
@@ -387,102 +404,110 @@ const PrivilegeEditor = ({ sub, onUpdatePrivilege }) => {
         <Award size={10} className="text-amber-500" /> Privilege Settings
       </p>
 
-      {/* Cash Requests toggle + optional limit */}
+      {/* Cash Request Creation toggle + optional creation limit */}
       <div className="py-2 border-t border-border/10">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[11px] font-semibold text-foreground">Cash Requests</p>
-            <p className="text-[9px] text-muted-foreground/60">Can create &amp; handle cash requests</p>
+            <p className="text-[11px] font-semibold text-foreground">Cash Request Creation</p>
+            <p className="text-[9px] text-muted-foreground/60">Can create &amp; submit cash requests</p>
           </div>
           <Toggle on={cashOn} onChange={handleCashToggle} disabled={savingToggles} />
         </div>
         {cashOn && (
-          <div className="mt-2 pl-1 space-y-3">
-            {/* ── Creation Limit ── */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black text-foreground/70 uppercase tracking-wide">Creation limit <span className="font-normal text-muted-foreground/40 normal-case">(optional)</span></span>
-                {!editingCash && (
-                  <button onClick={() => setEditingCash(true)} className="text-[10px] font-bold text-primary hover:underline">
-                    {sub.privilegeAmount != null ? 'Edit' : 'Set'}
-                  </button>
-                )}
-              </div>
-              <p className="text-[9px] text-muted-foreground/50 italic">Max amount this unit can create a request for</p>
-              {!editingCash ? (
-                <p className="text-[11px] text-muted-foreground/70">
-                  {sub.privilegeAmount != null
-                    ? <><span className="font-black text-amber-700">≤ {fmt(sub.privilegeAmount)}</span> <span className="italic">per request</span></>
-                    : <span className="italic text-muted-foreground/40">No limit set</span>}
-                </p>
-              ) : (
-                <div className="flex gap-2 items-center">
-                  <div className="relative flex-1">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 text-sm font-bold">₦</span>
-                    <input type="number" min="0" step="any" value={cashInput}
-                      onChange={e => setCashInput(e.target.value)} autoFocus placeholder="e.g. 80000"
-                      onKeyDown={e => { if (e.key === 'Enter') saveCash(); if (e.key === 'Escape') setEditingCash(false); }}
-                      className="w-full border border-border/50 rounded-xl pl-8 pr-3 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-primary/20" />
-                  </div>
-                  <button onClick={saveCash} disabled={savingCash} className="p-2 rounded-xl bg-primary text-white hover:bg-primary/90 disabled:opacity-40">
-                    {savingCash ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                  </button>
-                  {sub.privilegeAmount != null && (
-                    <button onClick={() => { setCashInput(''); saveCash(); }} disabled={savingCash}
-                      title="Remove limit" className="p-2 rounded-xl border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40">
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                  <button onClick={() => setEditingCash(false)} className="p-2 rounded-xl border border-border/40 text-muted-foreground">
-                    <X size={13} />
-                  </button>
-                </div>
+          <div className="mt-2 pl-1 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black text-foreground/70 uppercase tracking-wide">Creation limit <span className="font-normal text-muted-foreground/40 normal-case">(optional)</span></span>
+              {!editingCash && (
+                <button onClick={() => setEditingCash(true)} className="text-[10px] font-bold text-primary hover:underline">
+                  {sub.privilegeAmount != null ? 'Edit' : 'Set'}
+                </button>
               )}
             </div>
+            <p className="text-[9px] text-muted-foreground/50 italic">Max amount this unit can create a request for</p>
+            {!editingCash ? (
+              <p className="text-[11px] text-muted-foreground/70">
+                {sub.privilegeAmount != null
+                  ? <><span className="font-black text-amber-700">≤ {fmt(sub.privilegeAmount)}</span> <span className="italic">per request</span></>
+                  : <span className="italic text-muted-foreground/40">No limit — any amount</span>}
+              </p>
+            ) : (
+              <div className="flex gap-2 items-center">
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 text-sm font-bold">₦</span>
+                  <input type="number" min="0" step="any" value={cashInput}
+                    onChange={e => setCashInput(e.target.value)} autoFocus placeholder="e.g. 80000"
+                    onKeyDown={e => { if (e.key === 'Enter') saveCash(); if (e.key === 'Escape') setEditingCash(false); }}
+                    className="w-full border border-border/50 rounded-xl pl-8 pr-3 py-1.5 text-sm bg-white outline-none focus:ring-2 focus:ring-primary/20" />
+                </div>
+                <button onClick={saveCash} disabled={savingCash} className="p-2 rounded-xl bg-primary text-white hover:bg-primary/90 disabled:opacity-40">
+                  {savingCash ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                </button>
+                {sub.privilegeAmount != null && (
+                  <button onClick={() => { setCashInput(''); saveCash(); }} disabled={savingCash}
+                    title="Remove limit" className="p-2 rounded-xl border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40">
+                    <Trash2 size={13} />
+                  </button>
+                )}
+                <button onClick={() => setEditingCash(false)} className="p-2 rounded-xl border border-border/40 text-muted-foreground">
+                  <X size={13} />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
-            {/* ── Handling Limit — label changes per parent dept role ── */}
-            <div className="space-y-1 pt-2 border-t border-dashed border-border/20">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black text-foreground/70 uppercase tracking-wide">
-                  {handlingLabel} <span className="font-normal text-muted-foreground/40 normal-case">(optional)</span>
-                </span>
-                {!editingApproval && (
-                  <button onClick={() => setEditingApproval(true)} className="text-[10px] font-bold text-primary hover:bg-primary/8 border border-primary/25 px-2 py-0.5 rounded-lg transition-all">
-                    {sub.approvalLimit != null ? 'Edit' : 'Set'}
-                  </button>
-                )}
-              </div>
-              <p className="text-[9px] text-muted-foreground/50 italic">{handlingDesc}</p>
-              {!editingApproval ? (
-                <p className="text-[11px] text-muted-foreground/70">
-                  {sub.approvalLimit != null
-                    ? <><span className={`font-black ${handlingColor}`}>≤ {fmt(sub.approvalLimit)}</span> <span className="italic">per request</span></>
-                    : <span className="italic text-muted-foreground/40">{handlingNoAuth}</span>}
-                </p>
-              ) : (
-                <div className="flex gap-2 items-center">
-                  <div className="relative flex-1">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 text-sm font-bold">₦</span>
-                    <input type="number" min="0" step="any" value={approvalInput}
-                      onChange={e => setApprovalInput(e.target.value)} autoFocus placeholder="e.g. 30000"
-                      onKeyDown={e => { if (e.key === 'Enter') saveApproval(); if (e.key === 'Escape') setEditingApproval(false); }}
-                      className={`w-full border border-border/50 rounded-xl pl-8 pr-3 py-1.5 text-sm bg-white outline-none focus:ring-2 ${handlingRing}`} />
-                  </div>
-                  <button onClick={saveApproval} disabled={savingApproval} className={`p-2 rounded-xl ${handlingBtn} text-white disabled:opacity-40`}>
-                    {savingApproval ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                  </button>
-                  {sub.approvalLimit != null && (
-                    <button onClick={() => { setApprovalInput(''); saveApproval(); }} disabled={savingApproval}
-                      title="Remove limit" className="p-2 rounded-xl border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40">
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                  <button onClick={() => setEditingApproval(false)} className="p-2 rounded-xl border border-border/40 text-muted-foreground">
-                    <X size={13} />
-                  </button>
-                </div>
+      {/* Cash Request Handling/Approval toggle + optional ceiling */}
+      <div className="py-2 border-t border-border/10">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[11px] font-semibold text-foreground">Cash Request {handlingLabel.replace(' Limit', '')}</p>
+            <p className="text-[9px] text-muted-foreground/60">{handlingDesc}</p>
+          </div>
+          <Toggle on={cashApprovalOn} onChange={handleCashApprovalToggle} disabled={savingToggles} />
+        </div>
+        {cashApprovalOn && (
+          <div className="mt-2 pl-1 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black text-foreground/70 uppercase tracking-wide">
+                {handlingLabel} <span className="font-normal text-muted-foreground/40 normal-case">(optional)</span>
+              </span>
+              {!editingApproval && (
+                <button onClick={() => setEditingApproval(true)} className="text-[10px] font-bold text-primary hover:bg-primary/8 border border-primary/25 px-2 py-0.5 rounded-lg transition-all">
+                  {sub.approvalLimit != null ? 'Edit' : 'Set'}
+                </button>
               )}
             </div>
+            <p className="text-[9px] text-muted-foreground/50 italic">Leave blank for unlimited — they can handle any amount</p>
+            {!editingApproval ? (
+              <p className="text-[11px] text-muted-foreground/70">
+                {sub.approvalLimit != null
+                  ? <><span className={`font-black ${handlingColor}`}>≤ {fmt(sub.approvalLimit)}</span> <span className="italic">per request</span></>
+                  : <span className="italic text-muted-foreground/40">No ceiling — unlimited authority</span>}
+              </p>
+            ) : (
+              <div className="flex gap-2 items-center">
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 text-sm font-bold">₦</span>
+                  <input type="number" min="0" step="any" value={approvalInput}
+                    onChange={e => setApprovalInput(e.target.value)} autoFocus placeholder="e.g. 30000 or leave blank"
+                    onKeyDown={e => { if (e.key === 'Enter') saveApproval(); if (e.key === 'Escape') setEditingApproval(false); }}
+                    className={`w-full border border-border/50 rounded-xl pl-8 pr-3 py-1.5 text-sm bg-white outline-none focus:ring-2 ${handlingRing}`} />
+                </div>
+                <button onClick={saveApproval} disabled={savingApproval} className={`p-2 rounded-xl ${handlingBtn} text-white disabled:opacity-40`}>
+                  {savingApproval ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                </button>
+                {sub.approvalLimit != null && (
+                  <button onClick={() => { setApprovalInput(''); saveApproval(); }} disabled={savingApproval}
+                    title="Remove ceiling" className="p-2 rounded-xl border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40">
+                    <Trash2 size={13} />
+                  </button>
+                )}
+                <button onClick={() => setEditingApproval(false)} className="p-2 rounded-xl border border-border/40 text-muted-foreground">
+                  <X size={13} />
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

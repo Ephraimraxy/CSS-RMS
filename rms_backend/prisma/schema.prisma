@@ -81,7 +81,8 @@ model Department {
   // Sub-account privilege delegation (set by parent dept head or admin)
   privilegeAmount      Float?   // Max amount sub-account can CREATE a request for
   approvalLimit        Float?   // Max amount of incoming request sub-account can APPROVE on head's behalf
-  cashPrivilege        Boolean          @default(false)
+  cashPrivilege        Boolean          @default(false) // Can create cash requests
+  cashApprovalPrivilege Boolean         @default(false) // Can approve/handle/treat cash requests on head's behalf
   memoPrivilege        Boolean          @default(false)
   materialPrivilege    Boolean          @default(false)
   canOverride          Boolean          @default(false) // Super Admin can grant: allows dept to restore rejected requisitions

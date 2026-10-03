@@ -669,7 +669,7 @@ async function runStageTimerCheck() {
 async function getSubPrivilege(deptId) {
   try {
     const rows = await prisma.$queryRaw`
-      SELECT "privilegeAmount", "approvalLimit", "cashPrivilege", "memoPrivilege", "materialPrivilege",
+      SELECT "privilegeAmount", "approvalLimit", "cashPrivilege", "cashApprovalPrivilege", "memoPrivilege", "materialPrivilege",
              "directRoute", "allowedRouteDeptIds", "canSeeHeadReqs", "canSeeHeadMemos"
       FROM "Department" WHERE id = ${parseInt(deptId)} LIMIT 1
     `;
@@ -677,17 +677,18 @@ async function getSubPrivilege(deptId) {
     let allowedRouteDeptIds = [];
     try { allowedRouteDeptIds = JSON.parse(d?.allowedRouteDeptIds || 'null') || []; } catch { allowedRouteDeptIds = []; }
     return {
-      privilegeAmount:     d?.privilegeAmount   ?? null,
-      approvalLimit:       d?.approvalLimit     ?? null,
-      cashPrivilege:       d?.cashPrivilege     ?? false,
-      memoPrivilege:       d?.memoPrivilege     ?? false,
-      materialPrivilege:   d?.materialPrivilege ?? false,
-      directRoute:         d?.directRoute       ?? false,
+      privilegeAmount:          d?.privilegeAmount          ?? null,
+      approvalLimit:            d?.approvalLimit            ?? null,
+      cashPrivilege:            d?.cashPrivilege            ?? false,
+      cashApprovalPrivilege:    d?.cashApprovalPrivilege    ?? false,
+      memoPrivilege:            d?.memoPrivilege            ?? false,
+      materialPrivilege:        d?.materialPrivilege        ?? false,
+      directRoute:              d?.directRoute              ?? false,
       allowedRouteDeptIds,
-      canSeeHeadReqs:      d?.canSeeHeadReqs    ?? false,
-      canSeeHeadMemos:     d?.canSeeHeadMemos   ?? false,
+      canSeeHeadReqs:           d?.canSeeHeadReqs           ?? false,
+      canSeeHeadMemos:          d?.canSeeHeadMemos          ?? false,
     };
-  } catch { return { privilegeAmount: null, approvalLimit: null, cashPrivilege: false, memoPrivilege: false, materialPrivilege: false, directRoute: false, allowedRouteDeptIds: [], canSeeHeadReqs: false, canSeeHeadMemos: false }; }
+  } catch { return { privilegeAmount: null, approvalLimit: null, cashPrivilege: false, cashApprovalPrivilege: false, memoPrivilege: false, materialPrivilege: false, directRoute: false, allowedRouteDeptIds: [], canSeeHeadReqs: false, canSeeHeadMemos: false }; }
 }
 // Legacy compat — returns just the amount
 async function getSubPrivilegeAmount(deptId) {
@@ -2168,7 +2169,7 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
         isSubAccount: true, parentId: true,
         directRoute: true, allowedRouteDeptIds: true,
         privilegeAmount: true, approvalLimit: true,
-        cashPrivilege: true, memoPrivilege: true, materialPrivilege: true, canOverride: true, canReject: true, canRecall: true, canSeeHeadReqs: true, canSeeHeadMemos: true,
+        cashPrivilege: true, cashApprovalPrivilege: true, memoPrivilege: true, materialPrivilege: true, canOverride: true, canReject: true, canRecall: true, canSeeHeadReqs: true, canSeeHeadMemos: true,
         parent: { select: { id: true, name: true } },
       }
     });
@@ -2198,6 +2199,7 @@ app.post('/api/auth/sync', authenticateToken, async (req, res) => {
       } : {}),
       ...(dept.privilegeAmount  != null ? { privilegeAmount: dept.privilegeAmount }   : {}),
       ...(dept.approvalLimit    != null ? { approvalLimit: dept.approvalLimit }         : {}),
+      ...(dept.cashApprovalPrivilege     ? { cashApprovalPrivilege: true }               : {}),
       ...(dept.memoPrivilege            ? { memoPrivilege: true }                       : {}),
       ...(dept.materialPrivilege        ? { materialPrivilege: true }                   : {}),
       ...(dept.canOverride              ? { canOverride: true }                         : {}),
@@ -4949,15 +4951,15 @@ app.get('/api/sub-accounts/:id/privilege', authenticateToken, async (req, res) =
     const isAdmin = normalizeRole(req.user.role) === 'global_admin';
     const deptId  = req.user.deptId ? parseInt(req.user.deptId) : null;
     if (!isAdmin && deptId !== sub.parentId) return res.status(403).json({ error: 'Access denied.' });
-    let priv = { privilegeAmount: null, cashPrivilege: false, memoPrivilege: false, materialPrivilege: false, canSeeHeadReqs: false, canSeeHeadMemos: false };
+    let priv = { privilegeAmount: null, cashPrivilege: false, cashApprovalPrivilege: false, memoPrivilege: false, materialPrivilege: false, canSeeHeadReqs: false, canSeeHeadMemos: false };
     try {
       const rows = await prisma.$queryRaw`
-        SELECT "privilegeAmount", "cashPrivilege", "memoPrivilege", "materialPrivilege", "canSeeHeadReqs", "canSeeHeadMemos"
+        SELECT "privilegeAmount", "cashPrivilege", "cashApprovalPrivilege", "memoPrivilege", "materialPrivilege", "canSeeHeadReqs", "canSeeHeadMemos"
         FROM "Department" WHERE id = ${subId} LIMIT 1
       `;
       if (rows?.[0]) {
         const r = rows[0];
-        priv = { privilegeAmount: r.privilegeAmount ?? null, cashPrivilege: r.cashPrivilege ?? false, memoPrivilege: r.memoPrivilege ?? false, materialPrivilege: r.materialPrivilege ?? false, canSeeHeadReqs: r.canSeeHeadReqs ?? false, canSeeHeadMemos: r.canSeeHeadMemos ?? false };
+        priv = { privilegeAmount: r.privilegeAmount ?? null, cashPrivilege: r.cashPrivilege ?? false, cashApprovalPrivilege: r.cashApprovalPrivilege ?? false, memoPrivilege: r.memoPrivilege ?? false, materialPrivilege: r.materialPrivilege ?? false, canSeeHeadReqs: r.canSeeHeadReqs ?? false, canSeeHeadMemos: r.canSeeHeadMemos ?? false };
       }
     } catch (_) {}
     res.json(priv);
@@ -4983,18 +4985,19 @@ app.put('/api/sub-accounts/:id/privilege', authenticateToken, checkHeadCanSetSub
     const parsed = z.object({
       maxAmount:           z.union([z.number().min(0), z.null()]).optional(),
       approvalLimit:       z.union([z.number().min(0), z.null()]).optional(),
-      cashPrivilege:       z.boolean().optional(),
-      memoPrivilege:       z.boolean().optional(),
-      materialPrivilege:   z.boolean().optional(),
-      directRoute:         z.boolean().optional(),
-      allowedRouteDeptIds: z.array(z.number().int()).nullable().optional(),
-      canSeeHeadReqs:      z.boolean().optional(),
-      canSeeHeadMemos:     z.boolean().optional(),
+      cashPrivilege:            z.boolean().optional(),
+      cashApprovalPrivilege:    z.boolean().optional(),
+      memoPrivilege:            z.boolean().optional(),
+      materialPrivilege:        z.boolean().optional(),
+      directRoute:              z.boolean().optional(),
+      allowedRouteDeptIds:      z.array(z.number().int()).nullable().optional(),
+      canSeeHeadReqs:           z.boolean().optional(),
+      canSeeHeadMemos:          z.boolean().optional(),
     }).safeParse(req.body || {});
     if (!parsed.success) return res.status(400).json({ error: 'Invalid privilege payload.' });
 
-    const { maxAmount, approvalLimit, cashPrivilege, memoPrivilege, materialPrivilege, directRoute, allowedRouteDeptIds, canSeeHeadReqs, canSeeHeadMemos } = parsed.data;
-    if (maxAmount === undefined && approvalLimit === undefined && cashPrivilege === undefined && memoPrivilege === undefined && materialPrivilege === undefined && directRoute === undefined && allowedRouteDeptIds === undefined && canSeeHeadReqs === undefined && canSeeHeadMemos === undefined)
+    const { maxAmount, approvalLimit, cashPrivilege, cashApprovalPrivilege, memoPrivilege, materialPrivilege, directRoute, allowedRouteDeptIds, canSeeHeadReqs, canSeeHeadMemos } = parsed.data;
+    if (maxAmount === undefined && approvalLimit === undefined && cashPrivilege === undefined && cashApprovalPrivilege === undefined && memoPrivilege === undefined && materialPrivilege === undefined && directRoute === undefined && allowedRouteDeptIds === undefined && canSeeHeadReqs === undefined && canSeeHeadMemos === undefined)
       return res.status(400).json({ error: 'No privilege fields provided.' });
 
     // Ensure columns exist in DB regardless of Prisma client schema version
@@ -5002,6 +5005,7 @@ app.put('/api/sub-accounts/:id/privilege', authenticateToken, checkHeadCanSetSub
       await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "privilegeAmount" DOUBLE PRECISION`;
       await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "approvalLimit" DOUBLE PRECISION`;
       await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "cashPrivilege" BOOLEAN NOT NULL DEFAULT false`;
+      await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "cashApprovalPrivilege" BOOLEAN NOT NULL DEFAULT false`;
       await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "memoPrivilege" BOOLEAN NOT NULL DEFAULT false`;
       await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "materialPrivilege" BOOLEAN NOT NULL DEFAULT false`;
       await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "directRoute" BOOLEAN NOT NULL DEFAULT false`;
@@ -5016,6 +5020,7 @@ app.put('/api/sub-accounts/:id/privilege', authenticateToken, checkHeadCanSetSub
     if (maxAmount !== undefined) { setClauses.push(`"privilegeAmount" = $${setClauses.length + 1}`); values.push(maxAmount === null ? null : parseFloat(maxAmount)); }
     if (approvalLimit !== undefined) { setClauses.push(`"approvalLimit" = $${setClauses.length + 1}`); values.push(approvalLimit === null ? null : parseFloat(approvalLimit)); }
     if (cashPrivilege !== undefined) { setClauses.push(`"cashPrivilege" = $${setClauses.length + 1}`); values.push(cashPrivilege); }
+    if (cashApprovalPrivilege !== undefined) { setClauses.push(`"cashApprovalPrivilege" = $${setClauses.length + 1}`); values.push(cashApprovalPrivilege); }
     if (memoPrivilege !== undefined) { setClauses.push(`"memoPrivilege" = $${setClauses.length + 1}`); values.push(memoPrivilege); }
     if (materialPrivilege !== undefined) { setClauses.push(`"materialPrivilege" = $${setClauses.length + 1}`); values.push(materialPrivilege); }
     if (directRoute !== undefined) { setClauses.push(`"directRoute" = $${setClauses.length + 1}`); values.push(directRoute); }
@@ -5038,10 +5043,10 @@ app.put('/api/sub-accounts/:id/privilege', authenticateToken, checkHeadCanSetSub
       });
     } catch (_) {}
 
-    let updated = { privilegeAmount: null, approvalLimit: null, cashPrivilege: false, memoPrivilege: false, materialPrivilege: false, directRoute: false, allowedRouteDeptIds: [], canSeeHeadReqs: false, canSeeHeadMemos: false };
+    let updated = { privilegeAmount: null, approvalLimit: null, cashPrivilege: false, cashApprovalPrivilege: false, memoPrivilege: false, materialPrivilege: false, directRoute: false, allowedRouteDeptIds: [], canSeeHeadReqs: false, canSeeHeadMemos: false };
     try {
       const rows = await prisma.$queryRaw`
-        SELECT "privilegeAmount", "approvalLimit", "cashPrivilege", "memoPrivilege", "materialPrivilege",
+        SELECT "privilegeAmount", "approvalLimit", "cashPrivilege", "cashApprovalPrivilege", "memoPrivilege", "materialPrivilege",
                "directRoute", "allowedRouteDeptIds", "canSeeHeadReqs", "canSeeHeadMemos"
         FROM "Department" WHERE id = ${subId} LIMIT 1
       `;
@@ -13795,9 +13800,10 @@ const server = app.listen(PORT, async () => {
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canOverride" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canReject" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canRecall" BOOLEAN NOT NULL DEFAULT false`;
+        await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "cashApprovalPrivilege" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canSeeHeadReqs" BOOLEAN NOT NULL DEFAULT false`;
         await prisma.$executeRaw`ALTER TABLE "Department" ADD COLUMN IF NOT EXISTS "canSeeHeadMemos" BOOLEAN NOT NULL DEFAULT false`;
-        logger.info('[BOOT] Department privilege columns ensured (canOverride/canReject/canRecall/canSeeHeadReqs/canSeeHeadMemos)');
+        logger.info('[BOOT] Department privilege columns ensured');
       } catch (e) {
         logger.warn('[BOOT] canOverride/canReject/canRecall column check skipped:', e.message);
       }

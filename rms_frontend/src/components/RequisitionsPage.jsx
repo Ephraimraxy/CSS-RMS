@@ -1150,9 +1150,10 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
   const amount = effectiveAmount;
 
   // For privileged sub-accounts use parent dept name for authority checks
-  // approvalLimit (separate from privilegeAmount) controls what amount they can APPROVE
+  // cashApprovalPrivilege = can handle/approve cash; approvalLimit = optional ceiling
   const approvalLimit = user?.approvalLimit != null ? parseFloat(user.approvalLimit) : null;
-  const isPrivSub = user?.isSubAccount && user?.parentDeptId && approvalLimit != null;
+  const cashApprovalPriv = user?.cashApprovalPrivilege === true;
+  const isPrivSub = user?.isSubAccount && user?.parentDeptId && (cashApprovalPriv || approvalLimit != null);
   const parentDept = isPrivSub ? departments.find(d => d.id === parseInt(user.parentDeptId)) : null;
   const checkDeptName = (isPrivSub && parentDept) ? parentDept.name : deptName;
 
@@ -1166,10 +1167,10 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
   const parentDeptId = user?.parentDeptId ? parseInt(user.parentDeptId) : null;
   const isMaterial = /^material/i.test(req.type || '');
   const isCash = !isMaterial && !/^memo/i.test(req.type || '');
-  // Approval authority check uses approvalLimit (not privilegeAmount which governs creation)
+  // cashApprovalPrivilege gates cash handling; approvalLimit adds an optional amount ceiling
   const subHasTypePriv = isMaterial
     ? !!(user?.materialPrivilege)
-    : (isCash ? (approvalLimit != null && effectiveAmount <= approvalLimit) : false);
+    : (isCash ? (cashApprovalPriv && (approvalLimit == null || effectiveAmount <= approvalLimit)) : false);
 
   const isAtMyDesk = detail?.targetDepartmentId === user?.deptId
     || (isPrivSub && parentDeptId && detail?.targetDepartmentId === parentDeptId && subHasTypePriv);
@@ -2255,14 +2256,15 @@ const VettingPanel = ({ req, detail, user, departments, onDone, onTreatInitiated
   const _fas = detail?.finalApprovalStatus;
   const _isMaterialReq = /^material/i.test(req?.type || '');
 
-  // Privileged sub-account of Audit or Account — uses approvalLimit for handling authority
-  const _privSub = user?.isSubAccount && user?.parentDeptId && user?.approvalLimit != null;
-  const _privLimit = _privSub ? parseFloat(user.approvalLimit) : null;
+  // Privileged sub-account of Audit or Account — cashApprovalPrivilege gates cash handling; approvalLimit is optional ceiling
+  const _cashApprovalPriv = user?.cashApprovalPrivilege === true;
+  const _privSub = user?.isSubAccount && user?.parentDeptId && (_cashApprovalPriv || user?.approvalLimit != null);
+  const _privLimit = user?.approvalLimit != null ? parseFloat(user.approvalLimit) : null;
   const _effAmt = (detail?.hasIccOverride && detail?.iccOverrideAmount != null)
     ? parseFloat(detail.iccOverrideAmount)
     : (detail?.hasAuditOverride && detail?.auditAmount != null)
     ? parseFloat(detail.auditAmount) : parseFloat(req?.amount || 0);
-  const _privCovers = _privSub && _privLimit != null && _effAmt <= _privLimit;
+  const _privCovers = _privSub && (_privLimit == null || _effAmt <= _privLimit);
   const _parentId = _privSub ? parseInt(user.parentDeptId) : null;
   const _parentDept = _privSub ? departments?.find(d => d.id === _parentId) : null;
   // Determine if sub-account has privilege for this specific request type
@@ -4509,7 +4511,7 @@ const RequisitionDetailModal = ({ req, user, departments, onClose, onAction, onE
               {/* Vetting Panel — Account (and privileged Audit/Account sub-accounts) for post-approval treatment. */}
               {!isTaggedObserver && user?.role === 'department' && detail && !loading && !isFrozen && !isOnKiv &&
                (/\baccount\b/i.test(user?.name || '') || /\baudit\b/i.test(user?.name || '')
-                || (user?.isSubAccount && user?.parentDeptId && user?.approvalLimit != null)) &&
+                || (user?.isSubAccount && user?.parentDeptId && (user?.cashApprovalPrivilege || user?.approvalLimit != null))) &&
                ((detail.finalApprovalStatus && !['none', 'treated'].includes(detail.finalApprovalStatus))
                 || (/^material/i.test(req?.type || '') && (detail.targetDepartmentId === user?.deptId
                     || detail.targetDepartmentId === (user?.parentDeptId ? parseInt(user.parentDeptId) : -1)))) && (
