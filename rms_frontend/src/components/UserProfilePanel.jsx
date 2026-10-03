@@ -103,7 +103,7 @@ const UserProfilePanel = ({ isOpen, onClose, onViewChange }) => {
   const [showPw, setShowPw]     = useState(false);
   const [changingPw, setChangingPw] = useState(false);
 
-  const isDept = user?.role === 'department';
+  const isDept = user?.role === 'department' && !user?._isImpersonating;
 
   // Biometric state
   const [bioSupported, setBioSupported] = useState(false);

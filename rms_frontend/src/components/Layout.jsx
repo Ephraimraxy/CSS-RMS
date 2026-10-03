@@ -904,7 +904,7 @@ const Layout = ({ children, user, currentView, onViewChange }) => {
 
   const [deptStatus, setDeptStatus] = useState({ isReady: true });
   useEffect(() => {
-    if (user?.role === 'department') {
+    if (user?.role === 'department' && !user?._isImpersonating) {
       const checkStats = async () => {
         try {
           const profile = await reqAPI.getDeptProfile();

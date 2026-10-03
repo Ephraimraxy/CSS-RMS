@@ -188,7 +188,7 @@ const Dashboard = ({ onViewChange }) => {
 
   const [isDeptReady, setIsDeptReady] = useState(true);
   useEffect(() => {
-    if (user?.role === 'department') {
+    if (user?.role === 'department' && !user?._isImpersonating) {
       Promise.all([
         reqAPI.getDeptProfile(),
         settingsAPI.get('require_governance_setup').catch(() => ({ value: 'true' })),
