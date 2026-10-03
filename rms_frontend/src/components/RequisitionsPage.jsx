@@ -1130,6 +1130,8 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
   const [kivActing, setKivActing]     = useState(false);
   const [showKivFormFA, setShowKivFormFA] = useState(false);
   const [kivInputFA, setKivInputFA]       = useState('');
+  const [selfApprovalEnabled, setSelfApprovalEnabled] = useState(false);
+  const [selfApprovalLimit, setSelfApprovalLimit]     = useState(0);
   const fileRef = React.useRef(null);
 
   useEffect(() => {
@@ -1137,6 +1139,13 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
       if (res?.value) {
         try { setThresholds({ ...DEFAULT_THRESHOLDS, ...JSON.parse(res.value) }); } catch {}
       }
+    }).catch(() => {});
+    Promise.all([
+      settingsAPI.get('dept_self_approval_enabled'),
+      settingsAPI.get('dept_self_approval_limit'),
+    ]).then(([en, lim]) => {
+      setSelfApprovalEnabled(en?.value === 'true');
+      setSelfApprovalLimit(parseFloat(lim?.value || '0') || 0);
     }).catch(() => {});
   }, []);
 
@@ -1196,7 +1205,16 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
       authorityLabel = `HR Authority (≤ ${fmt(hr_ceiling)})`;
   }
 
-  if (!authorityLabel) return null;
+  // Self-approval: originating dept can approve their own cash req within the configured limit,
+  // but only after Audit has reviewed it (the needsAuditPreReview gate below enforces this).
+  const isOriginatingDept = parseInt(req?.departmentId || detail?.departmentId) === parseInt(user?.deptId);
+  const isSelfApprovalEligible = !authorityLabel && !isMaterial && !user?.isSubAccount
+    && selfApprovalEnabled && selfApprovalLimit > 0 && amount <= selfApprovalLimit
+    && isAtMyDesk && isOriginatingDept;
+
+  const displayLabel = authorityLabel || (isSelfApprovalEligible ? `Dept Self-Approval (≤ ${fmt(selfApprovalLimit)})` : null);
+
+  if (!displayLabel) return null;
 
   const finalStatus = detail?.finalApprovalStatus;
 
@@ -1255,7 +1273,7 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
             <p className={`text-[10px] font-black uppercase tracking-widest ${isVettingReturned ? 'text-amber-800' : 'text-emerald-800'}`}>
               {isVettingReturned ? 'Returned from Vetting' : 'Signed & Approved'}
             </p>
-            <span className={`ml-auto px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${isVettingReturned ? 'bg-amber-100 border border-amber-300 text-amber-700' : 'bg-emerald-100 border border-emerald-300 text-emerald-700'}`}>{authorityLabel}</span>
+            <span className={`ml-auto px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${isVettingReturned ? 'bg-amber-100 border border-amber-300 text-amber-700' : 'bg-emerald-100 border border-emerald-300 text-emerald-700'}`}>{displayLabel}</span>
             {/* Vetted status pill — shown to GM/recipient when vetting dept returns the doc */}
             {isVettingReturned && (
               <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase border ${returnWasVetted ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-rose-50 border-rose-200 text-rose-600'}`}>
@@ -1333,11 +1351,10 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
   // ── Audit pre-review gate — signal parent to show top banner, render only KIV here ──
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
-    if (onAuditGate) onAuditGate(needsAuditPreReview ? { authorityLabel } : null);
+    if (onAuditGate) onAuditGate(needsAuditPreReview ? { authorityLabel: displayLabel } : null);
     return () => { if (onAuditGate) onAuditGate(null); };
-  // authorityLabel is a string derived from amount/thresholds; safe to include
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsAuditPreReview, authorityLabel]);
+  }, [needsAuditPreReview, displayLabel]);
 
   if (needsAuditPreReview) {
     return (
@@ -1380,7 +1397,7 @@ const FinalApprovePanel = ({ req, detail, user, departments, onApproved, onAppro
       <div className="flex items-center gap-2 pl-1">
         <Gavel size={14} className="text-emerald-700" />
         <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest">Final Approval</p>
-        <span className="ml-auto px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-[9px] font-black text-emerald-700 uppercase">{authorityLabel}</span>
+        <span className="ml-auto px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-[9px] font-black text-emerald-700 uppercase">{displayLabel}</span>
       </div>
 
       {auditHasReturned && (

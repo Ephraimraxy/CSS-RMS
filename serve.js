@@ -5366,33 +5366,8 @@ app.post('/api/requisitions', authenticateToken, generalLimiter, async (req, res
 
       createdRecords.push(created);
 
-      // ── Dept self-approval: auto-approve cash requests at or below the configured limit ──
-      // Sub-accounts are excluded — their requests must always go to the head for approval.
-      if (!isDraft && isCashPayload && amount > 0 && !req.user.isSubAccount) {
-        try {
-          const [selfEnabledSetting, selfLimitSetting] = await Promise.all([
-            prisma.systemSetting.findUnique({ where: { key: 'dept_self_approval_enabled' } }),
-            prisma.systemSetting.findUnique({ where: { key: 'dept_self_approval_limit' } }),
-          ]);
-          if (selfEnabledSetting?.value === 'true') {
-            const selfLimit = parseFloat(selfLimitSetting?.value || '0') || 0;
-            if (selfLimit > 0 && amount <= selfLimit) {
-              const selfApproved = await prisma.requisition.update({
-                where: { id: created.id },
-                data: {
-                  finalApprovalStatus: 'approved',
-                  finalApprovedByDeptId: originDeptId,
-                  finalApprovedAt: new Date(),
-                  isSelfApproved: true,
-                  finalApprovedNote: `Auto self-approved by department — within ₦${selfLimit.toLocaleString()} self-approval limit`,
-                },
-              });
-              createdRecords[createdRecords.length - 1] = selfApproved;
-            }
-          }
-        } catch (selfErr) { logger.warn('[SELF-APPROVE] Auto self-approval failed:', selfErr.message); }
-      }
-      // ────────────────────────────────────────────────────────────────────────────────────
+      // Self-approval no longer fires at creation — dept must route to Audit first,
+      // then manually approve via the final-approve endpoint after Audit returns it.
 
       // Fire post-creation notifications asynchronously — do NOT await before responding
       if (!isDraft) {
@@ -8527,7 +8502,7 @@ app.post('/api/requisitions/:id/final-approve', authenticateToken, async (req, r
 
     const requisition = await prisma.requisition.findUnique({
       where: { id: reqId },
-      select: { id: true, amount: true, type: true, finalApprovalStatus: true, hasAuditOverride: true, auditAmount: true }
+      select: { id: true, amount: true, type: true, finalApprovalStatus: true, hasAuditOverride: true, auditAmount: true, departmentId: true, targetDepartmentId: true }
     });
 
     if (!requisition) return res.status(404).json({ error: 'Requisition not found' });
@@ -8554,7 +8529,26 @@ app.post('/api/requisitions/:id/final-approve', authenticateToken, async (req, r
     }
 
     const authority = isAdmin ? 'chairman' : checkFinalApproveAuthority(authorityDeptName, isMaterial ? 0 : effectiveAmount, isMaterial);
-    if (!authority && !isPrivilegedSubAccount) {
+
+    // Self-approval: originating dept head can approve their own cash req after Audit has reviewed it,
+    // provided the amount is within the configured self-approval limit and the req is back at their desk.
+    let isSelfApprovalEligible = false;
+    if (!authority && !isPrivilegedSubAccount && !isAdmin && !isMaterial && !req.user.isSubAccount && userDeptId) {
+      const isOriginatingDept   = requisition.departmentId === userDeptId;
+      const isBackAtOriginDesk  = requisition.targetDepartmentId === userDeptId;
+      if (isOriginatingDept && isBackAtOriginDesk) {
+        const [selfEnabledSetting, selfLimitSetting] = await Promise.all([
+          prisma.systemSetting.findUnique({ where: { key: 'dept_self_approval_enabled' } }),
+          prisma.systemSetting.findUnique({ where: { key: 'dept_self_approval_limit' } }),
+        ]);
+        if (selfEnabledSetting?.value === 'true') {
+          const selfLimit = parseFloat(selfLimitSetting?.value || '0') || 0;
+          if (selfLimit > 0 && effectiveAmount <= selfLimit) isSelfApprovalEligible = true;
+        }
+      }
+    }
+
+    if (!authority && !isPrivilegedSubAccount && !isSelfApprovalEligible) {
       return res.status(403).json({ error: `Your department does not have authority to final-approve this amount.` });
     }
     // Sub-account must have privilege AND parent dept must have authority
@@ -8569,6 +8563,7 @@ app.post('/api/requisitions/:id/final-approve', authenticateToken, async (req, r
         finalApprovedByDeptId: userDeptId || null,
         finalApprovedAt: new Date(),
         finalApprovedNote: note || null,
+        ...(isSelfApprovalEligible ? { isSelfApproved: true } : {}),
         // Clear the authority-tier timer — action taken, no escalation needed
         approvalTimerStartedAt: null,
         approvalTimerTier:      null,
