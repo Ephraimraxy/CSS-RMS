@@ -90,9 +90,9 @@ export const AuthProvider = ({ children }) => {
     return userData;
   };
 
-  const deptLogin = async (departmentName, accessCode, mfaCode, turnstileToken) => {
+  const deptLogin = async (departmentName, accessCode, mfaCode, turnstileToken, subAccountName) => {
     try {
-      const { user: userData } = await authAPI.deptLogin(departmentName, accessCode, mfaCode, turnstileToken);
+      const { user: userData } = await authAPI.deptLogin(departmentName, accessCode, mfaCode, turnstileToken, subAccountName);
       // Wipe previous user's cached data before populating this user's data
       await clearAllCaches();
       // Server sets the HttpOnly auth cookie — we only keep user data for the UI

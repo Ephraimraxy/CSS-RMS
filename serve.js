@@ -2228,12 +2228,13 @@ app.post('/api/auth/dept-login', authLimiter, async (req, res) => {
     const parsed = z.object({
       departmentName: z.string().min(1),
       accessCode: z.string().min(1),
-      mfaCode: z.string().optional().nullable()
+      mfaCode: z.string().optional().nullable(),
+      subAccountName: z.string().optional().nullable(),
     }).safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: 'Login details are missing or invalid. Please check your credentials and try again.' });
     }
-    const { departmentName, accessCode, mfaCode } = parsed.data;
+    const { departmentName, accessCode, mfaCode, subAccountName } = parsed.data;
     const { turnstileToken } = req.body;
 
     const deptKey = `dept:${(departmentName || '').trim().toLowerCase()}`;
@@ -2290,17 +2291,38 @@ app.post('/api/auth/dept-login', authLimiter, async (req, res) => {
         : dept.accessCode === trimmedAccess;
     }
 
-    // ── Step 2: if no match, check sub-accounts of this dept ─────────────────
+    // ── Step 2: check sub-accounts of this dept ──────────────────────────────
+    // If subAccountName is provided, target ONLY that specific sub-account.
+    // Otherwise fall back to looping (head dept login — no sub-account selected).
     let matchedSubAccount = null;
-    if (!codeMatch && !isSuperAdmin) {
-      const subAccounts = await prisma.department.findMany({
-        where: { parentId: dept.id, isSubAccount: true, isDeleted: false }
-      });
-      for (const sub of subAccounts) {
-        const subMatch = sub.accessCodeHash
-          ? await bcrypt.compare(trimmedAccess, sub.accessCodeHash)
-          : sub.accessCode === trimmedAccess;
-        if (subMatch) { matchedSubAccount = sub; break; }
+    if (!isSuperAdmin) {
+      if (subAccountName && subAccountName.trim()) {
+        // Targeted: find exactly the named sub-account and verify its password
+        const targetSub = await prisma.department.findFirst({
+          where: { parentId: dept.id, isSubAccount: true, isDeleted: false, name: { equals: subAccountName.trim(), mode: 'insensitive' } }
+        });
+        if (targetSub) {
+          const subMatch = targetSub.accessCodeHash
+            ? await bcrypt.compare(trimmedAccess, targetSub.accessCodeHash)
+            : targetSub.accessCode === trimmedAccess;
+          if (subMatch) matchedSubAccount = targetSub;
+          else { recordFailedLogin(deptKey); return res.status(401).json({ error: 'Invalid Department or Password' }); }
+        } else {
+          return res.status(401).json({ error: 'Invalid Department or Password' });
+        }
+        // Skip head dept password check when a sub-account was explicitly selected
+        codeMatch = false;
+      } else if (!codeMatch) {
+        // No sub-account named — loop only if head password didn't match
+        const subAccounts = await prisma.department.findMany({
+          where: { parentId: dept.id, isSubAccount: true, isDeleted: false }
+        });
+        for (const sub of subAccounts) {
+          const subMatch = sub.accessCodeHash
+            ? await bcrypt.compare(trimmedAccess, sub.accessCodeHash)
+            : sub.accessCode === trimmedAccess;
+          if (subMatch) { matchedSubAccount = sub; break; }
+        }
       }
     }
 
@@ -2639,6 +2661,25 @@ app.get('/api/departments/login-status', async (req, res) => {
     });
     if (!dept) return res.status(404).json({ error: 'Not found' });
     res.json({ activated: dept.codeChangedByDept === true, isSubAccount: dept.isSubAccount === true });
+  } catch (error) { sendError(res, 500, error.message); }
+});
+
+// Sub-accounts list for login picker — returns names only (no credentials)
+app.get('/api/departments/login-sub-accounts', async (req, res) => {
+  try {
+    const name = (req.query.deptName || '').trim();
+    if (!name) return res.status(400).json({ error: 'deptName required' });
+    const parent = await prisma.department.findFirst({
+      where: { name: { equals: name, mode: 'insensitive' }, isDeleted: false, isSubAccount: false },
+      select: { id: true }
+    });
+    if (!parent) return res.json({ subAccounts: [] });
+    const subs = await prisma.department.findMany({
+      where: { parentId: parent.id, isSubAccount: true, isDeleted: false, isDisabled: false },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' }
+    });
+    res.json({ subAccounts: subs.map(s => ({ id: s.id, name: s.name })) });
   } catch (error) { sendError(res, 500, error.message); }
 });
 

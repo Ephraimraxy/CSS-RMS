@@ -60,8 +60,8 @@ export const authAPI = {
   login: async (email, password) => {
     return api.post('/auth/login', { email, password });
   },
-  deptLogin: async (departmentName, accessCode, mfaCode, turnstileToken) => {
-    const data = await api.post('/auth/dept-login', { departmentName, accessCode, mfaCode, turnstileToken });
+  deptLogin: async (departmentName, accessCode, mfaCode, turnstileToken, subAccountName) => {
+    const data = await api.post('/auth/dept-login', { departmentName, accessCode, mfaCode, turnstileToken, subAccountName });
     if (data?.requiresActivation) {
       const err = new Error('REQUIRES_ACTIVATION');
       err.activationToken = data.activationToken;
