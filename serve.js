@@ -11816,7 +11816,8 @@ app.get('/api/requisitions', authenticateToken, async (req, res) => {
         OR: [
           { departmentId: deptId },
           { targetDepartmentId: deptId },
-          ...(subDeptIds.length > 0 ? [{ departmentId: { in: subDeptIds } }] : []),
+          // Also exclude sub-account drafts (same rule as real dept login)
+          ...(subDeptIds.length > 0 ? [{ departmentId: { in: subDeptIds }, status: { not: 'draft' } }] : []),
           ...(linkedReqIds.length > 0 ? [{ id: { in: linkedReqIds } }] : []),
           ...(taggedReqIds.length > 0 ? [{ id: { in: taggedReqIds } }] : []),
         ]
