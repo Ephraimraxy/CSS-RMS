@@ -1513,6 +1513,7 @@ const PrivSection = ({ title, description, accentClass, borderClass, bgClass, de
   const [privileged, setPrivileged] = React.useState(null);
   const [selected, setSelected]     = React.useState(new Set());
   const [saving, setSaving]         = React.useState(false);
+  const [confirmId, setConfirmId]   = React.useState(null);
 
   const load = React.useCallback(async () => {
     try { const res = await loadFn(); setPrivileged(Array.isArray(res) ? res : (res?.data || [])); }
@@ -1538,8 +1539,8 @@ const PrivSection = ({ title, description, accentClass, borderClass, bgClass, de
   };
 
   const handleRevoke = async (id, name) => {
-    if (!window.confirm(`Remove privilege from "${name}"?`)) return;
     setSaving(true);
+    setConfirmId(null);
     try { await revokeFn(id); toast.success(`Privilege removed from ${name}.`); load(); }
     catch (e) { toast.error(e?.response?.data?.error || 'Failed to revoke.'); }
     finally { setSaving(false); }
@@ -1561,8 +1562,18 @@ const PrivSection = ({ title, description, accentClass, borderClass, bgClass, de
               {privileged.map(d => (
                 <div key={d.id} className={`flex items-center justify-between px-4 py-2.5 rounded-xl border ${borderClass} ${bgClass}`}>
                   <span className="text-sm font-semibold">{d.name}</span>
-                  <button onClick={() => handleRevoke(d.id, d.name)} disabled={saving}
-                    className="text-[11px] font-bold text-destructive hover:underline disabled:opacity-50">Remove</button>
+                  {confirmId === d.id ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-muted-foreground">Remove?</span>
+                      <button onClick={() => handleRevoke(d.id, d.name)} disabled={saving}
+                        className="text-[10px] font-bold px-2 py-1 rounded-lg bg-destructive text-white disabled:opacity-50">Yes</button>
+                      <button onClick={() => setConfirmId(null)} disabled={saving}
+                        className="text-[10px] font-bold px-2 py-1 rounded-lg border border-border/50 text-muted-foreground">No</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setConfirmId(d.id)} disabled={saving}
+                      className="text-[11px] font-bold text-destructive hover:underline disabled:opacity-50">Remove</button>
+                  )}
                 </div>
               ))}
             </div>
